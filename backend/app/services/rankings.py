@@ -64,7 +64,7 @@ class Rankings:
         if self._cache and now - self._cache_ts < RANKINGS_TTL:
             return self._cache
 
-        result_ids = sorted(set(db.recipe_by_result) | set(db.barter_by_result))
+        result_ids = sorted(db.recipe_by_result)
         ctx = {"memo": {}, "seen": set()}
         rows: dict[str, dict] = {}
         for rid in result_ids:

@@ -4,7 +4,7 @@
 в запросе. Поэтому расчёт синхронный и быстрый даже для больших деревьев.
 
     obtain(item) = min( купить на ауке , по каждому варианту рецепта: craft(R) )
-    craft(R)     = ( Σ obtain(ingredient) × amount + деньги ) / result_amount
+    craft(R)     = Σ obtain(ingredient) × amount / result_amount
 
 Перебирает все варианты рецепта (дешёвый — выбранный, остальные — альтернативы),
 мемоизирует общие поддеревья, рвёт циклы, обрезается по глубине.
@@ -31,23 +31,6 @@ def _item_info(item_id: str) -> dict:
     }
 
 
-def _dedupe(recipes: list) -> list:
-    """Схлопывает идентичные рецепты (те же ингредиенты/цена/тип) — напр. один
-    и тот же бартер в нескольких поселениях."""
-    seen, out = set(), []
-    for r in recipes:
-        key = (
-            r.get("type"),
-            r.get("cost", 0),
-            tuple(sorted((i["item"], i.get("amount", 1)) for i in r.get("ingredients", []))),
-        )
-        if key in seen:
-            continue
-        seen.add(key)
-        out.append(r)
-    return out
-
-
 def _price(item_id: str, path: tuple, ctx: dict, depth: int, expand: bool) -> dict:
     """Узел с ценой получения 1 штуки предмета (цены из PriceStore, без сети)."""
     ctx["seen"].add(item_id)
@@ -62,7 +45,7 @@ def _price(item_id: str, path: tuple, ctx: dict, depth: int, expand: bool) -> di
     node["market_price"] = mk["min_buyout"] if mk["available"] else None
     node["price_known"] = mk["known"]        # False = цена ещё не посчитана фоном
 
-    variants = _dedupe(db.recipes_for(item_id))
+    variants = db.recipes_for(item_id)
     node["craftable"] = bool(variants)
     node["n_variants"] = len(variants)
     node["craft_cost"] = None
@@ -93,17 +76,14 @@ def _price(item_id: str, path: tuple, ctx: dict, depth: int, expand: bool) -> di
                 total += line
             ings.append({"amount": amt, "line_cost": round(line) if line is not None else None,
                          "node": child})
-        money = r.get("cost", 0) if r.get("type") == "barter" else 0
-        total += money
         recipe_cost = round(total / ramount) if known else None
         evaluated.append((
             recipe_cost if recipe_cost is not None else float("inf"),
             known,
-            {"variant": idx + 1, "type": r.get("type"), "category": r.get("category"),
-             "subcategory": r.get("subcategory"), "settlement": r.get("settlement"),
-             "bench": r.get("bench"), "result_amount": ramount, "money_cost": money,
-             "energy": r.get("energy"), "recipe_cost": recipe_cost, "cost_known": known,
-             "ingredients": ings},
+            {"variant": idx + 1, "category": r.get("category"),
+             "subcategory": r.get("subcategory"), "bench": r.get("bench"),
+             "result_amount": ramount, "energy": r.get("energy"),
+             "recipe_cost": recipe_cost, "cost_known": known, "ingredients": ings},
         ))
 
     evaluated.sort(key=lambda e: e[0])
@@ -132,10 +112,8 @@ def _price(item_id: str, path: tuple, ctx: dict, depth: int, expand: bool) -> di
 
 def _summ(recipe: dict) -> dict:
     return {
-        "variant": recipe["variant"], "type": recipe["type"],
-        "settlement": recipe.get("settlement"), "recipe_cost": recipe["recipe_cost"],
+        "variant": recipe["variant"], "recipe_cost": recipe["recipe_cost"],
         "cost_known": recipe["cost_known"], "result_amount": recipe["result_amount"],
-        "money_cost": recipe.get("money_cost", 0),
         "ingredients": [{"name": i["node"]["name"], "id": i["node"]["id"],
                          "icon": i["node"]["icon"], "amount": i["amount"],
                          "unit_price": i["node"].get("best_cost")} for i in recipe["ingredients"]],

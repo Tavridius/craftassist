@@ -34,7 +34,7 @@ async def startup() -> None:
     db.load()
     store.load()
     store.set_base(db.priceable_ids())
-    store.set_results(sorted(set(db.recipe_by_result) | set(db.barter_by_result)))
+    store.set_results(sorted(db.recipe_by_result))
     rankings.load()
     oauth.load()  # кэшированный app-токен (если работаем по клиентским кредам)
     auth_mode = ("oauth" if oauth.enabled()

@@ -3,7 +3,6 @@
 Скачивает репо одним zip-архивом и раскладывает локально:
   data/listing.json          — индекс предметов
   data/hideout_recipes.json  — рецепты верстака
-  data/barter_recipes.json   — бартер у торговцев
   data/icons/**              — PNG-иконки (зеркалим к себе)
 
 Скачиваем только если файлов ещё нет (или force=True). В продакшене обновлять
@@ -20,7 +19,7 @@ from app import config
 
 logger = logging.getLogger(__name__)
 
-_JSON_FILES = ("listing.json", "hideout_recipes.json", "barter_recipes.json")
+_JSON_FILES = ("listing.json", "hideout_recipes.json")
 
 
 def is_present() -> bool:

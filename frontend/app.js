@@ -88,9 +88,9 @@ function renderDetail(d) {
   // вердикт
   let money = "";
   if (v.craft_cost != null && v.buy_price != null)
-    money = `<span class="money">Крафт ${fmt(v.craft_cost)} ⚡ · Купить ${fmt(v.buy_price)} ⚡</span>`;
+    money = `<span class="money">Крафт ${fmt(v.craft_cost)} ₽ · Купить ${fmt(v.buy_price)} ₽</span>`;
   else if (v.craft_cost != null)
-    money = `<span class="money">Стоимость крафта ${fmt(v.craft_cost)} ⚡</span>`;
+    money = `<span class="money">Стоимость крафта ${fmt(v.craft_cost)} ₽</span>`;
   html += `<div class="verdict ${vClass}">${escapeHtml(v.text || "—")}${money}</div>`;
 
   if (v.status === "unknown")
@@ -119,17 +119,17 @@ function renderDetail(d) {
           <div class="nm">${escapeHtml(it.name)}${chosen.result_amount > 1 ? ` <span class="x">×${chosen.result_amount}</span>` : ""}</div>
           <div class="meta">результат крафта</div>
         </div>
-        <div class="price"><div class="line">${d.craft_cost != null ? fmt(d.craft_cost) + " ⚡" : "—"}</div>${chosen.result_amount > 1 ? `<div class="unit">за 1 шт</div>` : ""}</div>
+        <div class="price"><div class="line">${d.craft_cost != null ? fmt(d.craft_cost) + " ₽" : "—"}</div>${chosen.result_amount > 1 ? `<div class="unit">за 1 шт</div>` : ""}</div>
       </div>
       <div class="children">${renderRecipe(chosen)}</div>
     </div>
   </div>`;
 
   html += `<div class="total-row"><span>Итого крафт${chosen.result_amount > 1 ? " (за 1 шт)" : ""}</span>
-             <span class="val">${d.craft_cost != null ? fmt(d.craft_cost) + " ⚡" : "неизвестно"}</span></div>`;
+             <span class="val">${d.craft_cost != null ? fmt(d.craft_cost) + " ₽" : "неизвестно"}</span></div>`;
   if (d.buy_price != null)
     html += `<div class="total-row"><span>Купить готовое на ауке</span>
-               <span class="val">${fmt(d.buy_price)} ⚡</span></div>`;
+               <span class="val">${fmt(d.buy_price)} ₽</span></div>`;
 
   if (tree.alternatives && tree.alternatives.length)
     html += renderAlts(tree.alternatives);
@@ -147,9 +147,7 @@ let _uid = 0;
 const uid = () => "t" + (++_uid);
 
 function recipeWhere(r) {
-  return r.type === "barter"
-    ? `Бартер · ${escapeHtml(r.settlement || "")}`
-    : `Верстак · ${escapeHtml(r.category || "")}${r.subcategory ? " / " + escapeHtml(r.subcategory) : ""}`;
+  return `Верстак · ${escapeHtml(r.category || "")}${r.subcategory ? " / " + escapeHtml(r.subcategory) : ""}`;
 }
 
 function srcTag(n) {
@@ -162,9 +160,6 @@ function srcTag(n) {
 function renderRecipe(recipe) {
   let h = "";
   for (const ing of recipe.ingredients) h += renderIng(ing);
-  if (recipe.money_cost)
-    h += `<div class="node"><div class="ing"><div class="info"><div class="nm">💰 Деньги (бартер)</div></div>
-          <div class="price"><div class="line">${fmt(recipe.money_cost)} ⚡</div></div></div></div>`;
   return h;
 }
 
@@ -174,8 +169,8 @@ function renderIng(ing) {
   const canCraftDearer = !hasSub && n.craftable && n.craft_cost != null && n.best_source === "market";
   const tId = hasSub ? uid() : "";
 
-  let meta = n.best_cost != null ? fmt(n.best_cost) + " ⚡/шт" : "цена неизвестна";
-  if (canCraftDearer) meta += ` · крафт ${fmt(n.craft_cost)} ⚡ (дороже)`;
+  let meta = n.best_cost != null ? fmt(n.best_cost) + " ₽/шт" : "цена неизвестна";
+  if (canCraftDearer) meta += ` · крафт ${fmt(n.craft_cost)} ₽ (дороже)`;
   if (n.n_variants > 1) meta += ` · вариантов: ${n.n_variants}`;
 
   let h = `<div class="node">
@@ -185,7 +180,7 @@ function renderIng(ing) {
         <div class="nm">${hasSub ? `<button class="tw" data-t="${tId}">▾</button> ` : ""}${escapeHtml(n.name)} <span class="x">×${ing.amount}</span> ${srcTag(n)}</div>
         <div class="meta">${meta}</div>
       </div>
-      <div class="price"><div class="line">${ing.line_cost != null ? fmt(ing.line_cost) + " ⚡" : "—"}</div></div>
+      <div class="price"><div class="line">${ing.line_cost != null ? fmt(ing.line_cost) + " ₽" : "—"}</div></div>
     </div>`;
   if (hasSub)
     h += `<div class="children" id="${tId}">${renderRecipe(n.recipe)}</div>`;
@@ -196,12 +191,10 @@ function renderIng(ing) {
 function renderAlts(alts) {
   let h = `<div class="section-title">Другие варианты рецепта: ${alts.length}</div>`;
   for (const a of alts) {
-    const cost = a.recipe_cost != null ? fmt(a.recipe_cost) + " ⚡" : "цена неизвестна";
-    const where = a.type === "barter" ? `бартер${a.settlement ? " · " + escapeHtml(a.settlement) : ""}` : "верстак";
-    h += `<details class="alt"><summary><b>${cost}</b> · ${where}${a.result_amount > 1 ? " · ×" + a.result_amount : ""}</summary>`;
+    const cost = a.recipe_cost != null ? fmt(a.recipe_cost) + " ₽" : "цена неизвестна";
+    h += `<details class="alt"><summary><b>${cost}</b> · верстак${a.result_amount > 1 ? " · ×" + a.result_amount : ""}</summary>`;
     for (const i of a.ingredients)
-      h += `<div class="alt-ing">${escapeHtml(i.name)} <span class="x">×${i.amount}</span>${i.unit_price != null ? ` — ${fmt(i.unit_price)} ⚡/шт` : ""}</div>`;
-    if (a.money_cost) h += `<div class="alt-ing">💰 ${fmt(a.money_cost)} ⚡</div>`;
+      h += `<div class="alt-ing">${escapeHtml(i.name)} <span class="x">×${i.amount}</span>${i.unit_price != null ? ` — ${fmt(i.unit_price)} ₽/шт` : ""}</div>`;
     h += `</details>`;
   }
   return h;
@@ -257,8 +250,8 @@ function topRow(e) {
   const badge = e.pct == null ? ""
     : `<span class="pct ${e.pct > 0 ? "up" : "down"}">${e.pct > 0 ? "+" : ""}${e.pct}%</span>`;
   const meta = [];
-  if (e.craft_cost != null) meta.push(`крафт ${fmt(e.craft_cost)} ⚡`);
-  if (e.buy_price != null) meta.push(`аук ${fmt(e.buy_price)} ⚡`);
+  if (e.craft_cost != null) meta.push(`крафт ${fmt(e.craft_cost)} ₽`);
+  if (e.buy_price != null) meta.push(`аук ${fmt(e.buy_price)} ₽`);
   if (e.sales_per_hour != null) meta.push(`${e.sales_per_hour} прод/ч`);
   if (e.opens) meta.push(`${e.opens} 👁`);
   return `<div class="ing top-row" data-id="${e.id}" style="border-left:3px solid ${rarity(e.color)}">
