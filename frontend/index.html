@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>StalZone Craft — помощник крафта</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">🛠️ StalZone Craft</div>
+    <div class="region" id="regionBadge">RU · demo</div>
+  </header>
+
+  <main class="container">
+    <div class="search">
+      <input id="searchInput" type="search" inputmode="search" autocomplete="off"
+             placeholder="Найти предмет… (напр. патрон, фильтр)">
+    </div>
+
+    <section id="results" class="grid" aria-live="polite"></section>
+
+    <section id="detail" class="detail hidden"></section>
+
+    <div id="hint" class="hint">
+      Введи название предмета — увидишь рецепт крафта, цены с аукциона
+      и выгодно ли крафтить. Или выбери из подборок ниже.
+    </div>
+
+    <section id="home" class="home"></section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

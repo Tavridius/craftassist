@@ -1,0 +1,15 @@
+# Python
+**/__pycache__/
+*.pyc
+backend/.venv/
+backend/.wheels/
+
+# Скачанная игровая БД + иконки (142МБ, тянется загрузчиком)
+backend/data/
+
+# Секреты окружения
+.env
+
+# Локальные конфиги ассистентов
+.claude/settings.local.json
+.qwen/

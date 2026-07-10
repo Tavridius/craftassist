@@ -1,0 +1,38 @@
+services:
+  stalzone-craft:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: stalzone-craft:latest
+    container_name: stalzone_craft
+    restart: unless-stopped
+    # localhost-порт для curl-проверок на сервере; наружу отдаёт rpg_nginx через /mvp
+    ports:
+      - "127.0.0.1:8100:8000"
+    environment:
+      # Демо по умолчанию. Для реальных цен задать в .env креды TradeAssist:
+      #   API_BASE=https://eapi.stalcraft.net + API_CLIENT_ID/API_CLIENT_SECRET
+      #   (или статический API_TOKEN как fallback)
+      - API_BASE=${API_BASE:-https://dapi.stalcraft.net}
+      - API_TOKEN=${API_TOKEN:-}
+      - API_CLIENT_ID=${API_CLIENT_ID:-}
+      - API_CLIENT_SECRET=${API_CLIENT_SECRET:-}
+      - REGION=${REGION:-RU}
+      - PRICE_CACHE_TTL=${PRICE_CACHE_TTL:-600}
+      - AUCTION_MIN_INTERVAL=${AUCTION_MIN_INTERVAL:-0.5}
+      - CRAFT_MAX_DEPTH=${CRAFT_MAX_DEPTH:-4}
+      - CRAFT_MAX_VARIANTS=${CRAFT_MAX_VARIANTS:-3}
+    volumes:
+      # Кэш игровой БД + зеркало иконок (скачивается один раз при первом старте)
+      - craft_data:/app/backend/data
+    networks:
+      - rpgnet
+
+networks:
+  # существующая сеть, где живёт rpg_nginx — чтобы он ходил к нам по имени контейнера
+  rpgnet:
+    external: true
+    name: backend_rpg_network
+
+volumes:
+  craft_data:
