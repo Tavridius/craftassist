@@ -3,32 +3,114 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <title>StalZone Craft — помощник крафта</title>
+  <title>Калькулятор крафта STALZONE (Stalcraft) — цены аукциона и выгода</title>
+  <meta name="description" content="Помощник крафта STALZONE (ранее Stalcraft — Сталкрафт): дерево крафта, живые цены аукциона RU и вердикт — выгодно ли крафтить или дешевле купить. 2000+ предметов, 350+ рецептов верстака.">
+  <meta name="keywords" content="stalzone, stalcraft, сталкрафт, крафт stalzone, калькулятор крафта сталкрафт, рецепты верстака, цены аукциона stalcraft, выгода крафта, stalzone helper">
+  <link rel="canonical" href="https://stalzone-helper.ru/">
+  <meta name="theme-color" content="#0a120c">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="StalZone Helper">
+  <meta property="og:title" content="Калькулятор крафта STALZONE (Stalcraft) — цены аукциона и выгода">
+  <meta property="og:description" content="Дерево крафта, живые цены аукциона и вердикт: скрафтить или купить. 2000+ предметов, 350+ рецептов верстака.">
+  <meta property="og:url" content="https://stalzone-helper.ru/">
+  <meta property="og:locale" content="ru_RU">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="Калькулятор крафта STALZONE (Stalcraft)">
+  <meta name="twitter:description" content="Дерево крафта, живые цены аукциона и вердикт: скрафтить или купить.">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebApplication",
+    "name": "StalZone Helper — калькулятор крафта STALZONE",
+    "alternateName": "Калькулятор крафта Stalcraft (Сталкрафт)",
+    "url": "https://stalzone-helper.ru/",
+    "description": "Помощник крафта STALZONE (ранее Stalcraft): дерево крафта, живые цены аукциона и вердикт — выгодно ли крафтить или дешевле купить готовое.",
+    "applicationCategory": "UtilitiesApplication",
+    "operatingSystem": "Web",
+    "inLanguage": "ru",
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "RUB" }
+  }
+  </script>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
+
+  <!-- Yandex.Metrika counter -->
+  <script type="text/javascript">
+      (function(m,e,t,r,i,k,a){
+          m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};
+          m[i].l=1*new Date();
+          for (var j = 0; j < document.scripts.length; j++) {if (document.scripts[j].src === r) { return; }}
+          k=e.createElement(t),a=e.getElementsByTagName(t)[0],k.async=1,k.src=r,a.parentNode.insertBefore(k,a)
+      })(window, document,'script','https://mc.yandex.ru/metrika/tag.js?id=110585101', 'ym');
+
+      ym(110585101, 'init', {ssr:true, webvisor:true, clickmap:true, ecommerce:"dataLayer", referrer: document.referrer, url: location.href, accurateTrackBounce:true, trackLinks:true, trackHash:true});
+  </script>
+  <noscript><div><img src="https://mc.yandex.ru/watch/110585101" style="position:absolute; left:-9999px;" alt="" /></div></noscript>
+  <!-- /Yandex.Metrika counter -->
 </head>
 <body>
+  <div class="fx-scan" aria-hidden="true"></div>
+  <div class="fx-vignette" aria-hidden="true"></div>
+
   <header class="topbar">
-    <div class="brand">🛠️ StalZone Craft</div>
-    <div class="region" id="regionBadge">RU · demo</div>
+    <a class="brand-wrap" href="#" title="На главную">
+      <h1 class="brand">SCZ//CRAFT</h1>
+      <div class="brand-sub">ТЕРМИНАЛ АНАЛИЗА КРАФТА STALZONE</div>
+    </a>
+    <div class="topstats">
+      <div class="stat">ПРЕДМЕТОВ <span id="statItems">—</span></div>
+      <div class="stat">РЕЦЕПТОВ <span id="statRecipes">—</span></div>
+      <div class="stat">ЦЕН В КЭШЕ <span id="statPrices">—</span></div>
+      <div class="clock" id="clock"></div>
+      <div class="region" id="regionBadge">RU</div>
+      <div class="auth" id="authBox"></div>
+    </div>
   </header>
 
-  <main class="container">
-    <div class="search">
+  <nav class="topnav" id="topnav" aria-label="Разделы">
+    <a href="#auction" data-sec="auction">АУКЦИОН</a>
+    <a href="#" data-sec="craft">КРАФТ</a>
+    <a href="#map" data-sec="map">КАРТА <span class="nav-dev">DEV</span></a>
+    <a href="#guides" data-sec="guides">ГАЙДЫ <span class="nav-dev">DEV</span></a>
+    <a href="#builds" data-sec="builds">СБОРКИ</a>
+  </nav>
+
+  <div class="search-strip">
+    <div class="search-box">
+      <div class="search-prompt">&gt;_</div>
       <input id="searchInput" type="search" inputmode="search" autocomplete="off"
-             placeholder="Найти предмет… (напр. патрон, фильтр)">
+             placeholder="ПОИСК ПО БАЗЕ…">
     </div>
+    <button class="mode-toggle hidden" id="modeToggle"></button>
+  </div>
 
-    <section id="results" class="grid" aria-live="polite"></section>
+  <div id="onboard" class="onboard hidden"></div>
 
+  <main class="main">
+    <section id="results" aria-live="polite"></section>
     <section id="detail" class="detail hidden"></section>
-
-    <div id="hint" class="hint">
-      Введи название предмета — увидишь рецепт крафта, цены с аукциона
-      и выгодно ли крафтить. Или выбери из подборок ниже.
-    </div>
-
+    <section id="page" class="page hidden"></section>
     <section id="home" class="home"></section>
   </main>
+
+  <footer class="page-footer">
+    <p><strong>StalZone Helper</strong> — бесплатный калькулятор крафта STALZONE
+    (ранее Stalcraft — Сталкрафт): считает полное дерево крафта по рецептам
+    верстака, подтягивает живые цены аукциона (регион RU) и показывает, что
+    выгоднее — скрафтить предмет или купить готовый на аукционе.</p>
+  </footer>
+
+  <noscript>
+    <p>StalZone Helper — калькулятор крафта STALZONE (ранее Stalcraft — Сталкрафт):
+    дерево крафта, цены аукциона и расчёт выгоды «скрафтить или купить» по 2000+
+    предметам и 350+ рецептам верстака. Для работы сервиса включите JavaScript.</p>
+  </noscript>
 
   <script src="app.js"></script>
 </body>

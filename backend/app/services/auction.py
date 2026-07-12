@@ -72,8 +72,70 @@ async def fetch_lots(client: httpx.AsyncClient, item_id: str) -> dict:
     return {"available": True, "min_buyout": round(min(buyouts)), "lots_count": len(lots)}
 
 
+async def fetch_lots_page(client: httpx.AsyncClient, item_id: str,
+                          offset: int = 0, limit: int = 200) -> dict:
+    """Сырая страница активных лотов, дешёвые первыми: {total, lots: [...]} или {error}.
+
+    additional=true добавляет лотам qlt/ptn — раскладка по корзинам для цен
+    калькулятора сборок (средняя из N самых дешёвых выкупов корзины).
+    """
+    url = f"{config.API_BASE}/{config.REGION}/auction/{item_id}/lots"
+    params = {"limit": limit, "offset": offset, "additional": "true",
+              "sort": "buyout_price", "order": "asc"}
+
+    resp = None
+    for attempt in range(config.AUCTION_MAX_RETRIES + 1):
+        await _throttle()
+        try:
+            resp = await client.get(url, params=params, headers=_headers(), timeout=20.0)
+        except httpx.HTTPError as e:
+            logger.warning("lots page failed for %s: %s", item_id, e)
+            return {"error": "request_failed"}
+        if resp.status_code == 429:
+            retry_after = float(resp.headers.get("Retry-After", "1"))
+            await asyncio.sleep(min(retry_after, 5.0) * (attempt + 1))
+            continue
+        break
+
+    if resp is None or resp.status_code != 200:
+        return {"error": f"http_{resp.status_code if resp else 'none'}"}
+    return resp.json()
+
+
+async def fetch_history_page(client: httpx.AsyncClient, item_id: str,
+                             offset: int = 0, limit: int = 200,
+                             additional: bool = True) -> dict:
+    """Сырая страница истории продаж: {total, prices: [...]} или {error}.
+
+    additional=true добавляет каждой продаже qlt/ptn (качество/заточка) —
+    основа биржи артефактов. Страница ≤200 записей, offset — на любую глубину
+    (история хранится с 2018; у старых записей другой формат additional).
+    """
+    url = f"{config.API_BASE}/{config.REGION}/auction/{item_id}/history"
+    params = {"limit": limit, "offset": offset,
+              "additional": "true" if additional else "false"}
+
+    resp = None
+    for attempt in range(config.AUCTION_MAX_RETRIES + 1):
+        await _throttle()
+        try:
+            resp = await client.get(url, params=params, headers=_headers(), timeout=20.0)
+        except httpx.HTTPError as e:
+            logger.warning("history page failed for %s: %s", item_id, e)
+            return {"error": "request_failed"}
+        if resp.status_code == 429:
+            retry_after = float(resp.headers.get("Retry-After", "1"))
+            await asyncio.sleep(min(retry_after, 5.0) * (attempt + 1))
+            continue
+        break
+
+    if resp is None or resp.status_code != 200:
+        return {"error": f"http_{resp.status_code if resp else 'none'}"}
+    return resp.json()
+
+
 async def fetch_history(client: httpx.AsyncClient, item_id: str) -> dict:
-    """Частота продаж по недавней истории аука: {available, sales_per_hour, sold_count}."""
+    """Недавняя история продаж: {available, sales_per_hour, sold_count, avg_unit_price}."""
     url = f"{config.API_BASE}/{config.REGION}/auction/{item_id}/history"
     params = {"limit": 100}
 
@@ -96,7 +158,7 @@ async def fetch_history(client: httpx.AsyncClient, item_id: str) -> dict:
                 "error": f"http_{resp.status_code if resp else 'none'}"}
 
     entries = resp.json().get("prices", [])
-    times = []
+    times, units = [], []
     for e in entries:
         t = e.get("time")
         if t:
@@ -104,11 +166,17 @@ async def fetch_history(client: httpx.AsyncClient, item_id: str) -> dict:
                 times.append(datetime.fromisoformat(t.replace("Z", "+00:00")))
             except ValueError:
                 pass
+        price, amount = e.get("price"), e.get("amount") or 1
+        if price:
+            units.append(price / amount)  # цена продажи за 1 штуку
+    avg = round(sum(units) / len(units)) if units else None
     if not times:
-        return {"available": True, "sales_per_hour": 0.0, "sold_count": 0}
+        return {"available": True, "sales_per_hour": 0.0, "sold_count": 0,
+                "avg_unit_price": avg}
 
     now = datetime.now(timezone.utc)
     span_h = max((now - min(times)).total_seconds() / 3600, 1 / 60)
     return {"available": True,
             "sales_per_hour": round(len(times) / span_h, 1),
-            "sold_count": len(times)}
+            "sold_count": len(times),
+            "avg_unit_price": avg}

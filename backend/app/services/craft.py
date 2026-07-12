@@ -26,7 +26,9 @@ def _item_info(item_id: str) -> dict:
     return {
         "id": item_id,
         "name": it["name"] if it else item_id,
+        "name_en": it.get("name_en", "") if it else "",
         "icon": it["icon"] if it else "",
+        "color": it.get("color", "DEFAULT") if it else "DEFAULT",
         "status": it["status"] if it else None,
     }
 
@@ -83,6 +85,7 @@ def _price(item_id: str, path: tuple, ctx: dict, depth: int, expand: bool) -> di
             {"variant": idx + 1, "category": r.get("category"),
              "subcategory": r.get("subcategory"), "bench": r.get("bench"),
              "result_amount": ramount, "energy": r.get("energy"),
+             "requirements": r.get("requirements") or {},
              "recipe_cost": recipe_cost, "cost_known": known, "ingredients": ings},
         ))
 
@@ -93,12 +96,14 @@ def _price(item_id: str, path: tuple, ctx: dict, depth: int, expand: bool) -> di
 
     cands = [c for c in (node["market_price"], node["craft_cost"]) if c is not None]
     node["best_cost"] = min(cands) if cands else None
+    # При равной цене — покупка: крафт без выигрыша только добавляет действий
+    # и жжёт энергию верстака (иначе возможны петли вида бутылка→вода→бутылка).
     if node["best_cost"] is None:
         node["best_source"] = None
-    elif node["craft_cost"] is not None and node["best_cost"] == node["craft_cost"]:
-        node["best_source"] = "craft"
-    else:
+    elif node["market_price"] is not None and node["best_cost"] == node["market_price"]:
         node["best_source"] = "market"
+    else:
+        node["best_source"] = "craft"
 
     if chosen and (expand or node["best_source"] == "craft"):
         node["recipe"] = chosen
@@ -134,6 +139,9 @@ def analyze(item_id: str) -> dict:
         "buy_price": buy_price,
         "buy_available": buy_price is not None,
         "craft_cost": craft_cost,
+        "sales_per_hour": (store.history.get(item_id) or {}).get("sales_per_hour"),
+        "description": db.description(item_id),
+        "used_in": [_item_info(rid) for rid in db.used_in.get(item_id, [])],
         "tree": tree,
         "verdict": _verdict(tree, buy_price, craft_cost),
     }
@@ -148,7 +156,8 @@ def _verdict(tree: dict, buy_price, craft_cost) -> dict:
         return {"status": "no_market", "text": "Готового нет на ауке — не с чем сравнить",
                 "craft_cost": craft_cost}
     diff = buy_price - craft_cost
-    pct = round(diff / buy_price * 100) if buy_price else 0
+    # ROI на вложенное: (аук − крафт) / крафт — та же формула, что в рейтингах главной
+    pct = round(diff / craft_cost * 100) if craft_cost > 0 else 0
     profitable = diff > 0
     return {
         "status": "profitable" if profitable else "unprofitable",

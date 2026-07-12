@@ -12,10 +12,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app import config
-from app.db import loader
+from app.db import loader, market, users
 from app.db.index import db
 from app.routers.api import router as api_router
+from app.routers.auth import router as auth_router
 from app.services import oauth
+from app.services.artefact_lots import artlots
+from app.services.artefact_watch import artwatch
+from app.services.ingredient_watch import watch
 from app.services.price_store import store
 from app.services.rankings import rankings
 
@@ -31,11 +35,14 @@ app.add_middleware(
 @app.on_event("startup")
 async def startup() -> None:
     loader.ensure_data()
+    users.init()
+    market.init()
     db.load()
     store.load()
     store.set_base(db.priceable_ids())
     store.set_results(sorted(db.recipe_by_result))
     rankings.load()
+    watch.load()
     oauth.load()  # кэшированный app-токен (если работаем по клиентским кредам)
     auth_mode = ("oauth" if oauth.enabled()
                  else "static" if config.API_TOKEN else "MISSING")
@@ -44,10 +51,16 @@ async def startup() -> None:
                 len(store.base), len(store.prices))
     if config.PRICE_REFRESH_ENABLED:
         asyncio.create_task(store.refresh_loop())  # фоновое обновление цен
+        asyncio.create_task(watch.loop())          # биржа ингредиентов (2 раза/сутки)
+    if config.ART_WATCH_ENABLED:
+        asyncio.create_task(artwatch.loop())       # биржа артефактов (корзины qlt×ptn)
+    if config.ART_LOTS_ENABLED:
+        asyncio.create_task(artlots.loop())        # живые лоты (цены сборок первой недели)
 
 
 # API — регистрируем ДО статики, чтобы не перекрылось catch-all маунтом
 app.include_router(api_router)
+app.include_router(auth_router)
 
 # Иконки-зеркало и фронт. html=True отдаёт index.html на корне.
 # Каталог иконок на первом старте пуст (данные скачает startup-событие в volume),

@@ -3,6 +3,7 @@
 Скачивает репо одним zip-архивом и раскладывает локально:
   data/listing.json          — индекс предметов
   data/hideout_recipes.json  — рецепты верстака
+  data/items/**              — json-файлы предметов (описания, как в игре)
   data/icons/**              — PNG-иконки (зеркалим к себе)
 
 Скачиваем только если файлов ещё нет (или force=True). В продакшене обновлять
@@ -23,7 +24,8 @@ _JSON_FILES = ("listing.json", "hideout_recipes.json")
 
 
 def is_present() -> bool:
-    return all((config.DATA_DIR / f).exists() for f in _JSON_FILES) and config.ICONS_DIR.exists()
+    return (all((config.DATA_DIR / f).exists() for f in _JSON_FILES)
+            and config.ICONS_DIR.exists() and config.ITEMS_DIR.exists())
 
 
 def ensure_data(force: bool = False) -> None:
@@ -45,12 +47,16 @@ def ensure_data(force: bool = False) -> None:
     logger.info("Downloaded %.1f MB, extracting...", buf.getbuffer().nbytes / 1e6)
 
     lang = config.DB_LANG
-    icons_prefix = f"{lang}/icons/"
-    extracted_icons = 0
+    counts = {"icons": 0, "items": 0}
+    trees = {  # zip-префикс -> (куда извлекать, счётчик)
+        f"{lang}/icons/": (config.ICONS_DIR, "icons"),
+        f"{lang}/items/": (config.ITEMS_DIR, "items"),
+    }
 
-    if config.ICONS_DIR.exists():
-        shutil.rmtree(config.ICONS_DIR)
-    config.ICONS_DIR.mkdir(parents=True, exist_ok=True)
+    for target_dir, _ in trees.values():
+        if target_dir.exists():
+            shutil.rmtree(target_dir)
+        target_dir.mkdir(parents=True, exist_ok=True)
 
     with zipfile.ZipFile(buf) as zf:
         # верхняя папка вида "stalzone-database-main/"
@@ -62,15 +68,18 @@ def ensure_data(force: bool = False) -> None:
                 shutil.copyfileobj(src, dst)
             logger.info("Extracted %s", name)
 
-        marker = f"{root}/{icons_prefix}"
         for member in zf.namelist():
-            if not member.startswith(marker) or member.endswith("/"):
+            if member.endswith("/"):
                 continue
-            rel = member[len(marker):]  # путь под icons/, напр. other/qyvk.png
-            target = config.ICONS_DIR / rel
-            target.parent.mkdir(parents=True, exist_ok=True)
-            with zf.open(member) as src, open(target, "wb") as dst:
-                shutil.copyfileobj(src, dst)
-            extracted_icons += 1
+            for prefix, (target_dir, key) in trees.items():
+                marker = f"{root}/{prefix}"
+                if member.startswith(marker):
+                    rel = member[len(marker):]  # напр. other/qyvk.png | misc/404p.json
+                    target = target_dir / rel
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    with zf.open(member) as src, open(target, "wb") as dst:
+                        shutil.copyfileobj(src, dst)
+                    counts[key] += 1
+                    break
 
-    logger.info("Extracted %d icons to %s", extracted_icons, config.ICONS_DIR)
+    logger.info("Extracted %d icons, %d item files", counts["icons"], counts["items"])
