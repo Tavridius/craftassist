@@ -29,23 +29,24 @@ const PERK_RU = {
   cooking: "Кулинария", engineering: "Инженерия", materials: "Материалы",
   medicine: "Медицина", pyrotechnics: "Пиротехника",
 };
+// официальные имена из ru.lang клиента STALZONE (go.hideout_*.name)
 const FEATURE_RU = {
-  calipers_kit: "Штангенциркули", centrifuge: "Центрифуга",
-  chemical_reactor: "Химический реактор", chromatographic_equipment: "Хроматограф",
-  cnc: "Станок ЧПУ", electronics_kit: "Набор для работы с электроникой",
-  fermentation_container: "Тара для брожения", flasks_kit: "Набор колб",
+  calipers_kit: "Набор штангенциркулей", centrifuge: "Центрифуга",
+  chemical_reactor: "Химический реактор", chromatographic_equipment: "Хроматографическое оборудование",
+  cnc: "ЧПУ", electronics_kit: "Набор для работы с электроникой",
+  fermentation_container: "Тара для брожения", flasks_kit: "Набор колб и мензурок",
   gauze_filter: "Фильтр из марли",
-  generator_energy_source_anomal: "Генератор: аномальный источник",
-  generator_energy_source_battery: "Генератор: аккумулятор",
+  generator_energy_source_anomal: "Станция аномального преобразования",
+  generator_energy_source_battery: "Станция для приема батарей",
   hoods: "Вытяжка", kitchen_items: "Кухонная утварь", kitchen_table: "Кухонный стол",
   laboratory_table: "Лабораторный стол", laminar_box: "Ламинарный бокс",
   laser_level: "Лазерный уровень", lathe: "Токарный станок",
-  precise_powertools: "Точные электроинструменты", precise_tools: "Точные инструменты",
-  rotary_evaporator: "Ротационный испаритель", scalpels_kit: "Набор скальпелей",
-  screwdrivers: "Отвёртки", sterilization_system: "Система стерилизации",
-  stove: "Плита", tool_trolley: "Тележка с инструментами",
-  water_collector: "Сборник воды", welding_equipment: "Сварочное оборудование",
-  workbench: "Верстак", wrenches_kit: "Набор ключей",
+  precise_powertools: "Точные электроинструменты", precise_tools: "Прецизионный инструментарий",
+  rotary_evaporator: "Роторный испаритель", scalpels_kit: "Набор скальпелей",
+  screwdrivers: "Набор отверток и щипцов", sterilization_system: "Система стерилизации",
+  stove: "Кухонная плита", tool_trolley: "Тележка с инструментами",
+  water_collector: "Водосборник", welding_equipment: "Сварочное оборудование",
+  workbench: "Верстак", wrenches_kit: "Набор гаечных ключей",
 };
 const BENCH_RU = { workbench: "ВЕРСТАК", kitchen_table: "КУХОННЫЙ СТОЛ", laboratory_table: "ЛАБОРАТОРНЫЙ СТОЛ" };
 const perkName = (k) => PERK_RU[k] || k.replace(/_/g, " ");
