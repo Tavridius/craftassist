@@ -31,8 +31,15 @@ from app.services.artefact_watch import MSK
 
 M_MIN, M_MAX = 0.85, 1.75
 TIER_STEP = 0.15
-PTN_BONUS = 0.02            # +2% от базы за уровень заточки
 PTN_LEVELS = (0, 5, 10, 15)  # уровни заточки в автоподборе (решение юзера)
+# Заточка НЕлинейна (выведено из игровых тултипов Креветки/Браслета):
+# множитель к положительным статам = 1 + a·ptn + b·ptn²  →  +0×1.0, +5×1.10,
+# +10×1.35, +15×1.74. Проверено: Креветка +15 M1.15 пуле 7.1×1.15×1.739=14.2 (в игре 14.2).
+SHARP_A, SHARP_B = 0.0053667, 0.0029267
+
+
+def sharp(ptn: int) -> float:
+    return 1.0 + SHARP_A * ptn + SHARP_B * ptn * ptn
 
 BULLET_KEY = "stalker.artefact_properties.factor.bullet_dmg_factor"
 HEALTH_KEY = "stalker.artefact_properties.factor.health_bonus"
@@ -71,11 +78,21 @@ def stat_base(st: dict) -> float:
     return st["max"] if abs(st["max"]) >= abs(st["min"]) else st["min"]
 
 
+def tier_frac(m: float) -> float:
+    """Позиция M внутри своего тира [0..1] (для вредных статов)."""
+    lo, hi = tier_bounds(qlt_from_m(m))
+    return max(0.0, min(1.0, (m - lo) / (hi - lo))) if hi > lo else 1.0
+
+
 def stat_value(st: dict, m: float, ptn: int) -> float:
-    """Вредные (эмиссия заражения) — константа; полезные — масштаб качеством+заточкой."""
+    """Полезные: q0max × M × заточка(ptn). Вредные (эмиссия): заточкой НЕ растут,
+    внутри тира интерполируются от меньшего к большему модулю (проверено тултипами:
+    Пси Креветки 1.17 при M1.08 → 1.25 при M1.15; заточка Пси не меняет)."""
     if st["harmful"]:
-        return stat_base(st)
-    return stat_base(st) * m * (1 + PTN_BONUS * ptn)
+        lo = st["min"] if abs(st["min"]) <= abs(st["max"]) else st["max"]  # меньший модуль
+        hi = st["max"] if abs(st["max"]) >= abs(st["min"]) else st["min"]
+        return lo + (hi - lo) * tier_frac(m)
+    return stat_base(st) * m * sharp(ptn)
 
 
 def milestones(ptn: int) -> list[int]:
@@ -192,7 +209,7 @@ def build_dict() -> dict:
     return {"containers": containers, "stats": stats, "artefacts": artefacts,
             "armor": armor, "contamination": contam,
             "model": {"m_min": M_MIN, "m_max": M_MAX, "tier_step": TIER_STEP,
-                      "ptn_bonus": PTN_BONUS, "ptn_levels": list(PTN_LEVELS),
+                      "sharp_a": SHARP_A, "sharp_b": SHARP_B, "ptn_levels": list(PTN_LEVELS),
                       "min_sales": config.ART_MIN_SALES,
                       "bullet_key": BULLET_KEY, "health_key": HEALTH_KEY}}
 

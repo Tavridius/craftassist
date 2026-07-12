@@ -848,7 +848,20 @@ const QLT_COLORS = ["#b9c9b9", "#5fd67a", "#5fa8ff", "#d46bff", "#ff6b5e", "#ffb
 const qltColor = (q) => QLT_COLORS[q] || QLT_COLORS[0];
 // опорное значение — конец диапазона с большим модулем (у «меньше — лучше» он отрицательный)
 const statBase = (st) => (Math.abs(st.max) >= Math.abs(st.min) ? st.max : st.min);
-const statVal = (st, m, ptn) => (st.harmful ? statBase(st) : statBase(st) * m * (1 + MDL().ptn_bonus * ptn));
+// заточка нелинейна: ×1 при +0 … ×1.74 при +15 (коэффициенты с бэка)
+const sharp = (ptn) => 1 + MDL().sharp_a * ptn + MDL().sharp_b * ptn * ptn;
+const tierFrac = (m) => {
+  const q = qltFromM(m), lo = q === 0 ? MDL().m_min : tierTop(q) - MDL().tier_step, hi = tierTop(q);
+  return hi > lo ? Math.max(0, Math.min(1, (m - lo) / (hi - lo))) : 1;
+};
+const statVal = (st, m, ptn) => {
+  if (st.harmful) {  // эмиссия: заточкой не растёт, внутри тира интерполяция мал.модуль→бол.
+    const lo = Math.abs(st.min) <= Math.abs(st.max) ? st.min : st.max;
+    const hi = Math.abs(st.max) >= Math.abs(st.min) ? st.max : st.min;
+    return lo + (hi - lo) * tierFrac(m);
+  }
+  return statBase(st) * m * sharp(ptn);
+};
 const fmtStat = (v) => (v > 0 ? "+" : "") + (Math.abs(v) >= 100 ? Math.round(v) : v.toFixed(2));
 const contLabel = (c) =>
   `${c.name} · ${c.slots} СЛОТ${c.slots > 1 ? "А" : ""} · ЭФФ ${c.efficiency ?? "—"}% · ЗАЩИТА ${c.protection ?? "—"}%`;
