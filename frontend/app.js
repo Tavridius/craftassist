@@ -1,7 +1,16 @@
 // StalZone Craft — фронт «PDA-терминал». Только отрисовка, вся логика на бэке.
-const BASE = location.pathname.replace(/\/[^/]*$/, "");   // "" или "/mvp"
+const BASE = "";                       // приложение на корне домена
 const api = (p) => `${BASE}/api${p}`;
 const asset = (p) => (p ? `${BASE}/${p}` : "");
+
+// ---------- History API-роутинг: реальные пути вместо #hash ----------
+// navigate(path) — переход по SPA (pushState), route() читает location.pathname.
+function navigate(path, { replace = false } = {}) {
+  const cur = location.pathname + location.search;
+  if (path === cur) { route(); return; }
+  history[replace ? "replaceState" : "pushState"](null, "", path);
+  route();
+}
 
 const RANKS = {
   RANK_NEWBIE:  { label: "НОВИЧОК",  color: "var(--r-newbie)" },
@@ -98,12 +107,12 @@ function renderModeToggle() {
     : "Фильтр по прокачке убежища — доступен после входа через EXBO";
 }
 modeToggle.addEventListener("click", () => {
-  if (!(ME && ME.authenticated)) { location.hash = "profile"; return; }
+  if (!(ME && ME.authenticated)) { navigate("/profile"); return; }
   localStorage.setItem("sz_avail", availMode() ? "0" : "1");
   renderModeToggle();
   lastQuery = null;          // форсировать перезапрос поиска
   home.dataset.ts = "";      // и главной
-  routeFromHash();
+  route();
 });
 
 async function loadAuth() {
@@ -111,13 +120,13 @@ async function loadAuth() {
     ME = await fetch(api("/me")).then((r) => r.json());
     if (ME.authenticated) {
       const name = ME.user.display_login || ME.user.login;
-      authBox.innerHTML = `<a class="auth-user" href="#profile" title="Профиль убежища · EXBO ID ${ME.user.exbo_id}">${escapeHtml(name)}</a>
+      authBox.innerHTML = `<a class="auth-user" href="/profile" title="Профиль убежища · EXBO ID ${ME.user.exbo_id}">${escapeHtml(name)}</a>
         <button class="auth-out" id="logoutBtn" title="Завершить сессию">ВЫХОД</button>`;
       $("logoutBtn").addEventListener("click", async () => {
         await fetch(`${BASE}/auth/logout`, { method: "POST" }).catch(() => {});
         localStorage.removeItem("sz_avail");
         localStorage.removeItem("sz_onb");
-        loadAuth().then(() => { if (location.hash === "#profile") location.hash = ""; });
+        loadAuth().then(() => { if (location.pathname === "/profile") navigate("/"); });
       });
     } else if (ME.auth_enabled) {
       authBox.innerHTML = `<a class="auth-login" href="${BASE}/auth/login">ВХОД</a>`;
@@ -130,24 +139,23 @@ async function loadAuth() {
   // стартовый рендер мог уйти без фильтра, пока /me не ответил — перерисовать
   if (ME && ME.authenticated && availMode()) {
     lastQuery = null; home.dataset.ts = "";
-    routeFromHash();
+    route();
   }
 }
 
 // ---------- онбординг: подсказка заполнить профиль после первого входа ----------
 const onboard = $("onboard");
 function renderOnboard() {
+  // подсказка только в крафт-контексте (главная, поиск, карточка), не в других разделах
+  const craftCtx = /^\/(item\/|search|$)/.test(location.pathname) || location.pathname === "/";
   const show = ME && ME.authenticated && ME.profile_empty
-    && localStorage.getItem("sz_onb") !== "1" && location.hash !== "#profile"
-    && !PAGES[location.hash.slice(1)]
-    && !location.hash.startsWith("#auction") && !location.hash.startsWith("#artm")
-    && !location.hash.startsWith("#builds");
+    && localStorage.getItem("sz_onb") !== "1" && craftCtx;
   if (!show) { onboard.classList.add("hidden"); onboard.innerHTML = ""; return; }
   onboard.classList.remove("hidden");
   onboard.innerHTML = `<span class="mark">[!]</span>
     <span class="txt">ПРОФИЛЬ УБЕЖИЩА НЕ ЗАПОЛНЕН. Отметь прокачанные навыки и станки —
       терминал покажет доступные тебе рецепты и подсветит, чего не хватает в карточках.</span>
-    <a class="onb-go" href="#profile">ЗАПОЛНИТЬ</a>
+    <a class="onb-go" href="/profile">ЗАПОЛНИТЬ</a>
     <button class="onb-x" title="Скрыть подсказку">✕</button>`;
   onboard.querySelector(".onb-x").addEventListener("click", () => {
     localStorage.setItem("sz_onb", "1");
@@ -167,7 +175,14 @@ function renderOnboard() {
 let searchTimer = null, lastQuery = "";
 input.addEventListener("input", () => {
   clearTimeout(searchTimer);
-  searchTimer = setTimeout(doSearch, 250);
+  searchTimer = setTimeout(() => {
+    // держим URL в синхроне (без замусоривания истории), затем ищем
+    const q = input.value.trim();
+    const path = q ? `/search?q=${encodeURIComponent(q)}` : "/";
+    if (location.pathname + location.search !== path)
+      history.replaceState(null, "", path);
+    doSearch();
+  }, 250);
 });
 
 async function doSearch() {
@@ -190,7 +205,7 @@ async function doSearch() {
 function renderResults(items, availOnly) {
   if (!items.length) {
     results.innerHTML = `<div class="empty">${availOnly
-      ? `НЕТ ДОСТУПНЫХ ПО ПРОКАЧКЕ РЕЦЕПТОВ. ПРОВЕРЬ <a href="#profile">ПРОФИЛЬ</a> ИЛИ ПЕРЕКЛЮЧИ НА «ВСЕ».`
+      ? `НЕТ ДОСТУПНЫХ ПО ПРОКАЧКЕ РЕЦЕПТОВ. ПРОВЕРЬ <a href="/profile">ПРОФИЛЬ</a> ИЛИ ПЕРЕКЛЮЧИ НА «ВСЕ».`
       : "НИЧЕГО НЕ НАЙДЕНО"}</div>`;
     return;
   }
@@ -203,7 +218,7 @@ function renderResults(items, availOnly) {
     cell.style.borderLeftColor = rank(it.color).color;
     cell.innerHTML = `<img loading="lazy" src="${asset(it.icon)}" alt="">
                       <div class="nm">${escapeHtml(it.name)}</div>`;
-    cell.addEventListener("click", () => { location.hash = `item=${it.id}`; });
+    cell.addEventListener("click", () => { navigate(`/item/${it.id}`); });
     grid.appendChild(cell);
   }
   results.appendChild(grid);
@@ -497,10 +512,10 @@ function renderDetail(d) {
 function wireDetail() {
   const b = detail.querySelector(".back");
   if (b) b.addEventListener("click", () => {
-    location.hash = lastQuery ? `q=${encodeURIComponent(lastQuery)}` : "";
+    navigate(lastQuery ? `/search?q=${encodeURIComponent(lastQuery)}` : "/");
   });
   detail.querySelectorAll(".tname[data-id], .ilink[data-id], .use-row[data-id]").forEach((el) =>
-    el.addEventListener("click", () => { location.hash = `item=${el.dataset.id}`; }));
+    el.addEventListener("click", () => { navigate(`/item/${el.dataset.id}`); }));
 }
 
 // ---------- главная: биржа ингредиентов + подборки ----------
@@ -605,7 +620,15 @@ function renderHome(d, w) {
         : `<div class="empty-sm">${empty}</div>`}
     </section>`;
 
-  let h = watchBlock(w);
+  // лендинг «что выгодно крафтить» — видимый заголовок под SEO-запрос
+  let h = location.pathname === "/vygodno-kraftit"
+    ? `<div class="landing-intro">
+        <h2>Что выгодно крафтить в STALZONE сегодня</h2>
+        <p>Живой рейтинг выгоды: сравниваем себестоимость крафта по дереву рецептов
+        с ценой готового предмета на аукционе и показываем, где маржа положительная.
+        Данные обновляются автоматически.</p>
+      </div>` : "";
+  h += watchBlock(w);
 
   h += `<div class="home-cols">`;
   const availEmpty = d.available_only
@@ -624,7 +647,7 @@ function renderHome(d, w) {
 
   home.innerHTML = h;
   home.querySelectorAll(".side-row, .watch-card").forEach((r) =>
-    r.addEventListener("click", () => { location.hash = `item=${r.dataset.id}`; }));
+    r.addEventListener("click", () => { navigate(`/item/${r.dataset.id}`); }));
 }
 
 // ---------- биржа артефактов: топ роста цен по корзинам качество×заточка ----------
@@ -723,7 +746,7 @@ function renderAuction(d) {
   $("aPtn").addEventListener("change", (e) => { artFilters.ptn = +e.target.value; openAuction(); });
   page.querySelectorAll(".side-row").forEach((r) => r.addEventListener("click", () => {
     artCardSel = { qlt: +r.dataset.qlt, ptn: +r.dataset.ptn };
-    location.hash = `artm=${r.dataset.id}`;
+    navigate(`/artefact/${r.dataset.id}`);
   }));
 }
 
@@ -767,7 +790,7 @@ function renderArtCard(d) {
   if (!bs.length) {
     h += `<div class="empty">ПО ЭТОМУ АРТЕФАКТУ ЕЩЁ НЕТ ЗАМЕРОВ — ДАННЫЕ КОПЯТСЯ ПО РАСПИСАНИЮ.</div>`;
     page.innerHTML = h;
-    $("artBack").addEventListener("click", () => { location.hash = "auction"; });
+    $("artBack").addEventListener("click", () => { navigate("/auction"); });
     return;
   }
 
@@ -785,7 +808,7 @@ function renderArtCard(d) {
     <div id="bucketChart"></div>`;
 
   page.innerHTML = h;
-  $("artBack").addEventListener("click", () => { location.hash = "auction"; });
+  $("artBack").addEventListener("click", () => { navigate("/auction"); });
   const drawChart = (b) => {
     $("bucketChart").innerHTML = `
       <div class="section-head"><div class="section-title">▸ ДИНАМИКА · ${bucketBadge(b.qlt, b.ptn)}</div>
@@ -1234,7 +1257,7 @@ function renderProfile(dict, prof, user) {
     }
   });
   const b = detail.querySelector(".back");
-  if (b) b.addEventListener("click", () => { location.hash = ""; });
+  if (b) b.addEventListener("click", () => { navigate("/"); });
 }
 
 // ---------- разделы в разработке: заглушки с описанием модуля ----------
@@ -1267,54 +1290,83 @@ function openPage(key) {
     <div class="stub-title">▸ ${p.title}</div>
     <div class="stub-desc">${p.desc}</div>
     <div class="stub-status">СТАТУС: В РАЗРАБОТКЕ</div>
-    <a class="stub-back" href="#">◂ ВЕРНУТЬСЯ К КРАФТУ</a>
+    <a class="stub-back" href="/">◂ ВЕРНУТЬСЯ К КРАФТУ</a>
   </div>`;
   window.scrollTo(0, 0);
 }
 
-// ---------- роутер: разделы + диплинки (#item=ID — карточка, #q=… — поиск) ----------
-function routeFromHash() {
-  renderOnboard();  // подсказка прячется на профиле, заглушках и после заполнения
-  const m = new URLSearchParams(location.hash.slice(1));
+// ---------- роутер на реальных путях ----------
+// Старые #hash-ссылки (item=/q=/auction/artm=/builds/profile/map/guides) —
+// разово переводим в новый путь при загрузке (шаринг в комьюнити не ломается).
+function migrateLegacyHash() {
+  const h = location.hash.slice(1);
+  if (!h || h === "auth=error") return;
+  const m = new URLSearchParams(h);
+  let path = null;
+  if (m.get("item")) path = `/item/${m.get("item")}`;
+  else if (m.get("artm")) path = `/artefact/${m.get("artm")}`;
+  else if (m.has("auction")) path = "/auction";
+  else if (m.has("builds")) path = "/builds";
+  else if (m.has("profile")) path = "/profile";
+  else if (m.has("map")) path = "/map";
+  else if (m.has("guides")) path = "/guides";
+  else if (m.get("q")) path = `/search?q=${encodeURIComponent(m.get("q"))}`;
+  if (path) history.replaceState(null, "", path);
+}
+
+function route() {
+  renderOnboard();  // подсказка прячется на профиле, заглушках и в других разделах
+  const path = location.pathname;
   const strip = document.querySelector(".search-strip");
-  if (m.has("auction") || m.get("artm")) {   // биржа артефактов (раздел АУКЦИОН)
-    strip.classList.add("hidden");
-    setNav("auction");
-    if (m.get("artm")) openArtCard(m.get("artm")); else openAuction();
-    return;
+  let mm;
+
+  if (path === "/auction") {
+    strip.classList.add("hidden"); page.classList.add("hidden");
+    setNav("auction"); openAuction(); return;
   }
-  if (m.has("builds")) {                     // калькулятор сборок
-    strip.classList.add("hidden");
-    setNav("builds");
-    openBuilds();
-    return;
+  if ((mm = path.match(/^\/artefact\/(.+)$/))) {
+    strip.classList.add("hidden"); page.classList.add("hidden");
+    setNav("auction"); openArtCard(decodeURIComponent(mm[1])); return;
   }
-  const pageKey = Object.keys(PAGES).find((k) => m.has(k));
-  if (pageKey) {
-    strip.classList.add("hidden");
-    setNav(pageKey);
-    openPage(pageKey);
-    return;
+  if (path === "/builds") {
+    strip.classList.add("hidden"); page.classList.add("hidden");
+    setNav("builds"); openBuilds(); return;
   }
+  if (PAGES[path.slice(1)]) {
+    strip.classList.add("hidden"); page.classList.add("hidden");
+    setNav(path.slice(1)); openPage(path.slice(1)); return;
+  }
+
+  // крафт-контекст: главная / лендинг / поиск / карточка / профиль
   strip.classList.remove("hidden");
   page.classList.add("hidden");
   setNav("craft");
-  if (m.has("profile")) { openProfile(); return; }
-  if (m.get("item")) { openItem(m.get("item")); return; }
-  if (m.get("q")) { input.value = m.get("q"); lastQuery = ""; doSearch(); return; }
+  if (path === "/profile") { openProfile(); return; }
+  if ((mm = path.match(/^\/item\/(.+)$/))) { openItem(decodeURIComponent(mm[1])); return; }
+  if (path === "/search") {
+    const q = new URLSearchParams(location.search).get("q") || "";
+    input.value = q; lastQuery = ""; doSearch(); return;
+  }
+  // "/" и "/vygodno-kraftit" (лендинг) — главная
+  input.value = ""; lastQuery = "";
   detail.classList.add("hidden");
   results.innerHTML = "";
   home.classList.remove("hidden");
   loadHome();
 }
-window.addEventListener("hashchange", routeFromHash);
-routeFromHash();
 
-// логотип и вкладка «КРАФТ» ведут на главную; если хэш уже пуст — сбросить поиск вручную
-document.querySelectorAll(".brand-wrap, #topnav a[data-sec='craft']").forEach((el) =>
-  el.addEventListener("click", () => {
-    input.value = "";
-    lastQuery = "";
-    if (!location.hash || location.hash === "#") routeFromHash();
-    // иначе сработает hashchange
-  }));
+// перехват кликов по внутренним ссылкам → SPA-переход (кроме /api, /auth, _blank)
+document.addEventListener("click", (e) => {
+  if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+  const a = e.target.closest("a");
+  if (!a) return;
+  const href = a.getAttribute("href");
+  if (!href || !href.startsWith("/") || a.target === "_blank" || a.hasAttribute("download")) return;
+  if (href.startsWith("/api") || href.startsWith("/auth")) return;  // серверные редиректы
+  e.preventDefault();
+  navigate(href);
+});
+
+window.addEventListener("popstate", route);
+migrateLegacyHash();
+route();

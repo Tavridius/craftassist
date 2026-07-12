@@ -16,6 +16,7 @@ from app.db import loader, market, users
 from app.db.index import db
 from app.routers.api import router as api_router
 from app.routers.auth import router as auth_router
+from app.routers.pages import router as pages_router
 from app.services import oauth
 from app.services.artefact_lots import artlots
 from app.services.artefact_watch import artwatch
@@ -58,9 +59,12 @@ async def startup() -> None:
         asyncio.create_task(artlots.loop())        # живые лоты (цены сборок первой недели)
 
 
-# API — регистрируем ДО статики, чтобы не перекрылось catch-all маунтом
+# API и SSR-страницы — ДО статики, чтобы не перекрылись catch-all маунтом.
+# pages отдаёт index.html с мета-тегами для SPA-путей (/item/{id}, /auction, …)
+# и генерит /sitemap.xml; статика (app.js, styles.css, иконки) — маунтом ниже.
 app.include_router(api_router)
 app.include_router(auth_router)
+app.include_router(pages_router)
 
 # Иконки-зеркало и фронт. html=True отдаёт index.html на корне.
 # Каталог иконок на первом старте пуст (данные скачает startup-событие в volume),

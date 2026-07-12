@@ -102,6 +102,9 @@ a.brand-wrap:hover .brand { color: var(--green); text-shadow: var(--glow); }
 }
 .page-footer p { margin: 0; }
 .page-footer strong { color: var(--text); font-weight: 700; }
+.foot-links { margin-top: 10px !important; letter-spacing: 0.04em; }
+.foot-links a { color: var(--dim); text-decoration: none; border-bottom: 1px dotted var(--border); }
+.foot-links a:hover { color: var(--green); border-color: var(--green-border); }
 .topstats { display: flex; align-items: center; gap: 20px; font-size: 11px; letter-spacing: 0.06em; color: var(--dim); }
 .topstats .stat span { color: var(--text); }
 .clock { color: var(--bright); font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -490,6 +493,14 @@ a.auth-user:hover { color: var(--green); text-shadow: var(--glow); }
 /* кликабельные имена предметов */
 .ilink { cursor: pointer; }
 .ilink:hover { color: var(--green); text-decoration: underline; }
+
+/* ---------- лендинг «что выгодно крафтить» ---------- */
+.landing-intro { margin-bottom: 18px; border-left: 2px solid var(--green-border); padding-left: 14px; }
+.landing-intro h2 {
+  margin: 0 0 6px; font-size: 16px; font-weight: 800; letter-spacing: 0.04em;
+  color: var(--bright); text-transform: uppercase;
+}
+.landing-intro p { margin: 0; font-size: 12px; line-height: 1.7; color: var(--dim); max-width: 720px; }
 
 /* ---------- биржа артефактов ---------- */
 .artbar {

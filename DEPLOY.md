@@ -108,6 +108,19 @@ CRAFT_MAX_VARIANTS=6
 `/api/top` принимают `?available=1` — фильтр «на что хватает прокачки»
 (тумблер «РЕЦЕПТЫ: ДОСТУПНЫЕ/ВСЕ» в шапке).
 
+## History API + SSR-лайт мета (13 июля 2026)
+
+- Фронт на реальных путях (`/item/{id}`, `/auction`, `/artefact/{id}`, `/builds`,
+  `/profile`, `/search`, `/vygodno-kraftit`) вместо `#hash`. Старые hash-ссылки
+  мигрируют в путь при загрузке.
+- `backend/app/routers/pages.py` отдаёт `index.html` с подставленными
+  title/description/canonical/og под каждый URL; включён в `main.py` ДО
+  StaticFiles-маунта (иначе catch-all перекроет). Генерит `/sitemap.xml`.
+- nginx менять НЕ нужно — он и так проксирует `location /` на приложение,
+  которое само обслуживает SPA-пути и статику.
+- Проверка: `curl https://stalzone-helper.ru/builds | grep '<title>'` — тайтл
+  раздела, не главной; `/sitemap.xml` отдаёт 4 URL; `/item/{id}` — имя в тайтле.
+
 ## Биржа артефактов + калькулятор сборок (12 июля 2026)
 
 - `services/artefact_watch.py` — снапшоты истории продаж артефактов по корзинам
