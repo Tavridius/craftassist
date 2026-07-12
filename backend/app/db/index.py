@@ -29,6 +29,7 @@ class GameDB:
         self.hideout_perks: list[dict] = []       # [{id, name}] — навыки крафта из БД
         self.hideout_features: list[str] = []     # все станки/фичи из requirements рецептов
         self.hideout_feature_icons: dict[str, str] = {}  # фича -> иконка предмета (где есть)
+        self._hideout_key_icon: dict[str, str] = {}  # суффикс go.hideout_-ключа -> иконка
         self.artefacts: dict[str, dict] = {}      # id -> {class, weight, stats{key: {name,min,max,harmful}}}
         self.artefact_stat_names: dict[str, dict] = {}  # stat_key -> {name, harmful} (справочник)
         self.containers: dict[str, dict] = {}     # id -> {name, icon, rank, slots, efficiency, protection, weight}
@@ -65,6 +66,10 @@ class GameDB:
             name_ru = _tr(e.get("name"), "ru")
             name_en = _tr(e.get("name"), "en")
             icon = (e.get("icon") or "").lstrip("/")  # 'icons/other/qyvk.png' (relative)
+            # предметы убежища помечены ключом go.hideout_<зона>_<фича> — копим для иконок станков
+            key = ((e.get("name") or {}).get("key")) or ""
+            if key.startswith("go.hideout_") and key.endswith(".name"):
+                self._hideout_key_icon[key[len("go.hideout_"):-len(".name")]] = icon
             self.items[item_id] = {
                 "id": item_id,
                 "name": name_ru or name_en or item_id,
@@ -76,15 +81,21 @@ class GameDB:
             self._data_path[item_id] = data_path.lstrip("/")  # 'items/misc/404p.json'
             self._search.append((item_id, f"{name_ru} {name_en}".lower()))
 
-    # станок/инструмент убежища -> предмет базы (для иконки; сверено по именам предметов)
-    _FEATURE_ITEM = {
-        "chemical_reactor": "yj0k", "hoods": "2l3l", "kitchen_items": "n2n1",
-        "kitchen_table": "rzpv", "laboratory_table": "gv96", "lathe": "kv5y",
-        "stove": "mvyy", "tool_trolley": "6z9p", "welding_equipment": "yjnk",
-        "precise_powertools": "w6l2", "fermentation_container": "v4gr",
-        "water_collector": "rzvv", "gauze_filter": "0qj9",
-        "generator_energy_source_anomal": "gn975", "generator_energy_source_battery": "gn975",
+    # фичи, чей ключ не совпадает по суффиксу с предметом убежища (ручной доводчик)
+    _FEATURE_ITEM_OVERRIDE = {
+        "generator_energy_source_battery": "generator_battery_station",  # Станция для приёма батарей
     }
+
+    def _feature_icon(self, feature: str) -> str:
+        """Иконка станка/инструмента: предмет убежища, чей go.hideout_-ключ
+        оканчивается на _<feature> (напр. workshop_lathe → lathe)."""
+        ov = self._FEATURE_ITEM_OVERRIDE.get(feature)
+        if ov and ov in self._hideout_key_icon:
+            return self._hideout_key_icon[ov]
+        for suffix, icon in self._hideout_key_icon.items():
+            if suffix == feature or suffix.endswith("_" + feature):
+                return icon
+        return ""
 
     def _load_hideout_recipes(self) -> None:
         doc = self._read("hideout_recipes.json")
@@ -105,10 +116,9 @@ class GameDB:
             for res in recipe["result"]:
                 self.recipe_by_result.setdefault(res["item"], []).append(recipe)
         self.hideout_features = sorted(feats)
-        # иконки станков/инструментов из предметов базы (где такой предмет есть)
+        # иконки станков/инструментов: по go.hideout_-ключу предмета убежища
         self.hideout_feature_icons = {
-            f: (self.items.get(iid) or {}).get("icon", "")
-            for f, iid in self._FEATURE_ITEM.items() if iid in self.items}
+            f: ic for f in self.hideout_features if (ic := self._feature_icon(f))}
 
     # ---------- статы артефактов и контейнеры (для калькулятора сборок) ----------
     def _item_json(self, item_id: str) -> dict | None:

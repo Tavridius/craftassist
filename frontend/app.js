@@ -32,7 +32,7 @@ const PERK_RU = {
 const FEATURE_RU = {
   calipers_kit: "Штангенциркули", centrifuge: "Центрифуга",
   chemical_reactor: "Химический реактор", chromatographic_equipment: "Хроматограф",
-  cnc: "Станок ЧПУ", electronics_kit: "Набор электроники",
+  cnc: "Станок ЧПУ", electronics_kit: "Набор для работы с электроникой",
   fermentation_container: "Тара для брожения", flasks_kit: "Набор колб",
   gauze_filter: "Фильтр из марли",
   generator_energy_source_anomal: "Генератор: аномальный источник",
