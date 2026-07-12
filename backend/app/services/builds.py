@@ -47,6 +47,8 @@ _CONTAM = {
     "combustion_accumulation": ("Горение", None),
 }
 CONTAM_KEYS = {f"stalker.artefact_properties.factor.{k}": v for k, v in _CONTAM.items()}
+FROST_KEY = "stalker.artefact_properties.factor.frost_accumulation"  # «холод» — защита НЕ гасит
+ACCUM_KEYS = set(CONTAM_KEYS)  # accumulation-статы идут в блок заражения, не в статы
 
 BUDGET_STEPS = 400   # дискретизация бюджета в DP
 ALTERNATIVES = 2     # запасных сборок
@@ -115,22 +117,30 @@ def bucket_prices() -> dict:
 
 # ---------- заражения ----------
 def contamination(variants: list[dict], cont: dict) -> list[dict]:
-    """Заражение сборки по типам после гашения внутренней защитой контейнера."""
+    """Заражение по типам. Эмиссия (красный, +) гасится внутренней защитой
+    контейнера (кроме мороза); защита (зелёный, −) усиливается эффективностью."""
     prot = (cont.get("protection") or 0.0) / 100.0
+    eff = (cont.get("efficiency") or 100.0) / 100.0
     out = []
     for key, (name, limit) in CONTAM_KEYS.items():
-        net = 0.0
+        emit = protect = 0.0
         present = False
         for v in variants:
             st = db.artefacts[v["item"]]["stats"].get(key)
-            if st:
-                present = True
-                net += stat_value(st, v["m"], v["ptn"])
+            if not st:
+                continue
+            present = True
+            val = stat_value(st, v["m"], v["ptn"])
+            if st["harmful"]:        # эмиссия заражения (константа)
+                emit += val
+            else:                    # защита — положительное свойство, ×эффективность
+                protect += val * eff
         if not present:
             continue
-        eff = net * (1 - prot) if net > 0 else net
-        out.append({"key": key, "name": name, "net": round(eff, 3), "limit": limit,
-                    "over": limit is not None and eff > limit + 1e-9})
+        reduce = 1.0 if key == FROST_KEY else (1 - prot)  # мороз защита не гасит
+        net = emit * reduce + protect
+        out.append({"key": key, "name": name, "net": round(net, 3), "limit": limit,
+                    "over": limit is not None and net > limit + 1e-9})
     return out
 
 
@@ -277,6 +287,7 @@ def _optimize(pool: list[dict], cont: dict, budget: float, score, banned: set) -
 
 # ---------- презентация сборки ----------
 def _present_build(picked: list[dict], cont: dict) -> dict:
+    eff = (cont.get("efficiency") or 100.0) / 100.0
     slots_out, totals_stats = [], {}
     cost = weight = 0.0
     low_liq = []
@@ -285,10 +296,12 @@ def _present_build(picked: list[dict], cont: dict) -> dict:
         art = db.artefacts[v["item"]]
         vals = {}
         for k, st in art["stats"].items():
-            val = round(stat_value(st, v["m"], v["ptn"]), 4)
+            val = round(stat_value(st, v["m"], v["ptn"]), 4)   # интринсик арта (как в тултипе)
             vals[k] = {"name": st["name"], "val": val, "harmful": st["harmful"]}
+            if k in ACCUM_KEYS:        # заражения — в блоке contamination, не в статах
+                continue
             t = totals_stats.setdefault(k, {"name": st["name"], "harmful": st["harmful"], "total": 0.0})
-            t["total"] += val
+            t["total"] += val * eff if not st["harmful"] else val   # эффективность на положительные
         cost += v["price"]
         weight += art["weight"] or 0.0
         thin = v["sales"] < (3 if v["src"] == "lots" else config.ART_MIN_SALES * 3)
@@ -420,6 +433,7 @@ def auto_hp(budget: float, container_id: str, armor_id: str, armor_ptn: int) -> 
     hmax = max((v["_h"] for v in pool), default=0.0) or 1.0
 
     # свип λ: value = b_norm + λ·h_norm; каждый λ даёт сборку, оцениваем истинное ХП
+    eff = (cont.get("efficiency") or 100.0) / 100.0   # эффективность усиливает вклад артов
     best, best_hp = None, -1.0
     banned: set = set()
     lambdas = [0.0] + [round(0.25 * i, 2) for i in range(1, 33)]  # 0 … 8
@@ -429,8 +443,8 @@ def auto_hp(budget: float, container_id: str, armor_id: str, armor_ptn: int) -> 
         picked = _optimize(pool, cont, budget, score, banned)
         if not picked:
             continue
-        b = base_bullet + sum(v["_b"] for v in picked)
-        h = base_vit + sum(v["_h"] for v in picked)
+        b = base_bullet + eff * sum(v["_b"] for v in picked)
+        h = base_vit + eff * sum(v["_h"] for v in picked)
         hp = _eff_hp(b, h)
         if hp > best_hp:
             best_hp, best = hp, picked
@@ -440,8 +454,9 @@ def auto_hp(budget: float, container_id: str, armor_id: str, armor_ptn: int) -> 
                 "hint": "Не удалось собрать под бюджет."}
 
     res = _present_build(best, cont)
-    art_bullet = sum(v["_b"] for v in best)
-    art_vit = sum(v["_h"] for v in best)
+    eff = (cont.get("efficiency") or 100.0) / 100.0   # усиливает вклад артефактов
+    art_bullet = sum(v["_b"] for v in best) * eff
+    art_vit = sum(v["_h"] for v in best) * eff
     total_bullet = base_bullet + art_bullet
     total_vit = base_vit + art_vit
     res["hp"] = {

@@ -851,24 +851,29 @@ const statBase = (st) => (Math.abs(st.max) >= Math.abs(st.min) ? st.max : st.min
 const statVal = (st, m, ptn) => (st.harmful ? statBase(st) : statBase(st) * m * (1 + MDL().ptn_bonus * ptn));
 const fmtStat = (v) => (v > 0 ? "+" : "") + (Math.abs(v) >= 100 ? Math.round(v) : v.toFixed(2));
 const contLabel = (c) =>
-  `${c.name} · ${c.slots} СЛОТ${c.slots > 1 ? "А" : ""} · ЗАЩИТА ${c.protection ?? "—"}`;
+  `${c.name} · ${c.slots} СЛОТ${c.slots > 1 ? "А" : ""} · ЭФФ ${c.efficiency ?? "—"}% · ЗАЩИТА ${c.protection ?? "—"}%`;
+const FROST_KEY = "stalker.artefact_properties.factor.frost_accumulation";  // «холод» — защита не гасит
 
-// заражение сборки на клиенте (ручной режим): net по типам после защиты контейнера
+// заражение сборки: эмиссия (красный) гасится защитой (кроме мороза), защита
+// (зелёный, минус) усиливается эффективностью — как на бэке
 function clientContam(slots, cont) {
-  const prot = (cont.protection ?? 0) / 100;
+  const prot = (cont.protection ?? 0) / 100, eff = (cont.efficiency ?? 100) / 100;
   const out = [];
   for (const c of BUILD_DICT.contamination) {
-    let net = 0, present = false;
+    let emit = 0, protect = 0, present = false;
     for (const s of slots) {
       if (!s) continue;
       const art = BUILD_DICT.artefacts.find((a) => a.id === s.id);
       const st = art && art.stats[c.key];
-      if (st) { present = true; net += statVal(st, s.m, s.ptn); }
+      if (!st) continue;
+      present = true;
+      const val = statVal(st, s.m, s.ptn);
+      if (st.harmful) emit += val; else protect += val * eff;
     }
     if (!present) continue;
-    const eff = net > 0 ? net * (1 - prot) : net;
-    out.push({ name: c.name, net: +eff.toFixed(3), limit: c.limit,
-               over: c.limit != null && eff > c.limit + 1e-9 });
+    const net = emit * (c.key === FROST_KEY ? 1 : (1 - prot)) + protect;
+    out.push({ name: c.name, net: +net.toFixed(3), limit: c.limit,
+               over: c.limit != null && net > c.limit + 1e-9 });
   }
   return out;
 }
@@ -928,16 +933,18 @@ function slotPrice(s) {
 
 const srcLabel = (src) => (src === "lots" ? `СР. 5 ДЕШЁВЫХ ЛОТОВ` : "СР. ЗА 7 ДНЕЙ");
 
-// суммарные статы (сырые суммы, как в игровой формуле) + заражение
+// суммарные статы: положительные × эффективность контейнера; заражения — отдельно
 function manualTotals(cont) {
+  const eff = (cont.efficiency ?? 100) / 100;
   const stats = {}, out = { cost: 0, unpriced: 0, weight: cont.weight || 0, stats };
   for (const s of buildState.slots) {
     if (!s) continue;
     const art = BUILD_DICT.artefacts.find((a) => a.id === s.id);
     out.weight += art.weight || 0;
     for (const [k, st] of Object.entries(art.stats)) {
+      if (BUILD_DICT.contamination.some((c) => c.key === k)) continue;  // заражения — в блоке
       const t = stats[k] || (stats[k] = { name: st.name, harmful: st.harmful, total: 0 });
-      t.total += statVal(st, s.m, s.ptn);
+      t.total += st.harmful ? statVal(st, s.m, s.ptn) : statVal(st, s.m, s.ptn) * eff;
     }
     const p = slotPrice(s);
     if (p) out.cost += p.price; else out.unpriced++;
@@ -1039,10 +1046,11 @@ function renderBuilds() {
   h += buildTab === "manual" ? renderManual(cont)
      : buildTab === "auto" ? renderAuto(cont) : renderHP(cont);
   const footer = buildTab === "manual"
-    ? `КАЧЕСТВО ЗАДАЁТСЯ РЕДКОСТЬЮ ИЛИ ПОЛЕМ % (85–175%): ВЫХОД ЗА ГРАНИЦЫ ТИРА МЕНЯЕТ РЕДКОСТЬ.
-       ЦВЕТ ИМЕНИ — РЕДКОСТЬ. ЗАРАЖЕНИЯ ГАСЯТСЯ ЗАЩИТОЙ КОНТЕЙНЕРА; ЛИМИТЫ ИГРОКА: РАД/ТЕМП/БИО — 1.0, ПСИ — 3.0.`
-    : `АВТОПОДБОР УЧИТЫВАЕТ ЗАРАЖЕНИЯ (ЛИМИТЫ РАД/ТЕМП/БИО — 1.0, ПСИ — 3.0) И ГАШЕНИЕ ЗАЩИТОЙ КОНТЕЙНЕРА.
-       СЛУЧАЙНЫЕ ДОП-СВОЙСТВА КАЖДЫХ +5 ЗАТОЧКИ НЕ МОДЕЛИРУЮТСЯ.`;
+    ? `КАЧЕСТВО — РЕДКОСТЬ ИЛИ ПОЛЕ % (85–175%): ВЫХОД ЗА ТИР МЕНЯЕТ РЕДКОСТЬ. ЦВЕТ ИМЕНИ — РЕДКОСТЬ.
+       ЭФФЕКТИВНОСТЬ КОНТЕЙНЕРА УСИЛИВАЕТ ПОЛОЖИТЕЛЬНЫЕ СТАТЫ; ВНУТР. ЗАЩИТА ГАСИТ ЗАРАЖЕНИЯ (КРОМЕ МОРОЗА).
+       ЛИМИТЫ ИГРОКА: РАД/ТЕМП/БИО — 1.0, ПСИ — 3.0.`
+    : `ПОЛОЖИТЕЛЬНЫЕ СТАТЫ АРТОВ × ЭФФЕКТИВНОСТЬ КОНТЕЙНЕРА; ЗАРАЖЕНИЯ ГАСЯТСЯ ВНУТР. ЗАЩИТОЙ (КРОМЕ МОРОЗА),
+       ЛИМИТЫ РАД/ТЕМП/БИО — 1.0, ПСИ — 3.0. СЛУЧАЙНЫЕ ДОП-СВОЙСТВА ЗАТОЧКИ НЕ МОДЕЛИРУЮТСЯ.`;
   h += `<div class="side-foot">${footer}</div>`;
   page.innerHTML = h;
   wireBuilds(cont);
