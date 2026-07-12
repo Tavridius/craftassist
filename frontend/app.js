@@ -831,24 +831,60 @@ function renderArtCard(d) {
   }));
 }
 
-// ---------- калькулятор сборок: ручной + автоподбор ----------
+// ---------- калькулятор сборок: ручной + автоподбор + приведённое ХП ----------
 let BUILD_DICT = null;   // /api/build/dict (кэш на сессию)
 let buildTab = "manual";
 const buildState = { container: null, slots: [] };  // слот: {id, ptn, m} | null
 const autoState = { budget: 500000, stats: [{ key: "", weight: 60 }], result: null };
+const hpState = { budget: 500000, armor: null, armorPtn: 15, result: null };
 const artPriceCache = {};  // itemId -> {"qlt:ptn": {avg7d, n7}}
 let pickerSlot = -1, pickerQuery = "";
 
 const MDL = () => BUILD_DICT.model;
 const tierTop = (q) => 1 + MDL().tier_step * q;
-const tierBottom = (q) => (q === 0 ? MDL().m_min : tierTop(q) - MDL().tier_step);
 const qltFromM = (m) => (m <= 1 ? 0 : Math.min(5, Math.ceil((m - 1) / MDL().tier_step - 1e-9)));
+// цвет редкости артефакта (по качеству Q0…Q5): обычный→легендарный
+const QLT_COLORS = ["#b9c9b9", "#5fd67a", "#5fa8ff", "#d46bff", "#ff6b5e", "#ffb84d"];
+const qltColor = (q) => QLT_COLORS[q] || QLT_COLORS[0];
 // опорное значение — конец диапазона с большим модулем (у «меньше — лучше» он отрицательный)
 const statBase = (st) => (Math.abs(st.max) >= Math.abs(st.min) ? st.max : st.min);
 const statVal = (st, m, ptn) => (st.harmful ? statBase(st) : statBase(st) * m * (1 + MDL().ptn_bonus * ptn));
 const fmtStat = (v) => (v > 0 ? "+" : "") + (Math.abs(v) >= 100 ? Math.round(v) : v.toFixed(2));
 const contLabel = (c) =>
-  `${c.name} · ${c.slots} СЛОТ${c.slots > 1 ? "А" : ""} · ЭФФ ${c.efficiency ?? "—"}% · ЗАЩИТА ${c.protection ?? "—"}`;
+  `${c.name} · ${c.slots} СЛОТ${c.slots > 1 ? "А" : ""} · ЗАЩИТА ${c.protection ?? "—"}`;
+
+// заражение сборки на клиенте (ручной режим): net по типам после защиты контейнера
+function clientContam(slots, cont) {
+  const prot = (cont.protection ?? 0) / 100;
+  const out = [];
+  for (const c of BUILD_DICT.contamination) {
+    let net = 0, present = false;
+    for (const s of slots) {
+      if (!s) continue;
+      const art = BUILD_DICT.artefacts.find((a) => a.id === s.id);
+      const st = art && art.stats[c.key];
+      if (st) { present = true; net += statVal(st, s.m, s.ptn); }
+    }
+    if (!present) continue;
+    const eff = net > 0 ? net * (1 - prot) : net;
+    out.push({ name: c.name, net: +eff.toFixed(3), limit: c.limit,
+               over: c.limit != null && eff > c.limit + 1e-9 });
+  }
+  return out;
+}
+
+// строки статов одного арта (для результатов авто/ХП): цвет по harmful
+function slotStatRows(stats) {
+  return Object.values(stats).sort((a, b) => a.harmful - b.harmful)
+    .map((s) => `<div class="bstat ${s.harmful ? "bad" : ""}">
+      <span class="sn">${escapeHtml(s.name)}</span>
+      <span class="sv">${fmtStat(s.val)}</span></div>`).join("");
+}
+
+function milestoneNote(ms) {
+  if (!ms || !ms.length) return "";
+  return `<div class="bs-ms">+${ms.join(" · +")}: ещё ${ms.length}× случайный бонус за заточку</div>`;
+}
 
 async function openBuilds() {
   home.classList.add("hidden");
@@ -892,9 +928,8 @@ function slotPrice(s) {
 
 const srcLabel = (src) => (src === "lots" ? `СР. 5 ДЕШЁВЫХ ЛОТОВ` : "СР. ЗА 7 ДНЕЙ");
 
-// суммарные статы: полезные × эффективность контейнера, вредные — константа
+// суммарные статы (сырые суммы, как в игровой формуле) + заражение
 function manualTotals(cont) {
-  const eff = (cont.efficiency ?? 100) / 100;
   const stats = {}, out = { cost: 0, unpriced: 0, weight: cont.weight || 0, stats };
   for (const s of buildState.slots) {
     if (!s) continue;
@@ -902,12 +937,22 @@ function manualTotals(cont) {
     out.weight += art.weight || 0;
     for (const [k, st] of Object.entries(art.stats)) {
       const t = stats[k] || (stats[k] = { name: st.name, harmful: st.harmful, total: 0 });
-      t.total += st.harmful ? st.max : statVal(st, s.m, s.ptn) * eff;
+      t.total += statVal(st, s.m, s.ptn);
     }
     const p = slotPrice(s);
     if (p) out.cost += p.price; else out.unpriced++;
   }
+  out.contamination = clientContam(buildState.slots, cont);
   return out;
+}
+
+function contamBlock(contam) {
+  if (!contam || !contam.length) return "";
+  const rows = contam.map((c) => `<div class="bt-row ${c.over ? "bad" : ""}">
+      <span class="k">${escapeHtml(c.name)}${c.over ? " ⚠" : ""}</span>
+      <span class="v">${fmtStat(c.net)}${c.limit != null ? ` <span class="lim">/ ${c.limit}</span>` : ""}</span>
+    </div>`).join("");
+  return `<div class="reqs-lbl" style="margin-top:10px">ЗАРАЖЕНИЕ (после защиты контейнера)</div>${rows}`;
 }
 
 function totalsBlock(t, cont, budget) {
@@ -919,8 +964,9 @@ function totalsBlock(t, cont, budget) {
   return `<div class="btotals">
     <div class="reqs-lbl">ИТОГО ПО СБОРКЕ</div>
     ${rows || `<div class="empty-sm">СЛОТЫ ПУСТЫ</div>`}
+    ${contamBlock(t.contamination)}
     <div class="bt-row"><span class="k">ВЕС (С КОНТЕЙНЕРОМ)</span><span class="v">${t.weight.toFixed(2)} КГ</span></div>
-    <div class="bt-row"><span class="k">ЗАЩИТА КОНТЕЙНЕРА</span><span class="v">${cont.protection ?? "—"}</span></div>
+    <div class="bt-row"><span class="k">ЗАЩИТА КОНТЕЙНЕРА</span><span class="v">${cont.protection ?? "—"}%</span></div>
     <div class="bt-row cost"><span class="k">СТОИМОСТЬ СБОРКИ</span>
       <span class="v">${fmt(t.cost)} ₽${t.unpriced ? ` <span class="warn">+ ${t.unpriced} БЕЗ ЦЕНЫ</span>` : ""}</span></div>
     ${budget != null ? `<div class="bt-row"><span class="k">БЮДЖЕТ</span><span class="v">${fmt(budget)} ₽</span></div>` : ""}
@@ -945,30 +991,28 @@ function manualSlotCard(s, idx) {
   }
   const art = BUILD_DICT.artefacts.find((a) => a.id === s.id);
   const qlt = qltFromM(s.m);
+  const qOpts = [0, 1, 2, 3, 4, 5].map((q) =>
+    `<option value="${q}" ${q === qlt ? "selected" : ""}>${qltLabel(q)}</option>`).join("");
   const ptnOpts = Array.from({ length: 16 }, (_, i) =>
     `<option value="${i}" ${s.ptn === i ? "selected" : ""}>+${i}</option>`).join("");
   const price = slotPrice(s);
-  const statRows = Object.entries(art.stats).map(([k, st]) => {
-    if (st.harmful)
-      return `<div class="bstat bad"><span class="sn">${escapeHtml(st.name)}</span>
-        <span class="sv">${fmtStat(st.min)}…${fmtStat(st.max)}</span></div>`;
-    const v = statVal(st, s.m, s.ptn);
-    return `<div class="bstat"><span class="sn">${escapeHtml(st.name)}</span>
-      <span class="sctl">
-        <button class="mbtn" data-slot="${idx}" data-d="-1">−</button>
-        <input class="sval" data-slot="${idx}" data-stat="${k}" value="${v.toFixed(2)}">
-        <button class="mbtn" data-slot="${idx}" data-d="1">+</button>
-      </span></div>`;
-  }).join("");
+  const statRows = Object.entries(art.stats).map(([k, st]) =>
+    `<div class="bstat ${st.harmful ? "bad" : ""}">
+      <span class="sn">${escapeHtml(st.name)}</span>
+      <span class="sv">${fmtStat(statVal(st, s.m, s.ptn))}</span></div>`).join("");
   return `<div class="bslot">
     <div class="bs-head">
       <img loading="lazy" src="${asset(art.icon)}" alt="">
-      <div class="bs-nm">${escapeHtml(art.name)}<div class="bs-cls">${escapeHtml(art.class)}</div></div>
+      <div class="bs-nm" style="color:${qltColor(qlt)}">${escapeHtml(art.name)}
+        <div class="bs-cls">${escapeHtml(art.class)}</div></div>
       <button class="bs-x" data-rm="${idx}" title="Убрать">✕</button>
     </div>
     <div class="bs-ctl">
-      <span class="chip" title="${qltLabel(qlt)} · меняется стрелками у статов">${qltLabel(qlt)}</span>
+      <select class="bs-qlt" data-slot="${idx}" style="color:${qltColor(qlt)}">${qOpts}</select>
       <select class="bs-ptn" data-slot="${idx}">${ptnOpts}</select>
+      <label class="bs-pct" title="Множитель качества, %: выход за тир меняет редкость (85–175%)">
+        <input class="mval" data-slot="${idx}" value="${Math.round(s.m * 100)}"><span>%</span>
+      </label>
     </div>
     ${statRows}
     <div class="bs-price">${price ? `${fmt(price.price)} ₽ · ${srcLabel(price.src)}` : "НЕТ ЦЕНЫ (НЕТ ЛОТОВ И ИСТОРИИ)"}</div>
@@ -988,13 +1032,18 @@ function renderBuilds() {
     <div class="btabs">
       <button class="btab ${buildTab === "manual" ? "on" : ""}" data-tab="manual">СОБРАТЬ ВРУЧНУЮ</button>
       <button class="btab ${buildTab === "auto" ? "on" : ""}" data-tab="auto">АВТОПОДБОР ПОД БЮДЖЕТ</button>
+      <button class="btab ${buildTab === "hp" ? "on" : ""}" data-tab="hp">ПРИВЕДЁННОЕ ХП</button>
     </div>
     <div class="bbar"><select id="bCont">${contOpts}</select></div>`;
 
-  h += buildTab === "manual" ? renderManual(cont) : renderAuto(cont);
-  h += `<div class="side-foot">КАЧЕСТВО ЗАДАЁТСЯ ЗНАЧЕНИЕМ СТАТА (СТРЕЛКИ/ВВОД): ВЫХОД ЗА ГРАНИЦЫ ТИРА
-    МЕНЯЕТ КАЧЕСТВО АВТОМАТИЧЕСКИ, ДИАПАЗОН — ОТ НИЗА ОБЫЧНОГО ДО ВЕРХА ЛЕГЕНДАРНОГО.
-    СЛУЧАЙНЫЕ ДОП-СВОЙСТВА КАЖДЫХ +5 ЗАТОЧКИ И СВЕЖЕСТЬ НЕ МОДЕЛИРУЮТСЯ.</div>`;
+  h += buildTab === "manual" ? renderManual(cont)
+     : buildTab === "auto" ? renderAuto(cont) : renderHP(cont);
+  const footer = buildTab === "manual"
+    ? `КАЧЕСТВО ЗАДАЁТСЯ РЕДКОСТЬЮ ИЛИ ПОЛЕМ % (85–175%): ВЫХОД ЗА ГРАНИЦЫ ТИРА МЕНЯЕТ РЕДКОСТЬ.
+       ЦВЕТ ИМЕНИ — РЕДКОСТЬ. ЗАРАЖЕНИЯ ГАСЯТСЯ ЗАЩИТОЙ КОНТЕЙНЕРА; ЛИМИТЫ ИГРОКА: РАД/ТЕМП/БИО — 1.0, ПСИ — 3.0.`
+    : `АВТОПОДБОР УЧИТЫВАЕТ ЗАРАЖЕНИЯ (ЛИМИТЫ РАД/ТЕМП/БИО — 1.0, ПСИ — 3.0) И ГАШЕНИЕ ЗАЩИТОЙ КОНТЕЙНЕРА.
+       СЛУЧАЙНЫЕ ДОП-СВОЙСТВА КАЖДЫХ +5 ЗАТОЧКИ НЕ МОДЕЛИРУЮТСЯ.`;
+  h += `<div class="side-foot">${footer}</div>`;
   page.innerHTML = h;
   wireBuilds(cont);
 }
@@ -1023,7 +1072,7 @@ function renderAuto(cont) {
   const r = autoState.result;
   if (r && r.error === "no_priced_variants")
     res = `<div class="note-warn"><span class="mark">[!]</span> ${escapeHtml(r.hint || "НЕТ ЦЕНОВЫХ ДАННЫХ")}</div>`;
-  else if (r && r.builds && r.builds.length) res = renderAutoResult(r);
+  else if (r && r.builds && r.builds.length) res = renderAutoResult(r, autoState.budget);
   else if (r && r.builds) res = `<div class="empty">НИЧЕГО НЕ ПОДОБРАЛОСЬ ПОД БЮДЖЕТ.</div>`;
   return `<div class="aform">
       <label class="albl">БЮДЖЕТ, ₽ <input id="aBudget" type="number" min="1" value="${autoState.budget}"></label>
@@ -1033,21 +1082,74 @@ function renderAuto(cont) {
     </div>${res}`;
 }
 
-function renderAutoResult(r) {
+// карточка подобранного арта: цвет редкости, полные статы, майлстоуны, цена
+function resultSlotCard(s) {
+  return `<div class="bslot ro">
+    <div class="bs-head"><img loading="lazy" src="${asset(s.icon)}" alt="">
+      <div class="bs-nm" style="color:${qltColor(s.qlt)}">${escapeHtml(s.name)}</div>
+      <span class="bucket" style="border-color:${qltColor(s.qlt)};color:${qltColor(s.qlt)}">${bucketBadge(s.qlt, s.ptn)}</span></div>
+    ${slotStatRows(s.stats)}
+    ${milestoneNote(s.milestones)}
+    <div class="bs-price">${fmt(s.price)} ₽ · ${s.src === "lots" ? s.sales + " ЛОТ." : s.sales + " ПРОД/7Д"}</div>
+  </div>`;
+}
+
+function renderAutoResult(r, budget) {
   const build = (b, title, open) => `<details class="alt abuild" ${open ? "open" : ""}>
     <summary><b>${title}</b> · ${fmt(b.totals.cost)} ₽ · ${b.slots.length} СЛОТ</summary>
-    <div class="bgrid">${b.slots.map((s) => `
-      <div class="bslot ro">
-        <div class="bs-head"><img loading="lazy" src="${asset(s.icon)}" alt="">
-          <div class="bs-nm">${escapeHtml(s.name)}</div>
-          <span class="bucket">${bucketBadge(s.qlt, s.ptn)}</span></div>
-        <div class="bs-price">${fmt(s.price)} ₽ · ${s.src === "lots" ? s.sales + " ЛОТ." : s.sales + " ПРОД/7Д"}</div>
-      </div>`).join("")}</div>
-    ${totalsBlock({ stats: b.totals.stats, cost: b.totals.cost, unpriced: 0, weight: b.totals.weight },
-                  r.container, autoState.budget)}
+    <div class="bgrid">${b.slots.map(resultSlotCard).join("")}</div>
+    ${totalsBlock({ stats: b.totals.stats, cost: b.totals.cost, unpriced: 0,
+                    weight: b.totals.weight, contamination: b.totals.contamination },
+                  r.container, budget)}
   </details>`;
   let h = build(r.builds[0], "ОПТИМАЛЬНАЯ СБОРКА", true);
   r.builds.slice(1).forEach((b, i) => { h += build(b, `АЛЬТЕРНАТИВА ${i + 1}`, false); });
+  if (r.warnings && r.warnings.length)
+    h += `<div class="note-warn"><span class="mark">[!]</span> ${r.warnings.map(escapeHtml).join("<br>")}</div>`;
+  return h;
+}
+
+// ---------- вкладка «Приведённое ХП» ----------
+function renderHP(cont) {
+  const armor = BUILD_DICT.armor || [];
+  if (!hpState.armor && armor.length) hpState.armor = armor[0].id;
+  const aOpts = armor.map((a) =>
+    `<option value="${a.id}" ${a.id === hpState.armor ? "selected" : ""}>${escapeHtml(a.name)} · ПУЛЕСТОЙ ${Math.round(a.bullet0)}</option>`).join("");
+  const ptnOpts = [0, 5, 10, 11, 15].map((p) =>
+    `<option value="${p}" ${p === hpState.armorPtn ? "selected" : ""}>+${p}</option>`).join("");
+  let res = "";
+  const r = hpState.result;
+  if (r && r.error) res = `<div class="note-warn"><span class="mark">[!]</span> ${escapeHtml(r.hint || "НЕТ ДАННЫХ")}</div>`;
+  else if (r && r.builds && r.builds.length) res = renderHPResult(r);
+  return `<div class="hp-intro">Подбор артефактов на максимум <b>приведённого ХП от пуль</b>:
+      <span class="mono">(100 + пулестойкость) × живучесть</span>. Броня и контейнер — фикс, бюджет — на артефакты.</div>
+    <div class="aform">
+      <label class="albl">БЮДЖЕТ, ₽ <input id="hBudget" type="number" min="1" value="${hpState.budget}"></label>
+      <div class="arow"><span class="albl" style="min-width:70px">БРОНЯ</span>
+        <select id="hArmor" style="flex:1">${aOpts}</select>
+        <select id="hPtn">${ptnOpts}</select></div>
+      <button id="hGo" class="prof-save">РАССЧИТАТЬ СБОРКУ</button>
+    </div>${res}`;
+}
+
+function renderHPResult(r) {
+  const b = r.builds[0], hp = b.hp;
+  const arm = hp.armor;
+  let h = `<div class="hp-hero">
+      <div class="hp-num"><div class="hp-val">${fmt(hp.effective_hp)}</div>
+        <div class="hp-lbl">ПРИВЕДЁННОЕ ХП ОТ ПУЛЬ</div></div>
+      <div class="hp-formula">(100 + <b>${fmt(hp.total_bullet)}</b> пулестой) × <b>${hp.total_vitality.toFixed(2)}%</b> живучести</div>
+    </div>
+    <div class="hp-break">
+      <div class="bt-row"><span class="k">БРОНЯ <span style="color:${rank(arm.color).color}">${escapeHtml(arm.name)} +${arm.ptn}</span></span>
+        <span class="v">ПУЛЕСТОЙ ${fmt(arm.bullet)}${arm.vitality ? ` · ЖИВУЧ +${arm.vitality}` : ""}</span></div>
+      <div class="bt-row"><span class="k">АРТЕФАКТЫ</span>
+        <span class="v">ПУЛЕСТОЙ +${fmt(hp.artefact_bullet)} · ЖИВУЧ +${hp.artefact_vitality.toFixed(2)}%</span></div>
+    </div>
+    <div class="bgrid">${b.slots.map(resultSlotCard).join("")}</div>
+    ${totalsBlock({ stats: b.totals.stats, cost: b.totals.cost, unpriced: 0,
+                    weight: b.totals.weight, contamination: b.totals.contamination },
+                  r.container, hpState.budget)}`;
   if (r.warnings && r.warnings.length)
     h += `<div class="note-warn"><span class="mark">[!]</span> ${r.warnings.map(escapeHtml).join("<br>")}</div>`;
   return h;
@@ -1100,6 +1202,25 @@ function wireBuilds(cont) {
     return;
   }
 
+  if (buildTab === "hp") {
+    $("hBudget").addEventListener("change", (e) => { hpState.budget = Math.max(1, +e.target.value || 1); });
+    $("hArmor").addEventListener("change", (e) => { hpState.armor = e.target.value; });
+    $("hPtn").addEventListener("change", (e) => { hpState.armorPtn = +e.target.value; });
+    $("hGo").addEventListener("click", async () => {
+      if (!hpState.armor) return;
+      $("hGo").textContent = "СЧИТАЮ…";
+      try {
+        hpState.result = await fetch(api("/build/hp"), {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ budget: hpState.budget, container: buildState.container,
+                                 armor: hpState.armor, armor_ptn: hpState.armorPtn }),
+        }).then((r) => r.json());
+      } catch (e) { hpState.result = { error: "net", hint: "ОШИБКА СЕТИ" }; }
+      renderBuilds();
+    });
+    return;
+  }
+
   // ручной режим
   page.querySelectorAll("[data-addslot]").forEach((el) => el.addEventListener("click", () => {
     pickerSlot = +el.dataset.addslot;
@@ -1133,21 +1254,16 @@ function wireBuilds(cont) {
     buildState.slots[+el.dataset.slot].ptn = +el.value;
     renderBuilds();
   }));
-  page.querySelectorAll(".mbtn").forEach((el) => el.addEventListener("click", () => {
-    const s = buildState.slots[+el.dataset.slot];
-    s.m = Math.min(MDL().m_max, Math.max(MDL().m_min, s.m + 0.01 * +el.dataset.d));
+  // редкость: выбор тира → множитель на верх этого тира
+  page.querySelectorAll(".bs-qlt").forEach((el) => el.addEventListener("change", () => {
+    buildState.slots[+el.dataset.slot].m = tierTop(+el.value);
     renderBuilds();
   }));
-  page.querySelectorAll(".sval").forEach((el) => el.addEventListener("change", () => {
+  // единое %-поле: множитель качества; выход за тир меняет редкость автоматически
+  page.querySelectorAll(".mval").forEach((el) => el.addEventListener("change", () => {
     const s = buildState.slots[+el.dataset.slot];
-    const art = BUILD_DICT.artefacts.find((a) => a.id === s.id);
-    const st = art.stats[el.dataset.stat];
     const v = parseFloat(String(el.value).replace(",", "."));
-    const base = st ? statBase(st) : 0;
-    if (!isNaN(v) && st && !st.harmful && base) {
-      const m = v / (base * (1 + MDL().ptn_bonus * s.ptn));
-      s.m = Math.min(MDL().m_max, Math.max(MDL().m_min, m));
-    }
+    if (!isNaN(v)) s.m = Math.min(MDL().m_max, Math.max(MDL().m_min, v / 100));
     renderBuilds();
   }));
 }

@@ -31,6 +31,8 @@ class GameDB:
         self.artefacts: dict[str, dict] = {}      # id -> {class, weight, stats{key: {name,min,max,harmful}}}
         self.artefact_stat_names: dict[str, dict] = {}  # stat_key -> {name, harmful} (справочник)
         self.containers: dict[str, dict] = {}     # id -> {name, icon, rank, slots, efficiency, protection, weight}
+        self.armor: dict[str, dict] = {}          # id -> {name, icon, color, class, weight, bullet0, vit0, rel}
+        self._armor_lvl: dict[tuple, dict] = {}   # (id, ptn) -> {bullet, vitality} (ленивый кэш заточки)
         self._search: list[tuple[str, str]] = []  # (id, "имя_ru имя_en" в нижнем регистре)
         self._data_path: dict[str, str] = {}      # id -> относительный путь к json предмета
         self._desc_cache: dict[str, str | None] = {}
@@ -43,9 +45,9 @@ class GameDB:
         self._load_equipment()
         logger.info(
             "GameDB loaded: %d items, %d craft results, %d used-in entries, "
-            "%d artefacts with stats, %d containers",
+            "%d artefacts with stats, %d containers, %d armor",
             len(self.items), len(self.recipe_by_result), len(self.used_in),
-            len(self.artefacts), len(self.containers),
+            len(self.artefacts), len(self.containers), len(self.armor),
         )
 
     def _read(self, name: str):
@@ -166,6 +168,71 @@ class GameDB:
                     self.containers[iid] = {"id": iid, "name": it.get("name", iid),
                                             "icon": it.get("icon", ""), **cont,
                                             "slots": int(cont["slots"])}
+            elif rel.startswith("items/armor/"):
+                doc = self._item_json(iid)
+                if not doc:
+                    continue
+                bullet, vit, cls, weight = self._armor_bv(doc, want_meta=True)
+                if bullet <= 0:      # для приведённого ХП нужна пулестойкость
+                    continue
+                it = self.items.get(iid, {})
+                self.armor[iid] = {"id": iid, "name": it.get("name", iid),
+                                   "icon": it.get("icon", ""), "color": it.get("color", "DEFAULT"),
+                                   "class": cls, "weight": weight,
+                                   "bullet0": bullet, "vit0": vit, "rel": rel}
+
+    _BULLET_KEY = "stalker.artefact_properties.factor.bullet_dmg_factor"
+    _HEALTH_KEY = "stalker.artefact_properties.factor.health_bonus"
+
+    def _armor_bv(self, doc: dict, want_meta: bool = False):
+        """Пулестойкость (макс. из записей = итог, не дельта) и Живучесть брони.
+        В заточённых вариантах два bullet-значения: итог и бонус — берём больший."""
+        bullet = vit = 0.0
+        cls = ""
+        weight = None
+        for el in self._elements(doc):
+            key = ((el.get("name") or el.get("key") or {}).get("key")) or ""
+            if el.get("type") == "numeric":
+                v = el.get("value") or 0.0
+                if key == self._BULLET_KEY:
+                    bullet = max(bullet, v)
+                elif key == self._HEALTH_KEY:
+                    vit = max(vit, v)
+                elif key == "core.tooltip.info.weight":
+                    weight = v
+            elif want_meta and el.get("type") == "key-value" and key == "core.tooltip.info.category":
+                cls = _tr(el.get("value"))
+        return (bullet, vit, cls, weight) if want_meta else (bullet, vit)
+
+    def armor_stats(self, armor_id: str, ptn: int) -> dict:
+        """Пулестойкость и Живучесть брони на уровне заточки ptn (ленивое чтение
+        _variants — заточка брони НЕлинейна, формулой не считается)."""
+        a = self.armor.get(armor_id)
+        if not a:
+            return {"bullet": 0.0, "vitality": 0.0}
+        ptn = max(0, min(15, int(ptn)))
+        if ptn == 0:
+            return {"bullet": a["bullet0"], "vitality": a["vit0"]}
+        ck = (armor_id, ptn)
+        if ck not in self._armor_lvl:
+            # rel = items/armor/<sub>/<id>.json → items/armor/<sub>/_variants/<id>/<ptn>.json
+            from pathlib import Path
+            rp = Path(a["rel"])
+            vp = rp.parent / "_variants" / rp.stem / f"{ptn}.json"
+            doc = None
+            fp = config.DATA_DIR / vp
+            if fp.exists():
+                try:
+                    doc = json.loads(fp.read_text(encoding="utf-8"))
+                except Exception:
+                    doc = None
+            if doc:
+                b, v = self._armor_bv(doc)
+                self._armor_lvl[ck] = {"bullet": b, "vitality": v}
+            else:  # варианта нет — линейная аппроксимация от базы
+                self._armor_lvl[ck] = {"bullet": a["bullet0"] * (1 + 0.02 * ptn),
+                                       "vitality": a["vit0"] * (1 + 0.02 * ptn)}
+        return self._armor_lvl[ck]
 
     def _build_used_in(self) -> None:
         """Обратный индекс: ингредиент -> крафт-результаты, где он нужен."""

@@ -239,6 +239,20 @@ async def build_auto(payload: dict = Body(...)):
     return res  # включая error=no_priced_variants с подсказкой — фронт покажет
 
 
+@router.post("/build/hp")
+async def build_hp(payload: dict = Body(...)):
+    """Автоподбор на приведённое ХП: {budget, container, armor, armor_ptn}."""
+    try:
+        budget = float(payload.get("budget", 0))
+    except (TypeError, ValueError):
+        raise HTTPException(422, "budget must be a number")
+    res = builds.auto_hp(budget, str(payload.get("container", "")),
+                         str(payload.get("armor", "")), int(payload.get("armor_ptn", 0)))
+    if res.get("error") in ("container_not_found", "armor_not_found", "bad_request"):
+        raise HTTPException(422, res["error"])
+    return res
+
+
 @router.get("/health")
 async def health():
     return {"status": "ok", "items": len(db.items),

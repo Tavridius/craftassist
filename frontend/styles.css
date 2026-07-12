@@ -547,7 +547,7 @@ a.auth-user:hover { color: var(--green); text-shadow: var(--glow); }
 }
 
 /* ---------- калькулятор сборок ---------- */
-.btabs { display: flex; gap: 2px; margin-bottom: 12px; border-bottom: 1px solid var(--border); }
+.btabs { display: flex; gap: 2px; margin-bottom: 12px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
 .btab {
   background: none; border: 1px solid var(--border); border-bottom: none; color: var(--dim);
   padding: 8px 16px; font: inherit; font-size: 11px; letter-spacing: 0.1em; cursor: pointer;
@@ -591,28 +591,41 @@ a.auth-user:hover { color: var(--green); text-shadow: var(--glow); }
   width: 22px; height: 22px; font: inherit; font-size: 11px; cursor: pointer; flex: none;
 }
 .bs-x:hover { border-color: var(--red-border); color: var(--red); }
-.bs-ctl { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-.bs-ptn {
+.bs-ctl { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; }
+.bs-qlt, .bs-ptn {
   background: var(--panel); border: 1px solid var(--border); color: var(--amber);
-  height: 24px; font: inherit; font-size: 11px; border-radius: 0; cursor: pointer;
+  height: 26px; font: inherit; font-size: 11px; border-radius: 0; cursor: pointer;
 }
+.bs-qlt { font-weight: 700; letter-spacing: 0.04em; }
+.bs-pct { display: inline-flex; align-items: center; gap: 3px; }
+.bs-pct input {
+  width: 46px; background: var(--panel); border: 1px solid var(--border); color: var(--green);
+  font: inherit; font-size: 11px; text-align: right; padding: 2px 4px; outline: none; height: 26px;
+  font-variant-numeric: tabular-nums;
+}
+.bs-pct input:focus { border-color: var(--green); }
+.bs-pct span { font-size: 11px; color: var(--dim); }
 .bstat { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 3px 0; }
 .bstat .sn { font-size: 11px; color: var(--text); min-width: 0; }
 .bstat.bad .sn, .bstat.bad .sv { color: var(--red); }
-.bstat .sv { font-size: 11px; font-variant-numeric: tabular-nums; }
-.bstat .sctl { display: flex; align-items: center; gap: 4px; flex: none; }
-.mbtn {
-  background: none; border: 1px solid var(--border); color: var(--text);
-  width: 20px; height: 20px; font: inherit; font-size: 11px; line-height: 1; cursor: pointer;
-}
-.mbtn:hover { border-color: var(--green); color: var(--green); }
-.sval {
-  width: 64px; background: var(--panel); border: 1px solid var(--border); color: var(--green);
-  font: inherit; font-size: 11px; text-align: right; padding: 2px 4px; outline: none;
-  font-variant-numeric: tabular-nums;
-}
-.sval:focus { border-color: var(--green); }
+.bstat .sv { font-size: 11px; font-variant-numeric: tabular-nums; color: var(--bright); }
+.bs-ms { margin-top: 6px; font-size: 10px; line-height: 1.4; color: var(--amber); letter-spacing: 0.03em; }
 .bs-price { margin-top: 8px; font-size: 10px; letter-spacing: 0.06em; color: var(--amber); }
+.bt-row .lim { color: var(--dimmer); font-weight: 400; }
+
+/* приведённое ХП */
+.hp-intro { font-size: 12px; line-height: 1.6; color: var(--dim); margin-bottom: 12px; max-width: 640px; }
+.hp-intro .mono { font-family: inherit; color: var(--green); white-space: nowrap; }
+.hp-hero {
+  display: flex; align-items: center; gap: 20px; flex-wrap: wrap;
+  border: 1px solid var(--green-border); background: rgba(124, 230, 142, 0.05);
+  padding: 16px 20px; margin: 12px 0;
+}
+.hp-val { font-size: 34px; font-weight: 800; color: var(--green); text-shadow: var(--glow); font-variant-numeric: tabular-nums; }
+.hp-lbl { font-size: 10px; letter-spacing: 0.14em; color: var(--dim); }
+.hp-formula { font-size: 13px; color: var(--text); }
+.hp-formula b { color: var(--bright); }
+.hp-break { border: 1px solid var(--border); background: var(--panel); padding: 8px 12px; margin-bottom: 12px; max-width: 640px; }
 
 .btotals { border: 1px solid var(--border); background: var(--panel); padding: 12px 14px; max-width: 520px; }
 .bt-row { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; padding: 3px 0; }
