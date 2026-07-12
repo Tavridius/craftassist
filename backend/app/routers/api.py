@@ -91,6 +91,7 @@ async def top(request: Request, available: int = 0):
 async def hideout_dict():
     """Справочник для страницы профиля: перки и все станки/фичи из рецептов."""
     return {"perks": db.hideout_perks, "features": db.hideout_features,
+            "feature_icons": db.hideout_feature_icons,
             "perk_max": hideout.PERK_MAX}
 
 

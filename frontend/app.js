@@ -33,14 +33,14 @@ const FEATURE_RU = {
   calipers_kit: "Штангенциркули", centrifuge: "Центрифуга",
   chemical_reactor: "Химический реактор", chromatographic_equipment: "Хроматограф",
   cnc: "Станок ЧПУ", electronics_kit: "Набор электроники",
-  fermentation_container: "Ёмкость для брожения", flasks_kit: "Набор колб",
-  gauze_filter: "Марлевый фильтр",
+  fermentation_container: "Тара для брожения", flasks_kit: "Набор колб",
+  gauze_filter: "Фильтр из марли",
   generator_energy_source_anomal: "Генератор: аномальный источник",
   generator_energy_source_battery: "Генератор: аккумулятор",
   hoods: "Вытяжка", kitchen_items: "Кухонная утварь", kitchen_table: "Кухонный стол",
   laboratory_table: "Лабораторный стол", laminar_box: "Ламинарный бокс",
   laser_level: "Лазерный уровень", lathe: "Токарный станок",
-  precise_powertools: "Точный электроинструмент", precise_tools: "Точные инструменты",
+  precise_powertools: "Точные электроинструменты", precise_tools: "Точные инструменты",
   rotary_evaporator: "Ротационный испаритель", scalpels_kit: "Набор скальпелей",
   screwdrivers: "Отвёртки", sterilization_system: "Система стерилизации",
   stove: "Плита", tool_trolley: "Тележка с инструментами",
@@ -1054,7 +1054,10 @@ function renderBuilds() {
       <button class="btab ${buildTab === "auto" ? "on" : ""}" data-tab="auto">АВТОПОДБОР ПОД БЮДЖЕТ</button>
       <button class="btab ${buildTab === "hp" ? "on" : ""}" data-tab="hp">ПРИВЕДЁННОЕ ХП</button>
     </div>
-    <div class="bbar"><select id="bCont">${contOpts}</select></div>`;
+    <div class="bbar">
+      <img class="bsel-ic" src="${asset(cont.icon)}" alt="">
+      <select id="bCont">${contOpts}</select>
+    </div>`;
 
   h += buildTab === "manual" ? renderManual(cont)
      : buildTab === "auto" ? renderAuto(cont) : renderHP(cont);
@@ -1134,6 +1137,7 @@ function renderAutoResult(r, budget) {
 function renderHP(cont) {
   const armor = BUILD_DICT.armor || [];
   if (!hpState.armor && armor.length) hpState.armor = armor[0].id;
+  const curArmor = armor.find((a) => a.id === hpState.armor) || armor[0];
   const aOpts = armor.map((a) =>
     `<option value="${a.id}" ${a.id === hpState.armor ? "selected" : ""}>${escapeHtml(a.name)} · ПУЛЕСТОЙ ${Math.round(a.bullet0)}</option>`).join("");
   const ptnOpts = [0, 5, 10, 11, 15].map((p) =>
@@ -1147,6 +1151,7 @@ function renderHP(cont) {
     <div class="aform">
       <label class="albl">БЮДЖЕТ, ₽ <input id="hBudget" type="number" min="1" value="${hpState.budget}"></label>
       <div class="arow"><span class="albl" style="min-width:70px">БРОНЯ</span>
+        <img class="bsel-ic" src="${asset(curArmor ? curArmor.icon : "")}" alt="">
         <select id="hArmor" style="flex:1">${aOpts}</select>
         <select id="hPtn">${ptnOpts}</select></div>
       <button id="hGo" class="prof-save">РАССЧИТАТЬ СБОРКУ</button>
@@ -1341,9 +1346,12 @@ function renderProfile(dict, prof, user) {
     <div class="reqs-lbl prof-lbl">НАВЫКИ КРАФТА · УРОВЕНЬ 0–${pm}</div>
     <div class="prof-perks">${dict.perks.map(perkRow).join("")}</div>
     <div class="reqs-lbl prof-lbl">СТАНКИ И ИНСТРУМЕНТЫ · ${feats.length}</div>
-    <div class="prof-feats">${feats.map((f) =>
-      `<button class="feat ${P.features.has(f) ? "on" : ""}" data-feat="${f}">
-         <span class="fmark">${P.features.has(f) ? "✓" : "+"}</span>${escapeHtml(featureName(f))}</button>`).join("")}
+    <div class="prof-feats">${feats.map((f) => {
+      const ic = (dict.feature_icons || {})[f];
+      return `<button class="feat ${P.features.has(f) ? "on" : ""}" data-feat="${f}">
+         <span class="fmark">${P.features.has(f) ? "✓" : "+"}</span>
+         ${ic ? `<img class="feat-ic" loading="lazy" src="${asset(ic)}" alt="">` : ""}
+         ${escapeHtml(featureName(f))}</button>`; }).join("")}
     </div>
     <div class="prof-actions">
       <button class="prof-save" id="profSave">СОХРАНИТЬ ПРОФИЛЬ</button>

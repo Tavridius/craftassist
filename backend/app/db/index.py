@@ -28,6 +28,7 @@ class GameDB:
         self.used_in: dict[str, list[str]] = {}   # id ингредиента -> [id результатов]
         self.hideout_perks: list[dict] = []       # [{id, name}] — навыки крафта из БД
         self.hideout_features: list[str] = []     # все станки/фичи из requirements рецептов
+        self.hideout_feature_icons: dict[str, str] = {}  # фича -> иконка предмета (где есть)
         self.artefacts: dict[str, dict] = {}      # id -> {class, weight, stats{key: {name,min,max,harmful}}}
         self.artefact_stat_names: dict[str, dict] = {}  # stat_key -> {name, harmful} (справочник)
         self.containers: dict[str, dict] = {}     # id -> {name, icon, rank, slots, efficiency, protection, weight}
@@ -75,6 +76,16 @@ class GameDB:
             self._data_path[item_id] = data_path.lstrip("/")  # 'items/misc/404p.json'
             self._search.append((item_id, f"{name_ru} {name_en}".lower()))
 
+    # станок/инструмент убежища -> предмет базы (для иконки; сверено по именам предметов)
+    _FEATURE_ITEM = {
+        "chemical_reactor": "yj0k", "hoods": "2l3l", "kitchen_items": "n2n1",
+        "kitchen_table": "rzpv", "laboratory_table": "gv96", "lathe": "kv5y",
+        "stove": "mvyy", "tool_trolley": "6z9p", "welding_equipment": "yjnk",
+        "precise_powertools": "w6l2", "fermentation_container": "v4gr",
+        "water_collector": "rzvv", "gauze_filter": "0qj9",
+        "generator_energy_source_anomal": "gn975", "generator_energy_source_battery": "gn975",
+    }
+
     def _load_hideout_recipes(self) -> None:
         doc = self._read("hideout_recipes.json")
         self.hideout_perks = [{"id": p["id"], "name": _tr(p.get("name")) or p["id"]}
@@ -94,6 +105,10 @@ class GameDB:
             for res in recipe["result"]:
                 self.recipe_by_result.setdefault(res["item"], []).append(recipe)
         self.hideout_features = sorted(feats)
+        # иконки станков/инструментов из предметов базы (где такой предмет есть)
+        self.hideout_feature_icons = {
+            f: (self.items.get(iid) or {}).get("icon", "")
+            for f, iid in self._FEATURE_ITEM.items() if iid in self.items}
 
     # ---------- статы артефактов и контейнеры (для калькулятора сборок) ----------
     def _item_json(self, item_id: str) -> dict | None:
