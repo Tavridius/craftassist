@@ -213,8 +213,11 @@ async def search_page(request: Request):
 
 @router.get("/map", response_class=HTMLResponse)
 async def map_page(request: Request):
-    return render_index(request, "/map",
-                        title=f"Интерактивная карта STALZONE (Stalcraft) — {SITE}")
+    return render_index(
+        request, "/map",
+        title="Интерактивная карта STALZONE (Stalcraft) — зоны и поля артефактов",
+        desc="Карты зон STALZONE (ранее Stalcraft — Сталкрафт): Свалка, Агропром, Чёрные Ивы, "
+             "Полесское, Лес, Яма, Путь Дураков. Отмечены поля артефактов; зум и перетаскивание.")
 
 
 @router.get("/guides", response_class=HTMLResponse)
@@ -227,7 +230,7 @@ async def guides_page(request: Request):
 async def sitemap(request: Request):
     """Карта сайта: только осмысленные посадочные (без тысяч карточек — под спрос)."""
     base = _base_url(request)
-    paths = ["/", "/vygodno-kraftit", "/auction", "/builds"]
+    paths = ["/", "/vygodno-kraftit", "/auction", "/builds", "/map"]
     urls = "".join(
         f"<url><loc>{_html.escape(base + p, quote=True)}</loc>"
         f"<changefreq>{'daily' if p in ('/', '/vygodno-kraftit', '/auction') else 'weekly'}</changefreq>"

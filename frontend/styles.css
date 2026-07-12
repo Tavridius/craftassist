@@ -661,6 +661,43 @@ a.auth-user:hover { color: var(--green); text-shadow: var(--glow); }
 .spinner::after { content: "▌"; margin-left: 4px; animation: blink 1s steps(1) infinite; }
 @keyframes blink { 50% { opacity: 0; } }
 
+/* ---------- интерактивная карта зон ---------- */
+.mapmod { margin-top: 4px; }
+.map-tabs {
+  display: flex; gap: 6px; overflow-x: auto; padding-bottom: 8px; margin-bottom: 8px;
+  scrollbar-width: thin;
+}
+.map-tab {
+  background: none; border: 1px solid var(--border); color: var(--dim);
+  height: 32px; padding: 0 12px; font: inherit; font-size: 11px; letter-spacing: 0.05em;
+  cursor: pointer; white-space: nowrap; flex: none;
+}
+.map-tab:hover { border-color: var(--green); color: var(--green); }
+.map-tab.active {
+  border-color: var(--green-border); color: var(--green);
+  background: rgba(124, 230, 142, 0.07);
+}
+.map-view {
+  position: relative; width: 100%; height: min(74vh, 820px); overflow: hidden;
+  background: #050805; border: 1px solid var(--border); touch-action: none; cursor: grab;
+}
+.map-view:active { cursor: grabbing; }
+.map-canvas { position: absolute; top: 0; left: 0; transform-origin: 0 0; will-change: transform; pointer-events: none; }
+.map-img { display: block; user-select: none; -webkit-user-drag: none; pointer-events: none; }
+.map-ctl { position: absolute; top: 10px; right: 10px; display: flex; flex-direction: column; gap: 6px; }
+.map-ctl button {
+  width: 34px; height: 34px; font-size: 18px; line-height: 1;
+  background: rgba(7, 10, 7, 0.82); border: 1px solid var(--border); color: var(--text);
+  cursor: pointer; font-family: inherit;
+}
+.map-ctl button:hover { border-color: var(--green); color: var(--green); }
+.map-hint {
+  position: absolute; left: 10px; bottom: 10px; pointer-events: none;
+  font-size: 10px; letter-spacing: 0.1em; color: var(--dim);
+  background: rgba(7, 10, 7, 0.72); border: 1px solid var(--border-dim); padding: 4px 8px;
+}
+.map-legend { font-size: 11px; line-height: 1.6; color: var(--dim); margin-top: 10px; }
+
 /* ---------- адаптив ---------- */
 @media (max-width: 1100px) {
   .topstats .stat { display: none; }
@@ -676,4 +713,6 @@ a.auth-user:hover { color: var(--green); text-shadow: var(--glow); }
   .verdict .v-main { font-size: 22px; }
   .tiles { grid-template-columns: repeat(2, 1fr); }
   .reqs { position: static; }
+  .map-view { height: 68vh; }
+  .map-hint { display: none; }
 }

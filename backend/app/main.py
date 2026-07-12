@@ -6,6 +6,7 @@ Backend авторитетен: отдаёт данные и считает вы
 """
 import asyncio
 import logging
+import mimetypes
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -70,6 +71,8 @@ app.include_router(pages_router)
 # Каталог иконок на первом старте пуст (данные скачает startup-событие в volume),
 # поэтому создаём его заранее и монтируем безусловно — StaticFiles отдаёт
 # файлы, которые появятся позже (проверка существования — только на mount).
+# .webp регистрируем явно: на части ОС mimetypes его не знает и отдаёт text/plain.
+mimetypes.add_type("image/webp", ".webp")
 config.ICONS_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/icons", StaticFiles(directory=str(config.ICONS_DIR)), name="icons")
 if config.FRONTEND_DIR.exists():

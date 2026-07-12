@@ -1406,13 +1406,171 @@ function renderProfile(dict, prof, user) {
   if (b) b.addEventListener("click", () => { navigate("/"); });
 }
 
+// ---------- интерактивная карта зон (пан/зум; ассеты из клиента игры) ----------
+let mapCleanup = null;
+
+async function openMap() {
+  if (mapCleanup) { mapCleanup(); mapCleanup = null; }
+  home.classList.add("hidden");
+  detail.classList.add("hidden");
+  results.innerHTML = "";
+  page.classList.remove("hidden");
+  page.innerHTML = `<div class="mapmod"><div class="spinner">// ЗАГРУЗКА КАРТ</div></div>`;
+  window.scrollTo(0, 0);
+  let zones = [];
+  try {
+    zones = (await fetch(api("/map/zones")).then((r) => r.json())).zones || [];
+  } catch (e) { /* обработаем ниже */ }
+  if (location.pathname !== "/map") return;         // пользователь ушёл, пока грузилось
+  if (!zones.length) {
+    page.innerHTML = `<div class="mapmod"><div class="empty">[!] КАРТЫ НЕДОСТУПНЫ</div></div>`;
+    return;
+  }
+  renderMap(zones);
+}
+
+function renderMap(zones) {
+  const tabs = zones.map((z, i) =>
+    `<button class="map-tab${i ? "" : " active"}" data-i="${i}">${escapeHtml(z.name)}</button>`).join("");
+  page.innerHTML = `<div class="mapmod">
+    <div class="section-head">
+      <div class="section-title">▸ ИНТЕРАКТИВНАЯ КАРТА ЗОН</div>
+      <div class="section-note">${zones.length} ЗОН · ПОМЕТКИ = ПОЛЯ АРТЕФАКТОВ</div>
+    </div>
+    <div class="map-tabs">${tabs}</div>
+    <div class="map-view" id="mapView">
+      <div class="map-canvas" id="mapCanvas"><img class="map-img" id="mapImg" alt="" draggable="false"></div>
+      <div class="map-ctl">
+        <button data-act="in" aria-label="Приблизить">+</button>
+        <button data-act="fit" aria-label="Вписать">⤢</button>
+        <button data-act="out" aria-label="Отдалить">−</button>
+      </div>
+      <div class="map-hint">ПЕРЕТАСКИВАЙ · КОЛЁСИКО / ЩИПОК — ЗУМ</div>
+    </div>
+    <div class="map-legend">Топ-даун карты извлечены из клиента STALZONE. Обведённые области и
+      крестики — места появления артефактов (пометки самой игры). Привязка точек к предметам — на подходе.</div>
+  </div>`;
+  const v = createMapViewer($("mapView"));
+  mapCleanup = v.destroy;
+  const tabEls = [...document.querySelectorAll(".map-tab")];
+  tabEls.forEach((btn) => btn.addEventListener("click", () => {
+    tabEls.forEach((x) => x.classList.toggle("active", x === btn));
+    v.load(asset(zones[+btn.dataset.i].image));
+  }));
+  v.load(asset(zones[0].image));
+}
+
+// Лёгкий пан/зум без внешних библиотек. Модель — экранные пиксели:
+// точка (px,py) картинки → экран (tx + px*scale, ty + py*scale).
+function createMapViewer(view) {
+  const canvas = view.querySelector("#mapCanvas");
+  const img = view.querySelector("#mapImg");
+  let scale = 1, tx = 0, ty = 0, natW = 0, natH = 0, fitScale = 1;
+  const pts = new Map();
+  let pinchDist = 0;
+
+  const apply = () => {
+    const vw = view.clientWidth, vh = view.clientHeight;
+    const w = natW * scale, h = natH * scale, m = 60;   // сколько можно увести за край
+    tx = w <= vw ? (vw - w) / 2 : Math.max(Math.min(tx, m), vw - w - m);
+    ty = h <= vh ? (vh - h) / 2 : Math.max(Math.min(ty, m), vh - h - m);
+    canvas.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
+  };
+  const fit = () => {
+    const vw = view.clientWidth, vh = view.clientHeight;
+    fitScale = natW ? Math.min(vw / natW, vh / natH) : 1;
+    scale = fitScale;
+    tx = (vw - natW * scale) / 2; ty = (vh - natH * scale) / 2;
+    apply();
+  };
+  const local = (e) => {
+    const r = view.getBoundingClientRect();
+    return [e.clientX - r.left, e.clientY - r.top];
+  };
+  const zoomAt = (factor, cx, cy) => {
+    const max = Math.max(4, fitScale * 8);
+    const ns = Math.max(fitScale, Math.min(max, scale * factor));
+    const ratio = ns / scale;
+    tx = cx - (cx - tx) * ratio; ty = cy - (cy - ty) * ratio;
+    scale = ns; apply();
+  };
+
+  const onLoad = () => {
+    natW = img.naturalWidth; natH = img.naturalHeight;
+    canvas.style.width = natW + "px"; canvas.style.height = natH + "px";
+    fit();
+  };
+  img.addEventListener("load", onLoad);
+
+  const onDown = (e) => {
+    view.setPointerCapture(e.pointerId);
+    pts.set(e.pointerId, local(e));
+    if (pts.size === 2) {
+      const [a, b] = [...pts.values()];
+      pinchDist = Math.hypot(a[0] - b[0], a[1] - b[1]);
+    }
+  };
+  const onMove = (e) => {
+    if (!pts.has(e.pointerId)) return;
+    const prev = pts.get(e.pointerId), cur = local(e);
+    pts.set(e.pointerId, cur);
+    if (pts.size >= 2) {
+      const [a, b] = [...pts.values()];
+      const dist = Math.hypot(a[0] - b[0], a[1] - b[1]);
+      const mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+      if (pinchDist) zoomAt(dist / pinchDist, mid[0], mid[1]);
+      pinchDist = dist;
+    } else {
+      tx += cur[0] - prev[0]; ty += cur[1] - prev[1]; apply();
+    }
+  };
+  const onUp = (e) => {
+    pts.delete(e.pointerId);
+    if (pts.size < 2) pinchDist = 0;
+  };
+  const onWheel = (e) => {
+    e.preventDefault();
+    const [cx, cy] = local(e);
+    zoomAt(e.deltaY < 0 ? 1.18 : 1 / 1.18, cx, cy);
+  };
+  const onDbl = (e) => { const [cx, cy] = local(e); zoomAt(1.7, cx, cy); };
+  const onCtl = (e) => {
+    const act = e.target.dataset.act; if (!act) return;
+    const cx = view.clientWidth / 2, cy = view.clientHeight / 2;
+    if (act === "in") zoomAt(1.4, cx, cy);
+    else if (act === "out") zoomAt(1 / 1.4, cx, cy);
+    else fit();
+  };
+  const onResize = () => {
+    if (!natW) return;
+    fitScale = Math.min(view.clientWidth / natW, view.clientHeight / natH);
+    if (scale < fitScale) scale = fitScale;
+    apply();
+  };
+
+  view.addEventListener("pointerdown", onDown);
+  view.addEventListener("pointermove", onMove);
+  view.addEventListener("pointerup", onUp);
+  view.addEventListener("pointercancel", onUp);
+  view.addEventListener("wheel", onWheel, { passive: false });
+  view.addEventListener("dblclick", onDbl);
+  const ctl = view.querySelector(".map-ctl");
+  ctl.addEventListener("click", onCtl);
+  ctl.addEventListener("pointerdown", (e) => e.stopPropagation());   // кнопки зума не тянут карту
+  window.addEventListener("resize", onResize);
+
+  return {
+    load(src) {
+      if (img.getAttribute("src") === src) { fit(); return; }
+      img.src = src;
+      if (img.complete && img.naturalWidth) onLoad();   // из кэша — событие могло не сработать
+    },
+    destroy() { window.removeEventListener("resize", onResize); },
+  };
+}
+
 // ---------- разделы в разработке: заглушки с описанием модуля ----------
 const PAGES = {
-  map: {
-    title: "ИНТЕРАКТИВНАЯ КАРТА",
-    desc: "Карта зоны с зумом и слоями: артефакты, ресурсы, тайники, переходы между " +
-          "локациями. Точки связаны с базой предметов терминала.",
-  },
   guides: {
     title: "ГАЙДЫ",
     desc: "Статьи по крафту, фарму и снаряжению — с живыми ценами и ссылками на " +
@@ -1465,6 +1623,12 @@ function route() {
   const path = location.pathname;
   const strip = document.querySelector(".search-strip");
   let mm;
+
+  if (mapCleanup && path !== "/map") { mapCleanup(); mapCleanup = null; }
+  if (path === "/map") {
+    strip.classList.add("hidden");
+    setNav("map"); openMap(); return;
+  }
 
   if (path === "/auction") {
     strip.classList.add("hidden"); page.classList.add("hidden");
