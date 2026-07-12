@@ -10,6 +10,7 @@ URL (а не один шаблон главной), сервер подстав�
 иконки, robots.txt) отдаётся файлами и сюда не попадает.
 """
 import html as _html
+import json
 import logging
 import re
 from functools import lru_cache
@@ -46,7 +47,8 @@ def _sub(pattern: str, value: str, s: str) -> str:
 
 
 def render_index(request: Request, path: str, *, title: str | None = None,
-                 desc: str | None = None, noindex: bool = False) -> HTMLResponse:
+                 desc: str | None = None, noindex: bool = False,
+                 jsonld: dict | None = None) -> HTMLResponse:
     title = title or DEF_TITLE
     desc = (desc or DEF_DESC).strip()
     if len(desc) > 300:
@@ -75,7 +77,44 @@ def render_index(request: Request, path: str, *, title: str | None = None,
     if noindex:
         s = s.replace('<meta name="theme-color"',
                       '<meta name="robots" content="noindex,follow">\n  <meta name="theme-color"', 1)
+    if jsonld:
+        # экранируем </ внутри JSON, чтобы не оборвать <script>
+        block = json.dumps(jsonld, ensure_ascii=False).replace("</", "<\\/")
+        s = s.replace("</head>",
+                      f'  <script type="application/ld+json">{block}</script>\n</head>', 1)
     return HTMLResponse(s)
+
+
+def _product_jsonld(request: Request, it: dict, url: str, desc: str) -> dict | None:
+    """Product+Offer по живой цене аукциона (мин. выкуп). None — если цены нет,
+    чтобы не плодить Product без offers (Google помечает такие как неполные)."""
+    p = store.get(it["id"]) or {}
+    buyout = p.get("min_buyout")
+    if not buyout:
+        return None
+    icon = it.get("icon")
+    data = {
+        "@context": "https://schema.org",
+        "@type": "Product",
+        "name": it["name"],
+        "sku": it["id"],
+        "description": desc,
+        "brand": {"@type": "Brand", "name": "STALZONE"},
+        "offers": {
+            "@type": "Offer",
+            "priceCurrency": "RUB",
+            "price": str(round(buyout)),
+            "availability": ("https://schema.org/InStock" if p.get("available")
+                             else "https://schema.org/OutOfStock"),
+            "url": url,
+            "seller": {"@type": "Organization", "name": "Аукцион STALZONE"},
+        },
+    }
+    if it.get("name_en"):
+        data["alternateName"] = it["name_en"]
+    if icon:
+        data["image"] = _base_url(request) + "/" + icon.lstrip("/")
+    return data
 
 
 # ---------- маршруты фронта ----------
@@ -121,7 +160,10 @@ async def item_page(request: Request, item_id: str):
         parts.append(f"«{name}» в STALZONE (Stalcraft): цена аукциона RU и где применяется "
                      f"в крафте. Предмет не крафтится — только найти, выбить или купить.")
     title = f"{name} — крафт, цена и выгода в STALZONE (Stalcraft) | {SITE}"
-    return render_index(request, f"/item/{item_id}", title=title, desc=" ".join(parts))
+    desc = " ".join(parts)
+    url = _base_url(request) + f"/item/{item_id}"
+    return render_index(request, f"/item/{item_id}", title=title, desc=desc,
+                        jsonld=_product_jsonld(request, it, url, desc))
 
 
 @router.get("/artefact/{item_id}", response_class=HTMLResponse)
