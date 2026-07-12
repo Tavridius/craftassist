@@ -43,11 +43,11 @@ _CONTAM = {
     "thermal_accumulation": ("Температура", 1.0),
     "biological_accumulation": ("Биозаражение", 1.0),
     "psycho_accumulation": ("Пси-излучение", 3.0),
-    "frost_accumulation": ("Мороз", None),
+    "frost_accumulation": ("Холод", None),
     "combustion_accumulation": ("Горение", None),
 }
 CONTAM_KEYS = {f"stalker.artefact_properties.factor.{k}": v for k, v in _CONTAM.items()}
-FROST_KEY = "stalker.artefact_properties.factor.frost_accumulation"  # «холод» — защита НЕ гасит
+FROST_KEY = "stalker.artefact_properties.factor.frost_accumulation"  # «Холод» — защита НЕ гасит (подтверждено скрином)
 ACCUM_KEYS = set(CONTAM_KEYS)  # accumulation-статы идут в блок заражения, не в статы
 
 BUDGET_STEPS = 400   # дискретизация бюджета в DP
