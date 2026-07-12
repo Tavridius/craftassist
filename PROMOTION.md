@@ -62,10 +62,17 @@ scmarket-tracker.com, schistory.xyz, scpmodel.ru. Но запрос «что в�
   /auction, /builds) — без тысяч карточек.
 - `/index.html` → 301 на `/`; `/mvp/*` по-прежнему 301 (nginx).
 
+### ✅ Product/Offer JSON-LD (13 июля 2026, НА ПРОДЕ)
+Карточка предмета с рыночной ценой отдаёт Product + Offer (price = мин. выкуп
+аукциона, RUB, availability по наличию лотов, seller «Аукцион STALZONE», image,
+sku, brand, alternateName EN). Предметы без цены Product не получают (Google
+помечает offers-less как неполные). Общий WebApplication сохранён.
+
 ### Осталось
-- **Product/Offer JSON-LD** на карточках предметов (сейчас общий WebApplication).
 - Выборочно добавлять топ-предметы в sitemap — по факту появления показов
   в Вебмастере (не пачкой).
+- Проверить карточки в Яндекс.Вебмастере (валидатор разметки) и Google
+  Rich Results Test после индексации.
 
 **Историческая справка (решено выше):** роутинг был на `location.hash`
 (`#item=okp24`) — поисковики не индексировали фрагменты.
