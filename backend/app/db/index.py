@@ -38,6 +38,7 @@ class GameDB:
         self._search: list[tuple[str, str]] = []  # (id, "имя_ru имя_en" в нижнем регистре)
         self._data_path: dict[str, str] = {}      # id -> относительный путь к json предмета
         self._desc_cache: dict[str, str | None] = {}
+        self._energy_cache: dict[str, float | None] = {}  # номинал топлива (core.tooltip.energy)
 
     # ---------- загрузка ----------
     def load(self) -> None:
@@ -287,6 +288,21 @@ class GameDB:
                 logger.exception("failed to read item description for %s", item_id)
         self._desc_cache[item_id] = desc
         return desc
+
+    def energy_value(self, item_id: str) -> float | None:
+        """Сколько энергии даёт предмет в генераторе (core.tooltip.energy), с кэшем."""
+        if item_id in self._energy_cache:
+            return self._energy_cache[item_id]
+        val = None
+        doc = self._item_json(item_id)
+        if doc:
+            for el in self._elements(doc):
+                key = ((el.get("name") or el.get("key") or {}).get("key")) or ""
+                if el.get("type") == "numeric" and key == "core.tooltip.energy":
+                    val = el.get("value")
+                    break
+        self._energy_cache[item_id] = val
+        return val
 
     def search(self, query: str, limit: int = 30) -> list[dict]:
         q = query.strip().lower()

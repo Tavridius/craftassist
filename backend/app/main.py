@@ -18,7 +18,7 @@ from app.db.index import db
 from app.routers.api import router as api_router
 from app.routers.auth import router as auth_router
 from app.routers.pages import router as pages_router
-from app.services import oauth
+from app.services import fuel, oauth
 from app.services.artefact_lots import artlots
 from app.services.artefact_watch import artwatch
 from app.services.ingredient_watch import watch
@@ -44,6 +44,7 @@ async def startup() -> None:
     store.load()
     store.set_base(db.priceable_ids())
     store.set_results(sorted(db.recipe_by_result))
+    fuel.warm()   # цены и история продаж топлива генератора — в ротацию воркера
     rankings.load()
     watch.load()
     oauth.load()  # кэшированный app-токен (если работаем по клиентским кредам)

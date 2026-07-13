@@ -168,6 +168,7 @@ class PriceStore:
                                  "avg_unit_price": r.get("avg_unit_price"),
                                  "last_unit_price": r.get("last_unit_price"),
                                  "recent_unit_price": r.get("recent_unit_price"),
+                                 "recent50_unit_price": r.get("recent50_unit_price"),
                                  "ts": time.time()}
         self._save_ctr += 1
         if self._save_ctr % 25 == 0:

@@ -90,6 +90,7 @@ def _price(item_id: str, path: tuple, ctx: dict, depth: int, expand: bool,
         return node
 
     child_path = path + (item_id,)
+    fuel_rate = ctx.get("fuel_rate")   # ₽ за 1 ед. энергии; None = топливо не учитываем
     evaluated = []
     for idx, r in enumerate(variants):
         ramount = _result_amount(r, item_id)
@@ -108,13 +109,16 @@ def _price(item_id: str, path: tuple, ctx: dict, depth: int, expand: bool,
                 total += line
             ings.append({"amount": amt, "line_cost": round(line) if line is not None else None,
                          "node": child})
-        recipe_cost = round(total / ramount) if known else None
+        # топливо: энергия операции × цена энергии — входит в себестоимость,
+        # поэтому выбор «крафт vs аук» учитывает его на всех уровнях дерева
+        fuel_cost = round((r.get("energy") or 0) * fuel_rate) if fuel_rate else None
+        recipe_cost = round((total + (fuel_cost or 0)) / ramount) if known else None
         evaluated.append((
             recipe_cost if recipe_cost is not None else float("inf"),
             known,
             {"variant": idx + 1, "category": r.get("category"),
              "subcategory": r.get("subcategory"), "bench": r.get("bench"),
-             "result_amount": ramount, "energy": r.get("energy"),
+             "result_amount": ramount, "energy": r.get("energy"), "fuel_cost": fuel_cost,
              "requirements": r.get("requirements") or {},
              "recipe_cost": recipe_cost, "cost_known": known, "ingredients": ings},
         ))
@@ -155,16 +159,21 @@ def _summ(recipe: dict) -> dict:
     }
 
 
-def analyze(item_id: str) -> dict:
-    """Полный ответ /api/craft: предмет, дерево крафта, цена готового и вердикт."""
-    ctx = {"memo": {}, "seen": set()}
+def analyze(item_id: str, fuel_src: dict | None = None) -> dict:
+    """Полный ответ /api/craft: предмет, дерево крафта, цена готового и вердикт.
+
+    fuel_src — источник энергии из services/fuel (учёт топлива включён):
+    себестоимость каждой крафт-операции в дереве получает +энергия×цена.
+    """
+    rate = (fuel_src["price"] / fuel_src["energy"]) if fuel_src else None
+    ctx = {"memo": {}, "seen": set(), "fuel_rate": rate}
     tree = _price(item_id, tuple(), ctx, 0, expand=True)
     store.request(ctx["seen"])  # приоритетно обновить цены встреченных предметов
 
     buy_price = tree.get("market_price")
     craft_cost = tree.get("craft_cost")
     hist = store.history.get(item_id) or {}
-    return {
+    res = {
         "item": _item_info(item_id),
         "craftable": tree.get("craftable", False),
         "buy_price": buy_price,
@@ -178,6 +187,19 @@ def analyze(item_id: str) -> dict:
         "tree": tree,
         "verdict": _verdict(tree, buy_price, craft_cost, item_id),
     }
+    if fuel_src:
+        chosen = tree.get("recipe") or {}
+        energy = chosen.get("energy")
+        res["fuel"] = {
+            "enabled": True,
+            "source": fuel_src,
+            "per_1k": fuel_src["per_1k"],
+            "craft_energy": energy,
+            "craft_fuel_cost": chosen.get("fuel_cost"),   # за операцию (×result_amount шт)
+            "unit_fuel_cost": (round(energy * rate / (chosen.get("result_amount") or 1))
+                               if energy else None),
+        }
+    return res
 
 
 def sell_price(item_id: str):

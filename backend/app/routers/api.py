@@ -15,6 +15,7 @@ from app.db import chat, market, users
 from app.db.index import db
 from app.routers.auth import current_user
 from app.services import auction, builds, craft, hideout, oauth, sales_log
+from app.services import fuel as fuel_svc
 from app.services.artefact_lots import artlots
 from app.services.artefact_watch import MSK
 from app.services.emission_watch import ewatch
@@ -64,11 +65,16 @@ async def price(item_id: str):
 
 
 @router.get("/craft/{item_id}")
-async def craft_analyze(item_id: str, request: Request):
-    res = craft.analyze(item_id)
+async def craft_analyze(item_id: str, request: Request, fuel: int = 0):
+    # fuel=1 — учесть топливо генератора: авторизованному — самый выгодный из
+    # ДОСТУПНЫХ ему источников (по улучшениям в профиле), гостю — самый выгодный
+    prof = _profile_of(request)
+    fuel_src = fuel_svc.best(prof) if fuel else None
+    res = craft.analyze(item_id, fuel_src=fuel_src)
+    if fuel and not fuel_src:   # цены топлива ещё не посчитаны фоном
+        res["fuel"] = {"enabled": True, "source": None}
     if res.get("craftable"):
         rankings.bump(item_id)  # статистика популярности
-        prof = _profile_of(request)
         if prof is not None:
             chosen = (res.get("tree") or {}).get("recipe")
             if chosen:
@@ -263,6 +269,15 @@ async def chat_post(room: str, request: Request, payload: dict = Body(...)):
     _chat_last_post[user["id"]] = now
     mid = chat.post(room, user["id"], user.get("display_login") or user["login"], text)
     return {"ok": True, "id": mid}
+
+
+# ---------- топливо генератора: выгодные источники заправки (дашборд) ----------
+
+@router.get("/fuel/top")
+async def fuel_top(n: int = Query(5, ge=1, le=20)):
+    """Самые выгодные источники энергии (₽ за 1000 ед.), по 50 последним продажам."""
+    src = fuel_svc.sources()
+    return {"sources": src[:n], "total": len(src)}
 
 
 # ---------- топ продаваемых (дашборд) ----------

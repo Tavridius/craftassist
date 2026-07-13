@@ -48,7 +48,10 @@ const FEATURE_RU = {
   water_collector: "Водосборник", welding_equipment: "Сварочное оборудование",
   workbench: "Верстак", wrenches_kit: "Набор гаечных ключей",
 };
-const BENCH_RU = { workbench: "ВЕРСТАК", kitchen_table: "КУХОННЫЙ СТОЛ", laboratory_table: "ЛАБОРАТОРНЫЙ СТОЛ" };
+const BENCH_RU = { workbench: "ВЕРСТАК", kitchen_table: "КУХОННЫЙ СТОЛ",
+                   laboratory_table: "ЛАБОРАТОРНЫЙ СТОЛ", generator: "ГЕНЕРАТОР" };
+// улучшения генератора выделяются в профиле в свою группу и влияют на учёт топлива
+const isGenFeature = (f) => f.startsWith("generator_energy_source");
 const perkName = (k) => PERK_RU[k] || k.replace(/_/g, " ");
 const featureName = (k) => FEATURE_RU[k] || k.replace(/_/g, " ");
 const benchName = (k) => BENCH_RU[k] || String(k || "ВЕРСТАК").replace(/_/g, " ").toUpperCase();
@@ -93,6 +96,8 @@ let ME = null;   // ответ /api/me (кэш для тумблера и фил
 
 const availMode = () => localStorage.getItem("sz_avail") === "1";
 const availParam = (sep) => (ME && ME.authenticated && availMode() ? `${sep}available=1` : "");
+// учёт топлива генератора в себестоимости крафта (тумблер в карточке предмета)
+const fuelMode = () => localStorage.getItem("sz_fuel") === "1";
 
 function renderModeToggle() {
   const authed = ME && ME.authenticated;
@@ -241,7 +246,7 @@ async function openItem(id) {
   detail.innerHTML = `<div class="spinner">// АНАЛИЗ РЕЦЕПТА И ЦЕН</div>`;
   window.scrollTo(0, 0);
   try {
-    const r = await fetch(api(`/craft/${id}`));
+    const r = await fetch(api(`/craft/${id}${fuelMode() ? "?fuel=1" : ""}`));
     renderDetail(await r.json());
   } catch (e) {
     detail.innerHTML = `<div class="empty">[!] ОШИБКА ЗАГРУЗКИ</div>`;
@@ -255,14 +260,15 @@ function verdictBlock(d) {
   const basis = (v.sell_basis === "sales"
     ? "ПО РЕАЛЬНЫМ ПРОДАЖАМ (МЕДИАНА 10 ПОСЛЕДНИХ)"
     : "ПО МИН. ВЫКУПУ (ИСТОРИИ ПРОДАЖ ЕЩЁ НЕТ)") + fee;
+  const fuelMark = d.fuel && d.fuel.enabled && d.fuel.source ? " · ТОПЛИВО УЧТЕНО" : "";
   if (v.status === "profitable") {
     cls = "ok";
     main = `ВЫГОДНО ▲+${v.pct}%`;
-    sub = `МАРЖА +${fmt(v.diff)} ₽ НА ЕДИНИЦУ · ${basis}`;
+    sub = `МАРЖА +${fmt(v.diff)} ₽ НА ЕДИНИЦУ · ${basis}${fuelMark}`;
   } else if (v.status === "unprofitable") {
     cls = "bad";
     main = `НЕВЫГОДНО ▼−${Math.abs(v.pct)}%`;
-    sub = `МАРЖА −${fmt(Math.abs(v.diff))} ₽ НА ЕДИНИЦУ · ${basis}`;
+    sub = `МАРЖА −${fmt(Math.abs(v.diff))} ₽ НА ЕДИНИЦУ · ${basis}${fuelMark}`;
   } else if (v.status === "unknown") {
     main = `РАСЧЁТ ЦЕН…`;
     sub = `ЦЕНЫ ЧАСТИ ИНГРЕДИЕНТОВ СЧИТАЮТСЯ В ФОНЕ — ОБНОВИ СТРАНИЦУ ЧЕРЕЗ 1–2 МИНУТЫ`;
@@ -306,8 +312,12 @@ function tilesBlock(d, chosen) {
   const diff = v.diff;
   const diffCls = diff == null ? "" : diff >= 0 ? "up" : "down";
   const diffVal = diff == null ? "—" : (diff >= 0 ? "+" : "−") + fmt(Math.abs(diff)) + " ₽";
-  return `<div class="tiles">
-    <div class="tile"><div class="lbl">СЕБЕСТОИМОСТЬ</div>
+  const f = d.fuel;
+  const fuelTile = f && f.enabled ? `
+    <div class="tile"><div class="lbl">ТОПЛИВО / ШТ</div>
+      <div class="val amber">${f.unit_fuel_cost != null ? fmt(f.unit_fuel_cost) + " ₽" : "—"}</div></div>` : "";
+  return `<div class="tiles ${fuelTile ? "five" : ""}">
+    <div class="tile"><div class="lbl">СЕБЕСТОИМОСТЬ${fuelTile ? " +⛽" : ""}</div>
       <div class="val">${d.craft_cost != null ? fmt(d.craft_cost) + " ₽" : "—"}</div></div>
     <div class="tile"><div class="lbl">ЦЕНА АУКА</div>
       <div class="val">${d.buy_price != null ? fmt(d.buy_price) + " ₽" : "—"}</div></div>
@@ -315,6 +325,7 @@ function tilesBlock(d, chosen) {
       <div class="val ${diffCls}">${diffVal}</div></div>
     <div class="tile"><div class="lbl">ЭНЕРГИЯ ВЕРСТАКА</div>
       <div class="val amber">${chosen && chosen.energy != null ? fmt(chosen.energy) : "—"}</div></div>
+    ${fuelTile}
   </div>`;
 }
 
@@ -392,7 +403,38 @@ function altsBlock(alts) {
   return h;
 }
 
-function reqsSections(chosen, rc) {
+// подписи базы расчёта цены топлива (services/fuel.py: unit_price)
+const FUEL_BASIS_RU = {
+  sales50: "ПО 50 ПОСЛЕДНИМ СДЕЛКАМ", sales10: "ПО 10 ПОСЛЕДНИМ СДЕЛКАМ",
+  avg: "ПО СРЕДНЕЙ ЦЕНЕ ПРОДАЖ", market: "ПО ЛОТАМ АУКА",
+};
+
+function fuelSection(d) {
+  const f = d.fuel;
+  const on = !!(f && f.enabled);
+  let rows = "";
+  if (on && f.source) {
+    const s = f.source;
+    rows = `
+      <div class="res-row"><span class="k">ТОПЛИВО НА КРАФТ</span>
+        <span class="v">${f.craft_fuel_cost != null ? fmt(f.craft_fuel_cost) + " ₽" : "—"}</span></div>
+      <div class="fuel-src" data-id="${s.id}" title="Открыть карточку топлива">
+        <img loading="lazy" src="${asset(s.icon)}" alt="">
+        <span class="nm">${escapeHtml(s.name)}</span>
+        <span class="x">${fmt(s.price)} ₽ / ${fmt(s.energy)} ЕД</span></div>
+      <div class="fuel-note">ЦЕНА ЭНЕРГИИ ${fmt(f.per_1k)} ₽ ЗА 1000 ЕД · ${FUEL_BASIS_RU[s.basis] || ""}<br>
+        ${ME && ME.authenticated
+          ? "САМЫЙ ВЫГОДНЫЙ ИЗ ДОСТУПНЫХ ТЕБЕ ИСТОЧНИКОВ (УЛУЧШЕНИЯ — В ПРОФИЛЕ)"
+          : "САМЫЙ ВЫГОДНЫЙ ИСТОЧНИК ЭНЕРГИИ НА АУКЕ"}</div>`;
+  } else if (on) {
+    rows = `<div class="fuel-note">ЦЕНЫ ТОПЛИВА ЕЩЁ СЧИТАЮТСЯ В ФОНЕ — ЗАГЛЯНИ ЧЕРЕЗ ПАРУ МИНУТ.</div>`;
+  }
+  return `<button class="mkc-btn fuel-toggle ${on ? "on" : ""}" id="fuelToggle" data-item="${d.item.id}"
+      title="Закладывать ли стоимость топлива генератора в себестоимость крафта">
+      ⛽ УЧЁТ ТОПЛИВА: ${on ? "ВКЛ" : "ВЫКЛ"}</button>${rows}`;
+}
+
+function reqsSections(chosen, rc, d) {
   const req = chosen.requirements || {};
   const feats = req.features || [];
   const perks = Object.entries(req.perks || {});
@@ -434,6 +476,7 @@ function reqsSections(chosen, rc) {
     <div class="reqs-lbl">РЕСУРСЫ ВЕРСТАКА</div>
     <div class="res-row"><span class="k">ЭНЕРГИЯ</span>
       <span class="v">${chosen.energy != null ? fmt(chosen.energy) + " ЕД." : "—"}</span></div>
+    ${fuelSection(d)}
   </div>`;
   return h;
 }
@@ -449,7 +492,7 @@ function usedInSection(usedIn) {
   </div>`;
 }
 
-function asideBlock(chosen, usedIn, rc) {
+function asideBlock(chosen, usedIn, rc, d) {
   const hasUsed = usedIn && usedIn.length;
   if (!chosen && !hasUsed) return "";
   const note = !chosen ? "КРАФТ"
@@ -461,7 +504,7 @@ function asideBlock(chosen, usedIn, rc) {
       <div class="reqs-title">${chosen ? "▸ ТРЕБОВАНИЯ" : "▸ ПРИМЕНЕНИЕ"}</div>
       <div class="reqs-note">${note}</div>
     </div>
-    ${chosen ? reqsSections(chosen, rc) : ""}
+    ${chosen ? reqsSections(chosen, rc, d) : ""}
     ${hasUsed ? usedInSection(usedIn) : ""}
   </aside>`;
 }
@@ -516,7 +559,7 @@ function renderDetail(d) {
   }
 
   html += `</div>`;                      // /card-main
-  html += asideBlock(chosen, d.used_in, d.req_check);
+  html += asideBlock(chosen, d.used_in, d.req_check, d);
   html += `</div>`;                      // /card-cols
 
   detail.innerHTML = html;
@@ -528,8 +571,13 @@ function wireDetail() {
   if (b) b.addEventListener("click", () => {
     navigate(lastQuery ? `/search?q=${encodeURIComponent(lastQuery)}` : "/craft");
   });
-  detail.querySelectorAll(".tname[data-id], .ilink[data-id], .use-row[data-id]").forEach((el) =>
+  detail.querySelectorAll(".tname[data-id], .ilink[data-id], .use-row[data-id], .fuel-src[data-id]").forEach((el) =>
     el.addEventListener("click", () => { navigate(`/item/${el.dataset.id}`); }));
+  const ft = detail.querySelector("#fuelToggle");
+  if (ft) ft.addEventListener("click", () => {
+    localStorage.setItem("sz_fuel", fuelMode() ? "0" : "1");
+    openItem(ft.dataset.item);   // перечитать карточку с новым режимом
+  });
 }
 
 // ---------- раздел «Крафт»: биржа ингредиентов + подборки ----------
@@ -557,17 +605,18 @@ async function loadDashboard() {
       && home.dataset.ts && Date.now() - +home.dataset.ts < 60000) return;
   home.innerHTML = `<div class="spinner">// ЗАГРУЗКА ГЛАВНОЙ</div>`;
   try {
-    const [top, art, watch, em, sales, box] = await Promise.all([
+    const [top, art, watch, em, sales, box, fuelTop] = await Promise.all([
       fetch(api(`/top${availParam("?")}`)).then((r) => r.json()).catch(() => null),
       fetch(api("/artmarket/top?window=7d")).then((r) => r.json()).catch(() => null),
       fetch(api("/watch")).then((r) => r.json()).catch(() => null),
       fetch(api("/emission")).then((r) => r.json()).catch(() => null),
       fetch(api("/sales/top?n=5")).then((r) => r.json()).catch(() => null),
       fetch(api("/box")).then((r) => r.json()).catch(() => null),
+      fetch(api("/fuel/top?n=5")).then((r) => r.json()).catch(() => null),
     ]);
     home.dataset.ts = Date.now();
     home.dataset.view = "dash";
-    renderDashboard(top, art, watch, em, sales, box);
+    renderDashboard(top, art, watch, em, sales, box, fuelTop);
   } catch (e) {
     home.innerHTML = `<div class="empty">[!] НЕ УДАЛОСЬ ЗАГРУЗИТЬ ГЛАВНУЮ</div>`;
   }
@@ -653,6 +702,21 @@ function salesBody(s) {
     <div class="sales-view hidden" data-view="week">${week}</div>`;
 }
 
+// топ выгодных источников заправки генератора: ₽ за 1000 ед. энергии
+const FUEL_GROUP_SUB = { battery: "СТАНЦИЯ БАТАРЕЙ", anomal: "АНОМ. СТАНЦИЯ" };
+function fuelBody(fu) {
+  const src = ((fu && fu.sources) || []).filter((s) => s.per_1k != null);
+  if (!src.length)
+    return `<div class="empty-sm">ЦЕНЫ ТОПЛИВА СЧИТАЮТСЯ В ФОНЕ — ЗАГЛЯНИ ЧЕРЕЗ ПАРУ МИНУТ.</div>`;
+  const rows = src.map((s) => `<div class="dash-row" data-nav="/item/${s.id}">
+    <img loading="lazy" src="${asset(s.icon)}" alt="">
+    <div class="nm">${escapeHtml(s.name)}${FUEL_GROUP_SUB[s.group]
+      ? ` <span class="dash-sub">${FUEL_GROUP_SUB[s.group]}</span>` : ""}</div>
+    <span class="dash-p"><b>${fmt(s.per_1k)}</b> ₽/1К ЭН</span></div>`).join("");
+  return rows + `<div class="dash-note">ЦЕНА ТОПЛИВА — ПО 50 ПОСЛЕДНИМ СДЕЛКАМ ·
+    ГЕНЕРАТОР БАЗОВО ЖЖЁТ БЕНЗИН/ДИЗЕЛЬ/ГАЗ, БАТАРЕИ И АНОМАЛЬНОЕ — ПОСЛЕ УЛУЧШЕНИЙ</div>`;
+}
+
 function boxBody(b) {
   if (!b || b.missing)
     return `<div class="dash-stub"><span class="stub-code">[ МОДУЛЬ ]</span>
@@ -665,7 +729,7 @@ function boxBody(b) {
     ${b.sales_per_hour != null ? `<div class="em-sub">${fmtSales(b.sales_per_hour)} ПРОД/Ч</div>` : ""}`;
 }
 
-function renderDashboard(top, art, watch, em, sales, box) {
+function renderDashboard(top, art, watch, em, sales, box, fuelTop) {
   const card = (title, note, body, link, linkText) => `<section class="dash-card">
     <div class="side-head">
       <div class="side-title">▸ ${title}</div>
@@ -718,6 +782,7 @@ function renderDashboard(top, art, watch, em, sales, box) {
       ${card("САМОЕ ПРОДАВАЕМОЕ", "ТОП-3 ПО ТЕМПУ ПРОДАЖ", salesBody(sales), "/market", "НА АУКЦИОН")}
       ${card("ТРЕНДЫ БИРЖИ АРТЕФАКТОВ", "ЦЕНА ЗА 7 ДНЕЙ", trends, "/auction", "НА БИРЖУ")}
       ${card("ГРАФИКИ ИНГРЕДИЕНТОВ", "СРЕДНЯЯ ЦЕНА ПРОДАЖ", charts, "/craft", "ВСЕ ГРАФИКИ")}
+      ${card("ЗАПРАВКА ГЕНЕРАТОРА", "ТОП-5 · ₽ ЗА 1000 ЕД ЭНЕРГИИ", fuelBody(fuelTop), "/profile", "УЛУЧШЕНИЯ — В ПРОФИЛЕ")}
       ${card("ВЫБРОС", "ВРЕМЯ МСК · ЗАМЕР РАЗ В МИНУТУ", emissionBody(em))}
       ${card("СБОРКА ДНЯ", "СЛУЧАЙНАЯ ПОПУЛЯРНАЯ СБОРКА", stub("Случайная сборка артефактов из калькулятора — с ценой и статами."), "/builds", "К КАЛЬКУЛЯТОРУ")}
       ${card("АКТУАЛЬНЫЙ ЯЩИК", "ТАКТИЧЕСКИЙ РЕЗЕРВ", boxBody(box), "/market", "НА АУКЦИОН")}
@@ -1229,10 +1294,16 @@ function drawSalesChart() {
     tip.innerHTML = `<b>${mkcFmtT(best.t, 0, d.granularity)}${d.granularity === "h" ? " МСК" : ""}</b><br>
       СР ${fmt(best.avg)} ₽<br>МИН ${fmt(best.min)} · МАКС ${fmt(best.max)}<br>ПРОДАНО ${fmt(best.n)} ШТ`;
     tip.classList.remove("hidden");
+    // позиция — во viewport-координатах: у правого/нижнего края экрана
+    // тултип переворачивается на другую сторону курсора, не уходя за экран
     const wr = box.getBoundingClientRect();
-    const tx = Math.min(ev.clientX - wr.left + 14, wr.width - tip.offsetWidth - 6);
-    tip.style.left = Math.max(0, tx) + "px";
-    tip.style.top = Math.min(ev.clientY - wr.top + 14, wr.height - tip.offsetHeight - 4) + "px";
+    const tw = tip.offsetWidth, th = tip.offsetHeight;
+    let vx = ev.clientX + 14;
+    if (vx + tw > window.innerWidth - 8) vx = ev.clientX - tw - 14;
+    let vy = ev.clientY + 14;
+    if (vy + th > window.innerHeight - 8) vy = ev.clientY - th - 12;
+    tip.style.left = Math.max(4 - wr.left, vx - wr.left) + "px";
+    tip.style.top = (vy - wr.top) + "px";
   });
   svg.addEventListener("pointerup", (ev) => {
     if (drag0 == null) return;
@@ -1991,16 +2062,17 @@ function renderProfile(dict, prof, user) {
     </div>`;
   };
 
-  // станки — в столбик, сгруппированы по столу, к которому относятся
+  // станки — в столбик, сгруппированы по столу, к которому относятся;
+  // улучшения генератора — отдельной группой (учёт топлива в крафте)
   const FB = dict.feature_bench || {};
   const byBench = {};
   feats.forEach((f) => {
-    const b = FB[f] || "workbench";
+    const b = isGenFeature(f) ? "generator" : (FB[f] || "workbench");
     (byBench[b] = byBench[b] || []).push(f);
   });
-  const benchOrder = ["workbench", "laboratory_table", "kitchen_table"]
+  const benchOrder = ["workbench", "laboratory_table", "kitchen_table", "generator"]
     .concat(Object.keys(byBench).filter((b) =>
-      !["workbench", "laboratory_table", "kitchen_table"].includes(b)));
+      !["workbench", "laboratory_table", "kitchen_table", "generator"].includes(b)));
   const featBtn = (f) => {
     const ic = (dict.feature_icons || {})[f];
     return `<button class="feat ${P.features.has(f) ? "on" : ""}" data-feat="${f}">
@@ -2022,6 +2094,8 @@ function renderProfile(dict, prof, user) {
       .filter((b) => (byBench[b] || []).length)
       .map((b) => `<div class="feat-grp">
         <div class="feat-grp-ttl">${benchName(b)} · ${byBench[b].length}</div>
+        ${b === "generator" ? `<div class="feat-grp-note">Купленные улучшения открывают
+          дешёвые источники энергии — их учитывает «УЧЁТ ТОПЛИВА» в карточках крафта.</div>` : ""}
         <div class="feat-col">${byBench[b].map(featBtn).join("")}</div>
       </div>`).join("")}
     </div>

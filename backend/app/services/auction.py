@@ -194,11 +194,15 @@ async def fetch_history(client: httpx.AsyncClient, item_id: str) -> dict:
     last_unit = round(dated[0][1]) if dated else None
     recent = sorted(u for _, u in dated[:10])
     recent_unit = round(recent[len(recent) // 2]) if recent else None
+    # медиана 50 последних сделок — база расчёта цены топлива генератора
+    recent50 = sorted(u for _, u in dated[:50])
+    recent50_unit = round(recent50[len(recent50) // 2]) if recent50 else None
 
     if not times:
         return {"available": True, "sales_per_hour": 0.0, "sold_count": 0,
                 "avg_unit_price": avg, "last_unit_price": last_unit,
-                "recent_unit_price": recent_unit, "prices_raw": raw}
+                "recent_unit_price": recent_unit, "recent50_unit_price": recent50_unit,
+                "prices_raw": raw}
 
     now = datetime.now(timezone.utc)
     span_h = max((now - min(times)).total_seconds() / 3600, 1 / 60)
@@ -208,4 +212,5 @@ async def fetch_history(client: httpx.AsyncClient, item_id: str) -> dict:
             "avg_unit_price": avg,
             "last_unit_price": last_unit,
             "recent_unit_price": recent_unit,
+            "recent50_unit_price": recent50_unit,
             "prices_raw": raw}
