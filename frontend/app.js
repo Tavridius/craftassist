@@ -617,7 +617,7 @@ async function loadDashboard() {
       fetch(api("/emission")).then((r) => r.json()).catch(() => null),
       fetch(api("/sales/top?n=5")).then((r) => r.json()).catch(() => null),
       fetch(api("/box")).then((r) => r.json()).catch(() => null),
-      fetch(api("/fuel/top?n=5")).then((r) => r.json()).catch(() => null),
+      fetch(api("/fuel/top?n=20")).then((r) => r.json()).catch(() => null),
     ]);
     home.dataset.ts = Date.now();
     home.dataset.view = "dash";
@@ -707,17 +707,18 @@ function salesBody(s) {
     <div class="sales-view hidden" data-view="week">${week}</div>`;
 }
 
-// топ выгодных источников заправки генератора: ₽ за 1000 ед. энергии
+// все источники заправки генератора, выгодные первыми: ₽ за 1000 ед. энергии
 const FUEL_GROUP_SUB = { gas: "СТАНЦИЯ ГАЗА", battery: "СТАНЦИЯ БАТАРЕЙ", anomal: "АНОМ. СТАНЦИЯ" };
 function fuelBody(fu) {
-  const src = ((fu && fu.sources) || []).filter((s) => s.per_1k != null);
-  if (!src.length)
+  const src = (fu && fu.sources) || [];
+  if (!src.some((s) => s.per_1k != null))
     return `<div class="empty-sm">ЦЕНЫ ТОПЛИВА СЧИТАЮТСЯ В ФОНЕ — ЗАГЛЯНИ ЧЕРЕЗ ПАРУ МИНУТ.</div>`;
   const rows = src.map((s) => `<div class="dash-row" data-nav="/item/${s.id}">
     <img loading="lazy" src="${asset(s.icon)}" alt="">
     <div class="nm">${escapeHtml(s.name)}${FUEL_GROUP_SUB[s.group]
       ? ` <span class="dash-sub">${FUEL_GROUP_SUB[s.group]}</span>` : ""}</div>
-    <span class="dash-p"><b>${fmt(s.per_1k)}</b> ₽/1К ЭН</span></div>`).join("");
+    <span class="dash-p">${s.per_1k != null
+      ? `<b>${fmt(s.per_1k)}</b> ₽/1К ЭН` : "ЦЕНА СЧИТАЕТСЯ…"}</span></div>`).join("");
   return rows + `<div class="dash-note">ЦЕНА ТОПЛИВА — ПО 50 ПОСЛЕДНИМ СДЕЛКАМ ·
     БАЗОВЫЙ ГЕНЕРАТОР ЖЖЁТ БЕНЗИН/ДИЗЕЛЬ, ГАЗ/БАТАРЕИ/АНОМАЛЬНОЕ — ПОСЛЕ ПРИСТРОЕК</div>`;
 }
@@ -787,7 +788,7 @@ function renderDashboard(top, art, watch, em, sales, box, fuelTop) {
       ${card("САМОЕ ПРОДАВАЕМОЕ", "ТОП-3 ПО ТЕМПУ ПРОДАЖ", salesBody(sales), "/market", "НА АУКЦИОН")}
       ${card("ТРЕНДЫ БИРЖИ АРТЕФАКТОВ", "ЦЕНА ЗА 7 ДНЕЙ", trends, "/auction", "НА БИРЖУ")}
       ${card("ГРАФИКИ ИНГРЕДИЕНТОВ", "СРЕДНЯЯ ЦЕНА ПРОДАЖ", charts, "/craft", "ВСЕ ГРАФИКИ")}
-      ${card("ЗАПРАВКА ГЕНЕРАТОРА", "ТОП-5 · ₽ ЗА 1000 ЕД ЭНЕРГИИ", fuelBody(fuelTop), "/profile", "УЛУЧШЕНИЯ — В ПРОФИЛЕ")}
+      ${card("ЗАПРАВКА ГЕНЕРАТОРА", "ВСЕ ИСТОЧНИКИ · ₽ ЗА 1000 ЕД", fuelBody(fuelTop), "/profile", "ПРИСТРОЙКИ — В ПРОФИЛЕ")}
       ${card("ВЫБРОС", "ВРЕМЯ МСК · ЗАМЕР РАЗ В МИНУТУ", emissionBody(em))}
       ${card("СБОРКА ДНЯ", "СЛУЧАЙНАЯ ПОПУЛЯРНАЯ СБОРКА", stub("Случайная сборка артефактов из калькулятора — с ценой и статами."), "/builds", "К КАЛЬКУЛЯТОРУ")}
       ${card("АКТУАЛЬНЫЙ ЯЩИК", "ТАКТИЧЕСКИЙ РЕЗЕРВ", boxBody(box), "/market", "НА АУКЦИОН")}
