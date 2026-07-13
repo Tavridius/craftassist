@@ -811,6 +811,8 @@ a.auth-user:hover { color: var(--green); border-color: var(--green-border); text
 .dc-head img { width: 16px; height: 16px; object-fit: contain; }
 .dc-head .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dc-price { font-size: 11px; color: var(--bright); margin-top: 4px; }
+.dc-price .dc-unit { font-size: 9px; color: var(--dimmer); letter-spacing: 0.08em; }
+.dc-meta { font-size: 9px; color: var(--dimmer); letter-spacing: 0.05em; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .v-lastsale { font-size: 10px; letter-spacing: 0.1em; color: var(--dim); margin-top: 6px; text-align: right; }
 

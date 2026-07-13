@@ -765,17 +765,27 @@ function renderDashboard(top, art, watch, em, sales, box, fuelTop) {
     trends = grp("РАСТУТ", art.up) + grp("ПАДАЮТ", art.down);
   } else trends = `<div class="empty-sm">БИРЖА НАКАПЛИВАЕТ ЗАМЕРЫ — СКОРО ПОЯВЯТСЯ ТРЕНДЫ.</div>`;
 
-  // мини-графики биржи ингредиентов
+  // мини-графики биржи ингредиентов — все наблюдаемые, с полной сводкой
   let charts = "";
   if (watch && watch.items && watch.items.length) {
-    charts = `<div class="dash-charts">` + watch.items.slice(0, 4).map((m) => `
+    charts = `<div class="dash-charts">` + watch.items.map((m) => {
+      const meta = [
+        `МИН ${m.min_buyout != null ? fmt(m.min_buyout) + " ₽" : "—"}`,
+        m.sales_per_hour != null ? `${fmtSales(m.sales_per_hour)} ПРОД/Ч` : "",
+      ].filter(Boolean).join(" · ");
+      return `
       <div class="dash-chart" data-nav="/item/${m.id}">
         <div class="dc-head"><img loading="lazy" src="${asset(m.icon)}" alt="">
           <span class="nm">${escapeHtml(m.name)}</span>
           ${m.delta_pct != null ? `<span class="pct ${m.delta_pct > 0 ? "up" : m.delta_pct < 0 ? "down" : "dim"}">${m.delta_pct > 0 ? "+" : ""}${m.delta_pct}%</span>` : ""}</div>
         ${chartSvg(m.series || [])}
-        <div class="dc-price">${m.avg != null ? fmt(m.avg) + " ₽" : "—"}</div>
-      </div>`).join("") + `</div>`;
+        <div class="dc-price">${m.avg != null ? fmt(m.avg) + " ₽" : "—"} <span class="dc-unit">СР./ШТ</span></div>
+        <div class="dc-meta">${meta}</div>
+      </div>`;
+    }).join("") + `</div>`;
+    const hours = (watch.hours || []).map((h) => String(h).padStart(2, "0") + ":00").join(" · ");
+    charts += `<div class="dash-note">ЗАМЕРЫ ${hours} МСК${watch.last_slot
+      ? ` · ПОСЛЕДНИЙ ${fmtSlot(watch.last_slot)}` : ""} · ДЕЛЬТА — К ПРОШЛОМУ ЗАМЕРУ</div>`;
   } else charts = `<div class="empty-sm">ЖДЁМ ПЕРВЫЕ ЗАМЕРЫ БИРЖИ.</div>`;
 
   home.innerHTML = `<div class="dash">
@@ -787,7 +797,7 @@ function renderDashboard(top, art, watch, em, sales, box, fuelTop) {
       ${card("КРАФТЫ ДНЯ", "ВЫГОДА · ЛИКВИДНОСТЬ · СПРОС", crafts, "/craft", "В РАЗДЕЛ КРАФТА")}
       ${card("САМОЕ ПРОДАВАЕМОЕ", "ТОП-3 ПО ТЕМПУ ПРОДАЖ", salesBody(sales), "/market", "НА АУКЦИОН")}
       ${card("ТРЕНДЫ БИРЖИ АРТЕФАКТОВ", "ЦЕНА ЗА 7 ДНЕЙ", trends, "/auction", "НА БИРЖУ")}
-      ${card("ГРАФИКИ ИНГРЕДИЕНТОВ", "СРЕДНЯЯ ЦЕНА ПРОДАЖ", charts, "/craft", "ВСЕ ГРАФИКИ")}
+      ${card("ГРАФИКИ ИНГРЕДИЕНТОВ", "ВСЕ НАБЛЮДАЕМЫЕ · СР. ЦЕНА ПРОДАЖ", charts, "/craft", "В РАЗДЕЛ КРАФТА")}
       ${card("ЗАПРАВКА ГЕНЕРАТОРА", "ВСЕ ИСТОЧНИКИ · ₽ ЗА 1000 ЕД", fuelBody(fuelTop), "/profile", "ПРИСТРОЙКИ — В ПРОФИЛЕ")}
       ${card("ВЫБРОС", "ВРЕМЯ МСК · ЗАМЕР РАЗ В МИНУТУ", emissionBody(em))}
       ${card("СБОРКА ДНЯ", "СЛУЧАЙНАЯ ПОПУЛЯРНАЯ СБОРКА", stub("Случайная сборка артефактов из калькулятора — с ценой и статами."), "/builds", "К КАЛЬКУЛЯТОРУ")}
