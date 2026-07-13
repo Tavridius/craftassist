@@ -39,8 +39,9 @@ def item_available(item_id: str, profile: dict) -> bool:
 
 def validate_profile(payload: dict) -> dict:
     """Санитизация PUT /api/profile: только известные ключи, уровни 0..PERK_MAX."""
+    from app.services import fuel   # локально: fuel тянет price_store при импорте
     known_perks = {p["id"] for p in db.hideout_perks}
-    known_feats = set(db.hideout_features)
+    known_feats = set(db.hideout_features) | set(fuel.EXTRA_PROFILE_FEATURES)
     perks = {}
     for k, v in (payload.get("perks") or {}).items():
         if k not in known_perks:

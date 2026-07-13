@@ -100,9 +100,12 @@ async def top(request: Request, available: int = 0):
 
 @router.get("/hideout")
 async def hideout_dict():
-    """Справочник для страницы профиля: перки и все станки/фичи из рецептов."""
-    return {"perks": db.hideout_perks, "features": db.hideout_features,
-            "feature_icons": db.hideout_feature_icons,
+    """Справочник для страницы профиля: перки, станки/фичи из рецептов
+    + пристройки генератора (газ/фильтр/инвертор/шкаф — не требуются рецептами,
+    но газовая станция открывает топливо, см. services/fuel)."""
+    return {"perks": db.hideout_perks,
+            "features": sorted(set(db.hideout_features) | set(fuel_svc.EXTRA_PROFILE_FEATURES)),
+            "feature_icons": {**fuel_svc.feature_icons(), **db.hideout_feature_icons},
             "feature_bench": db.hideout_feature_bench,
             "perk_max": hideout.PERK_MAX}
 

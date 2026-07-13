@@ -38,6 +38,10 @@ const FEATURE_RU = {
   gauze_filter: "Фильтр из марли",
   generator_energy_source_anomal: "Станция аномального преобразования",
   generator_energy_source_battery: "Станция для приема батарей",
+  generator_energy_source_gas: "Станция для приема баллонов с газом",
+  generator_fuel_filter: "Топливный фильтр",
+  generator_inverter: "Инвертор",
+  generator_battery_cabinet: "Аккумуляторный шкаф",
   hoods: "Вытяжка", kitchen_items: "Кухонная утварь", kitchen_table: "Кухонный стол",
   laboratory_table: "Лабораторный стол", laminar_box: "Ламинарный бокс",
   laser_level: "Лазерный уровень", lathe: "Токарный станок",
@@ -50,8 +54,9 @@ const FEATURE_RU = {
 };
 const BENCH_RU = { workbench: "ВЕРСТАК", kitchen_table: "КУХОННЫЙ СТОЛ",
                    laboratory_table: "ЛАБОРАТОРНЫЙ СТОЛ", generator: "ГЕНЕРАТОР" };
-// улучшения генератора выделяются в профиле в свою группу и влияют на учёт топлива
-const isGenFeature = (f) => f.startsWith("generator_energy_source");
+// пристройки генератора выделяются в профиле в свою группу; станции приёма
+// (газ/батареи/аномальное) открывают топливо в учёте расходов
+const isGenFeature = (f) => f.startsWith("generator_");
 const perkName = (k) => PERK_RU[k] || k.replace(/_/g, " ");
 const featureName = (k) => FEATURE_RU[k] || k.replace(/_/g, " ");
 const benchName = (k) => BENCH_RU[k] || String(k || "ВЕРСТАК").replace(/_/g, " ").toUpperCase();
@@ -703,7 +708,7 @@ function salesBody(s) {
 }
 
 // топ выгодных источников заправки генератора: ₽ за 1000 ед. энергии
-const FUEL_GROUP_SUB = { battery: "СТАНЦИЯ БАТАРЕЙ", anomal: "АНОМ. СТАНЦИЯ" };
+const FUEL_GROUP_SUB = { gas: "СТАНЦИЯ ГАЗА", battery: "СТАНЦИЯ БАТАРЕЙ", anomal: "АНОМ. СТАНЦИЯ" };
 function fuelBody(fu) {
   const src = ((fu && fu.sources) || []).filter((s) => s.per_1k != null);
   if (!src.length)
@@ -714,7 +719,7 @@ function fuelBody(fu) {
       ? ` <span class="dash-sub">${FUEL_GROUP_SUB[s.group]}</span>` : ""}</div>
     <span class="dash-p"><b>${fmt(s.per_1k)}</b> ₽/1К ЭН</span></div>`).join("");
   return rows + `<div class="dash-note">ЦЕНА ТОПЛИВА — ПО 50 ПОСЛЕДНИМ СДЕЛКАМ ·
-    ГЕНЕРАТОР БАЗОВО ЖЖЁТ БЕНЗИН/ДИЗЕЛЬ/ГАЗ, БАТАРЕИ И АНОМАЛЬНОЕ — ПОСЛЕ УЛУЧШЕНИЙ</div>`;
+    БАЗОВЫЙ ГЕНЕРАТОР ЖЖЁТ БЕНЗИН/ДИЗЕЛЬ, ГАЗ/БАТАРЕИ/АНОМАЛЬНОЕ — ПОСЛЕ ПРИСТРОЕК</div>`;
 }
 
 function boxBody(b) {
@@ -2094,8 +2099,10 @@ function renderProfile(dict, prof, user) {
       .filter((b) => (byBench[b] || []).length)
       .map((b) => `<div class="feat-grp">
         <div class="feat-grp-ttl">${benchName(b)} · ${byBench[b].length}</div>
-        ${b === "generator" ? `<div class="feat-grp-note">Купленные улучшения открывают
-          дешёвые источники энергии — их учитывает «УЧЁТ ТОПЛИВА» в карточках крафта.</div>` : ""}
+        ${b === "generator" ? `<div class="feat-grp-note">Станции приёма (газ, батареи,
+          аномальное) открывают источники энергии — их учитывает «УЧЁТ ТОПЛИВА» в карточках
+          крафта. Фильтр, инвертор и шкаф поднимают лимит/скорость генератора и на цену
+          энергии не влияют.</div>` : ""}
         <div class="feat-col">${byBench[b].map(featBtn).join("")}</div>
       </div>`).join("")}
     </div>

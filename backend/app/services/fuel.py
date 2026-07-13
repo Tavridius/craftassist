@@ -5,24 +5,45 @@
 рублей за 1000 ед. энергии; цена топлива — медиана 50 последних продаж аука
 (fallback: медиана 10 → средняя → закупка по стакану → мин. выкуп).
 
-Группы соответствуют апгрейдам генератора (ключи фич — из requirements рецептов):
-базовый ДВС жжёт жидкое топливо и газ, станции батарей/аномального
-преобразования открываются улучшениями и отмечаются в профиле убежища.
+Группы соответствуют пристройкам генератора: базовый жжёт канистры (бензин/
+дизель), баллоны с газом принимает газовая станция, батареи и аномальное —
+свои станции приёма (справка EXBO: пристройки «Генератора» также поднимают
+лимит энергии и скорость расщепления — на цену энергии это не влияет).
 """
 from app.db.index import db
 from app.services.price_store import store
 
-# фичи-улучшения генератора (есть в db.hideout_features и в профиле пользователя)
+# фичи-станции, открывающие энергоносители. battery/anomal есть в requirements
+# рецептов (db.hideout_features), gas — только пристройка, ключ синтетический
+FEATURE_GAS = "generator_energy_source_gas"
 FEATURE_BATTERY = "generator_energy_source_battery"
 FEATURE_ANOMAL = "generator_energy_source_anomal"
-GENERATOR_FEATURES = [FEATURE_BATTERY, FEATURE_ANOMAL]
+
+# пристройки без влияния на цену энергии (лимит/скорость расщепления) —
+# в профиле отмечаются для полноты, расчёт топлива их не использует
+PASSIVE_FEATURES = ["generator_fuel_filter",       # Топливный фильтр
+                    "generator_inverter",          # Инвертор
+                    "generator_battery_cabinet"]   # Аккумуляторный шкаф
+
+# фичи вне db.hideout_features — добавляются в справочник /api/hideout и
+# в известные ключи профиля (hideout.validate_profile)
+EXTRA_PROFILE_FEATURES = [FEATURE_GAS] + PASSIVE_FEATURES
+
+# иконки пристроек — игровые предметы-аналоги из БД (у станций батарей/аномального
+# приоритет за рендерами из frontend/hideout, см. /api/hideout)
+FEATURE_ITEM_ICONS = {
+    FEATURE_GAS: "gvk6",                     # Станция для приема баллонов с газом
+    "generator_fuel_filter": "1jog",         # Топливный фильтр
+    "generator_inverter": "zlky",            # Инвертор
+    "generator_battery_cabinet": None,       # предмета в базе EXBO нет
+}
 
 # id топлива -> (группа, номинал-fallback, если в json предмета нет energy)
 FUEL_ITEMS: dict[str, tuple[str, float]] = {
     "g0vn":  ("base", 2000),      # Канистра с бензином
     "z7lk":  ("base", 2500),      # Канистра с дизелем
-    "5dgo":  ("base", 2500),      # Баллон с пропаном
-    "y7j0":  ("base", 3000),      # Баллон с метаном
+    "5dgo":  ("gas", 2500),       # Баллон с пропаном
+    "y7j0":  ("gas", 3000),       # Баллон с метаном
     "w3923": ("battery", 1000),   # Сменный аккумулятор
     "55621": ("battery", 5000),   # Армейский аккумулятор
     "401j":  ("battery", 5000),   # Батарея холодного синтеза
@@ -33,7 +54,18 @@ FUEL_ITEMS: dict[str, tuple[str, float]] = {
     "1rl61": ("anomal", 40000),   # Хроносфера
 }
 
-GROUP_FEATURE = {"base": None, "battery": FEATURE_BATTERY, "anomal": FEATURE_ANOMAL}
+GROUP_FEATURE = {"base": None, "gas": FEATURE_GAS,
+                 "battery": FEATURE_BATTERY, "anomal": FEATURE_ANOMAL}
+
+
+def feature_icons() -> dict[str, str]:
+    """Иконки пристроек генератора из предметов БД (для страницы профиля)."""
+    out = {}
+    for feat, iid in FEATURE_ITEM_ICONS.items():
+        it = db.item(iid) if iid else None
+        if it and it.get("icon"):
+            out[feat] = it["icon"]
+    return out
 
 
 def warm() -> None:
