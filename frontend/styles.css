@@ -76,19 +76,21 @@ a.brand-wrap:hover .brand { color: var(--green); text-shadow: var(--glow); }
 .topnav {
   display: flex; align-items: stretch; gap: 2px;
   background: var(--panel-side); border-bottom: 1px solid var(--border);
-  padding: 0 12px; overflow-x: auto; scrollbar-width: none;
+  padding: 0; overflow-x: auto; scrollbar-width: none;
 }
 .topnav::-webkit-scrollbar { display: none; }
 .topnav a {
+  flex: 1 1 0; justify-content: center;
   display: flex; align-items: center; gap: 6px;
-  padding: 10px 14px; color: var(--dim); text-decoration: none;
-  font-size: 11px; letter-spacing: 0.12em; white-space: nowrap;
-  border-bottom: 2px solid transparent;
+  padding: 13px 14px; color: var(--dim); text-decoration: none;
+  font-size: 12px; font-weight: 700; letter-spacing: 0.14em; white-space: nowrap;
+  border-bottom: 2px solid transparent; border-right: 1px solid var(--border-deep);
 }
-.topnav a:hover { color: var(--green); }
+.topnav a:last-child { border-right: none; }
+.topnav a:hover { color: var(--green); background: rgba(124, 230, 142, 0.03); }
 .topnav a.active {
   color: var(--green); border-bottom-color: var(--green);
-  background: rgba(124, 230, 142, 0.04);
+  background: rgba(124, 230, 142, 0.07);
 }
 .nav-dev {
   font-size: 8px; letter-spacing: 0.08em; padding: 0 4px;
@@ -696,6 +698,93 @@ a.auth-user:hover { color: var(--green); text-shadow: var(--glow); }
 .map-terr.openable:hover { border-color: var(--green); color: var(--green); box-shadow: var(--glow); }
 .map-terr.closed { color: var(--dim); border-color: var(--border-dim); }
 .map-terr.closed.openable:hover { border-color: var(--amber); color: var(--amber); box-shadow: none; }
+
+/* ---------- десктопный масштаб (на карте выключен: Leaflet + zoom = сдвиг координат) ---------- */
+@media (min-width: 1100px) {
+  html:not(.on-map) body { zoom: 1.2; }
+}
+
+/* ---------- дашборд-главная ---------- */
+.dash-hero {
+  padding: 22px 20px; margin-bottom: 14px;
+  border: 1px solid var(--border); background: var(--panel-deep);
+}
+.dash-hero-t { font-size: 18px; font-weight: 800; letter-spacing: 0.12em; color: var(--bright); }
+.dash-hero-s { font-size: 12px; color: var(--dim); margin-top: 6px; letter-spacing: 0.04em; }
+.dash-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px;
+}
+.dash-card {
+  border: 1px solid var(--border); background: var(--panel-main);
+  padding: 12px 14px; display: flex; flex-direction: column; min-height: 220px;
+}
+.dash-grp {
+  font-size: 9px; letter-spacing: 0.16em; color: var(--dimmer);
+  margin: 8px 0 4px; border-bottom: 1px dashed var(--border-deep); padding-bottom: 2px;
+}
+.dash-row {
+  display: flex; align-items: center; gap: 8px; padding: 4px 4px;
+  cursor: pointer; font-size: 12px;
+}
+.dash-row:hover { background: var(--row-hover); }
+.dash-row img { width: 22px; height: 22px; object-fit: contain; flex: none; }
+.dash-row .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dash-sub { color: var(--dimmer); font-size: 10px; }
+.dash-p { color: var(--dim); font-size: 11px; white-space: nowrap; }
+.dash-more {
+  margin-top: auto; padding-top: 10px; align-self: flex-end;
+  font-size: 10px; letter-spacing: 0.12em; color: var(--green); text-decoration: none;
+}
+.dash-more:hover { text-shadow: var(--glow); }
+.dash-stub {
+  flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 8px;
+  font-size: 12px; color: var(--dim); line-height: 1.6; padding: 10px 4px;
+  border: 1px dashed var(--border-dim); text-align: center; margin-top: 8px;
+}
+.dash-stub .stub-status { margin: 0; }
+.dash-charts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+.dash-chart { border: 1px solid var(--border-deep); padding: 8px; cursor: pointer; }
+.dash-chart:hover { background: var(--row-hover); }
+.dash-chart svg { width: 100%; height: 34px; display: block; }
+.dc-head { display: flex; align-items: center; gap: 6px; font-size: 10px; margin-bottom: 4px; }
+.dc-head img { width: 16px; height: 16px; object-fit: contain; }
+.dc-head .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dc-price { font-size: 11px; color: var(--bright); margin-top: 4px; }
+
+/* ---------- кастомный селектор с иконками (контейнер, броня) ---------- */
+.isel { position: relative; flex: 1; min-width: 0; }
+.isel-btn {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  background: var(--panel-deep); border: 1px solid var(--border); color: var(--text);
+  font: inherit; font-size: 12px; letter-spacing: 0.05em;
+  padding: 8px 12px; cursor: pointer; text-align: left;
+}
+.isel-btn:hover { border-color: var(--green-border); }
+.isel-btn img { width: 26px; height: 26px; object-fit: contain; flex: none; }
+.isel-lbl { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.isel-arr { color: var(--dim); flex: none; }
+.isel-list {
+  position: absolute; z-index: 60; left: 0; right: 0; top: calc(100% + 2px);
+  max-height: 340px; overflow-y: auto;
+  background: var(--panel-deep); border: 1px solid var(--green-border);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+  scrollbar-width: thin; scrollbar-color: var(--green-border) var(--panel-deep);
+}
+.isel-list::-webkit-scrollbar { width: 8px; }
+.isel-list::-webkit-scrollbar-track { background: var(--panel-deep); }
+.isel-list::-webkit-scrollbar-thumb {
+  background: var(--green-border); border: 2px solid var(--panel-deep);
+}
+.isel-list::-webkit-scrollbar-thumb:hover { background: var(--green); }
+.isel-opt {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 12px; cursor: pointer; font-size: 12px; letter-spacing: 0.04em;
+  border-bottom: 1px solid var(--border-deep);
+}
+.isel-opt:last-child { border-bottom: none; }
+.isel-opt img { width: 24px; height: 24px; object-fit: contain; flex: none; }
+.isel-opt:hover { background: var(--row-hover); color: var(--green); }
+.isel-opt.on { background: rgba(124, 230, 142, 0.08); color: var(--green); }
 
 /* ---------- адаптив ---------- */
 @media (max-width: 1100px) {

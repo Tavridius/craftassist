@@ -121,7 +121,17 @@ def _product_jsonld(request: Request, it: dict, url: str, desc: str) -> dict | N
 
 @router.get("/", response_class=HTMLResponse)
 async def home(request: Request):
-    return render_index(request, "/")
+    return render_index(
+        request, "/",
+        title="StalZone Helper — крафт, аукцион, сборки и карта STALZONE (Stalcraft)",
+        desc="Помощник STALZONE (ранее Stalcraft — Сталкрафт): калькулятор крафта с живыми "
+             "ценами аукциона, биржа артефактов, автоподбор сборок под бюджет и карта Зоны.")
+
+
+@router.get("/craft", response_class=HTMLResponse)
+async def craft_page(request: Request):
+    # крафтовый тайтл переехал с «/» вместе с разделом (главная стала дашбордом)
+    return render_index(request, "/craft")
 
 
 @router.get("/index.html")
@@ -247,10 +257,10 @@ async def guides_page(request: Request):
 async def sitemap(request: Request):
     """Карта сайта: только осмысленные посадочные (без тысяч карточек — под спрос)."""
     base = _base_url(request)
-    paths = ["/", "/vygodno-kraftit", "/auction", "/builds", "/map"]
+    paths = ["/", "/craft", "/vygodno-kraftit", "/auction", "/builds", "/map"]
     urls = "".join(
         f"<url><loc>{_html.escape(base + p, quote=True)}</loc>"
-        f"<changefreq>{'daily' if p in ('/', '/vygodno-kraftit', '/auction') else 'weekly'}</changefreq>"
+        f"<changefreq>{'daily' if p in ('/', '/craft', '/vygodno-kraftit', '/auction') else 'weekly'}</changefreq>"
         f"</url>" for p in paths)
     xml = ('<?xml version="1.0" encoding="UTF-8"?>'
            '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'

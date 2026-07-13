@@ -148,7 +148,7 @@ async function loadAuth() {
 const onboard = $("onboard");
 function renderOnboard() {
   // подсказка только в крафт-контексте (главная, поиск, карточка), не в других разделах
-  const craftCtx = /^\/(item\/|search|$)/.test(location.pathname) || location.pathname === "/";
+  const craftCtx = /^\/(item\/|search$|craft$|vygodno-kraftit$)/.test(location.pathname);
   const show = ME && ME.authenticated && ME.profile_empty
     && localStorage.getItem("sz_onb") !== "1" && craftCtx;
   if (!show) { onboard.classList.add("hidden"); onboard.innerHTML = ""; return; }
@@ -179,7 +179,7 @@ input.addEventListener("input", () => {
   searchTimer = setTimeout(() => {
     // держим URL в синхроне (без замусоривания истории), затем ищем
     const q = input.value.trim();
-    const path = q ? `/search?q=${encodeURIComponent(q)}` : "/";
+    const path = q ? `/search?q=${encodeURIComponent(q)}` : "/craft";
     if (location.pathname + location.search !== path)
       history.replaceState(null, "", path);
     doSearch();
@@ -513,27 +513,127 @@ function renderDetail(d) {
 function wireDetail() {
   const b = detail.querySelector(".back");
   if (b) b.addEventListener("click", () => {
-    navigate(lastQuery ? `/search?q=${encodeURIComponent(lastQuery)}` : "/");
+    navigate(lastQuery ? `/search?q=${encodeURIComponent(lastQuery)}` : "/craft");
   });
   detail.querySelectorAll(".tname[data-id], .ilink[data-id], .use-row[data-id]").forEach((el) =>
     el.addEventListener("click", () => { navigate(`/item/${el.dataset.id}`); }));
 }
 
-// ---------- главная: биржа ингредиентов + подборки ----------
+// ---------- раздел «Крафт»: биржа ингредиентов + подборки ----------
 async function loadHome() {
   // не дёргаем чаще раза в минуту — на бэке рейтинги тоже кэшируются
-  if (home.dataset.ts && Date.now() - +home.dataset.ts < 60000) return;
-  if (!home.innerHTML) home.innerHTML = `<div class="spinner">// ЗАГРУЗКА ГЛАВНОЙ</div>`;
+  if (home.dataset.view === "craft"
+      && home.dataset.ts && Date.now() - +home.dataset.ts < 60000) return;
+  home.innerHTML = `<div class="spinner">// ЗАГРУЗКА РАЗДЕЛА</div>`;
   try {
     const [top, watch] = await Promise.all([
       fetch(api(`/top${availParam("?")}`)).then((r) => r.json()),
       fetch(api("/watch")).then((r) => r.json()).catch(() => null),
     ]);
     home.dataset.ts = Date.now();
+    home.dataset.view = "craft";
     renderHome(top, watch);
+  } catch (e) {
+    home.innerHTML = `<div class="empty">[!] НЕ УДАЛОСЬ ЗАГРУЗИТЬ РАЗДЕЛ</div>`;
+  }
+}
+
+// ---------- дашборд-главная: сводка по всем разделам ----------
+async function loadDashboard() {
+  if (home.dataset.view === "dash"
+      && home.dataset.ts && Date.now() - +home.dataset.ts < 60000) return;
+  home.innerHTML = `<div class="spinner">// ЗАГРУЗКА ГЛАВНОЙ</div>`;
+  try {
+    const [top, art, watch] = await Promise.all([
+      fetch(api(`/top${availParam("?")}`)).then((r) => r.json()).catch(() => null),
+      fetch(api("/artmarket/top?window=7d")).then((r) => r.json()).catch(() => null),
+      fetch(api("/watch")).then((r) => r.json()).catch(() => null),
+    ]);
+    home.dataset.ts = Date.now();
+    home.dataset.view = "dash";
+    renderDashboard(top, art, watch);
   } catch (e) {
     home.innerHTML = `<div class="empty">[!] НЕ УДАЛОСЬ ЗАГРУЗИТЬ ГЛАВНУЮ</div>`;
   }
+}
+
+function dashCraftRow(e) {
+  return `<div class="dash-row" data-nav="/item/${e.id}">
+    <img loading="lazy" src="${asset(e.icon)}" alt="">
+    <div class="nm">${escapeHtml(e.name)}</div>
+    ${e.pct != null ? `<span class="pct ${e.pct > 0 ? "up" : "down"}">${e.pct > 0 ? "+" : ""}${e.pct}%</span>`
+                    : e.buy_price != null ? `<span class="dash-p">${fmt(e.buy_price)} ₽</span>` : ""}
+  </div>`;
+}
+
+function dashArtRow(r) {
+  return `<div class="dash-row" data-nav="/artefact/${r.id}">
+    <img loading="lazy" src="${asset(r.icon)}" alt="">
+    <div class="nm">${escapeHtml(r.name)} <span class="dash-sub">${bucketBadge(r.qlt, r.ptn)}</span></div>
+    <span class="pct ${r.pct > 0 ? "up" : "down"}">${r.pct > 0 ? "+" : ""}${r.pct}%</span>
+  </div>`;
+}
+
+function renderDashboard(top, art, watch) {
+  const card = (title, note, body, link, linkText) => `<section class="dash-card">
+    <div class="side-head">
+      <div class="side-title">▸ ${title}</div>
+      <div class="side-note">${note}</div>
+    </div>
+    ${body}
+    ${link ? `<a class="dash-more" href="${link}">${linkText || "ОТКРЫТЬ РАЗДЕЛ"} ▸</a>` : ""}
+  </section>`;
+  const stub = (label) => `<div class="dash-stub"><span class="stub-code">[ МОДУЛЬ ]</span>
+    ${label}<div class="stub-status">СКОРО</div></div>`;
+
+  // крафты: по 2-3 из каждой подборки
+  let crafts = "";
+  if (top) {
+    const grp = (t, list) => (list && list.length)
+      ? `<div class="dash-grp">${t}</div>` + list.slice(0, 3).map(dashCraftRow).join("") : "";
+    crafts = grp("ВЫГОДНЫЕ", top.profitable) + grp("ПРОФИТНЫЕ", top.liquid)
+           + grp("ПОПУЛЯРНЫЕ", top.popular);
+  }
+  if (!crafts) crafts = `<div class="empty-sm">ЦЕНЫ СЧИТАЮТСЯ В ФОНЕ — ЗАГЛЯНИ ПОЗЖЕ.</div>`;
+
+  // тренды биржи артефактов
+  let trends = "";
+  if (art && ((art.up || []).length || (art.down || []).length)) {
+    const grp = (t, list) => (list && list.length)
+      ? `<div class="dash-grp">${t}</div>` + list.slice(0, 3).map(dashArtRow).join("") : "";
+    trends = grp("РАСТУТ", art.up) + grp("ПАДАЮТ", art.down);
+  } else trends = `<div class="empty-sm">БИРЖА НАКАПЛИВАЕТ ЗАМЕРЫ — СКОРО ПОЯВЯТСЯ ТРЕНДЫ.</div>`;
+
+  // мини-графики биржи ингредиентов
+  let charts = "";
+  if (watch && watch.items && watch.items.length) {
+    charts = `<div class="dash-charts">` + watch.items.slice(0, 4).map((m) => `
+      <div class="dash-chart" data-nav="/item/${m.id}">
+        <div class="dc-head"><img loading="lazy" src="${asset(m.icon)}" alt="">
+          <span class="nm">${escapeHtml(m.name)}</span>
+          ${m.delta_pct != null ? `<span class="pct ${m.delta_pct > 0 ? "up" : m.delta_pct < 0 ? "down" : "dim"}">${m.delta_pct > 0 ? "+" : ""}${m.delta_pct}%</span>` : ""}</div>
+        ${chartSvg(m.series || [])}
+        <div class="dc-price">${m.avg != null ? fmt(m.avg) + " ₽" : "—"}</div>
+      </div>`).join("") + `</div>`;
+  } else charts = `<div class="empty-sm">ЖДЁМ ПЕРВЫЕ ЗАМЕРЫ БИРЖИ.</div>`;
+
+  home.innerHTML = `<div class="dash">
+    <div class="dash-hero">
+      <div class="dash-hero-t">ТЕРМИНАЛ STALZONE HELPER</div>
+      <div class="dash-hero-s">Крафт, аукцион, сборки артефактов и карта Зоны — живые данные аукциона RU.</div>
+    </div>
+    <div class="dash-grid">
+      ${card("КРАФТЫ ДНЯ", "ВЫГОДА · ЛИКВИДНОСТЬ · СПРОС", crafts, "/craft", "В РАЗДЕЛ КРАФТА")}
+      ${card("ТРЕНДЫ БИРЖИ АРТЕФАКТОВ", "ЦЕНА ЗА 7 ДНЕЙ", trends, "/auction", "НА БИРЖУ")}
+      ${card("ГРАФИКИ ИНГРЕДИЕНТОВ", "СРЕДНЯЯ ЦЕНА ПРОДАЖ", charts, "/craft", "ВСЕ ГРАФИКИ")}
+      ${card("СБОРКА ДНЯ", "СЛУЧАЙНАЯ ПОПУЛЯРНАЯ СБОРКА", stub("Случайная сборка артефактов из калькулятора — с ценой и статами."), "/builds", "К КАЛЬКУЛЯТОРУ")}
+      ${card("АКТУАЛЬНЫЙ ЯЩИК", "ЦЕНА НА АУКЦИОНЕ", stub("Цена актуального сезонного ящика и динамика за неделю."), "/auction", "НА БИРЖУ")}
+      ${card("КАРТА ЗОНЫ", "ГЛОБАЛЬНАЯ + ТЕРРИТОРИИ", `<div class="dash-stub"><span class="stub-code">[ МОДУЛЬ ]</span>
+        Спутниковая карта мира и детальные карты территорий из КПК.<div class="stub-status">В РАЗРАБОТКЕ</div></div>`, "/map", "ОТКРЫТЬ КАРТУ")}
+    </div>
+  </div>`;
+  home.querySelectorAll("[data-nav]").forEach((el) =>
+    el.addEventListener("click", () => { navigate(el.dataset.nav); }));
 }
 
 // линия средней цены по снапшотам (2 замера/сутки)
@@ -1043,8 +1143,6 @@ function manualSlotCard(s, idx) {
 function renderBuilds() {
   const cont = buildContainer();
   if (!cont) { page.innerHTML = `<div class="empty">НЕТ ДАННЫХ КОНТЕЙНЕРОВ</div>`; return; }
-  const contOpts = BUILD_DICT.containers.map((c) =>
-    `<option value="${c.id}" ${c.id === buildState.container ? "selected" : ""}>${escapeHtml(contLabel(c))}</option>`).join("");
 
   let h = `<div class="section-head">
       <div class="section-title">▸ КАЛЬКУЛЯТОР СБОРОК АРТЕФАКТОВ</div>
@@ -1055,10 +1153,7 @@ function renderBuilds() {
       <button class="btab ${buildTab === "auto" ? "on" : ""}" data-tab="auto">АВТОПОДБОР ПОД БЮДЖЕТ</button>
       <button class="btab ${buildTab === "hp" ? "on" : ""}" data-tab="hp">ПРИВЕДЁННОЕ ХП</button>
     </div>
-    <div class="bbar">
-      <img class="bsel-ic" src="${asset(cont.icon)}" alt="">
-      <select id="bCont">${contOpts}</select>
-    </div>`;
+    <div class="bbar"><div class="isel" id="bContSel"></div></div>`;
 
   h += buildTab === "manual" ? renderManual(cont)
      : buildTab === "auto" ? renderAuto(cont) : renderHP(cont);
@@ -1100,7 +1195,7 @@ function renderAuto(cont) {
   else if (r && r.builds && r.builds.length) res = renderAutoResult(r, autoState.budget);
   else if (r && r.builds) res = `<div class="empty">НИЧЕГО НЕ ПОДОБРАЛОСЬ ПОД БЮДЖЕТ.</div>`;
   return `<div class="aform">
-      <label class="albl">БЮДЖЕТ, ₽ <input id="aBudget" type="number" min="1" value="${autoState.budget}"></label>
+      <label class="albl">БЮДЖЕТ, ₽ <input id="aBudget" type="text" inputmode="numeric" value="${fmt(autoState.budget)}"></label>
       ${rows}
       ${autoState.stats.length < 3 ? `<button id="aAdd" class="awin">+ СТАТ</button>` : ""}
       <button id="aGo" class="prof-save">РАССЧИТАТЬ СБОРКУ</button>
@@ -1138,9 +1233,6 @@ function renderAutoResult(r, budget) {
 function renderHP(cont) {
   const armor = BUILD_DICT.armor || [];
   if (!hpState.armor && armor.length) hpState.armor = armor[0].id;
-  const curArmor = armor.find((a) => a.id === hpState.armor) || armor[0];
-  const aOpts = armor.map((a) =>
-    `<option value="${a.id}" ${a.id === hpState.armor ? "selected" : ""}>${escapeHtml(a.name)} · ПУЛЕСТОЙ ${Math.round(a.bullet0)}</option>`).join("");
   const ptnOpts = [0, 5, 10, 11, 15].map((p) =>
     `<option value="${p}" ${p === hpState.armorPtn ? "selected" : ""}>+${p}</option>`).join("");
   let res = "";
@@ -1150,10 +1242,9 @@ function renderHP(cont) {
   return `<div class="hp-intro">Подбор артефактов на максимум <b>приведённого ХП от пуль</b>:
       <span class="mono">(100 + пулестойкость) × живучесть</span>. Броня и контейнер — фикс, бюджет — на артефакты.</div>
     <div class="aform">
-      <label class="albl">БЮДЖЕТ, ₽ <input id="hBudget" type="number" min="1" value="${hpState.budget}"></label>
+      <label class="albl">БЮДЖЕТ, ₽ <input id="hBudget" type="text" inputmode="numeric" value="${fmt(hpState.budget)}"></label>
       <div class="arow"><span class="albl" style="min-width:70px">БРОНЯ</span>
-        <img class="bsel-ic" src="${asset(curArmor ? curArmor.icon : "")}" alt="">
-        <select id="hArmor" style="flex:1">${aOpts}</select>
+        <div class="isel" id="hArmorSel" style="flex:1"></div>
         <select id="hPtn">${ptnOpts}</select></div>
       <button id="hGo" class="prof-save">РАССЧИТАТЬ СБОРКУ</button>
     </div>${res}`;
@@ -1182,21 +1273,64 @@ function renderHPResult(r) {
   return h;
 }
 
+// кастомный выпадающий список с иконками (нативный <select> их не умеет);
+// стилизуется целиком: тёмный скролл, подсветка, иконки слева
+function iconSelect(host, items, curId, onPick) {
+  const cur = items.find((it) => it.id === curId) || items[0];
+  if (!cur) { host.innerHTML = ""; return; }
+  host.innerHTML = `<button type="button" class="isel-btn">
+      <img src="${asset(cur.icon)}" alt="">
+      <span class="isel-lbl">${escapeHtml(cur.label)}</span><span class="isel-arr">▾</span></button>
+    <div class="isel-list hidden">${items.map((it) => `
+      <div class="isel-opt${it.id === cur.id ? " on" : ""}" data-id="${it.id}">
+        <img loading="lazy" src="${asset(it.icon)}" alt=""><span>${escapeHtml(it.label)}</span>
+      </div>`).join("")}</div>`;
+  const list = host.querySelector(".isel-list");
+  host.querySelector(".isel-btn").addEventListener("click", (e) => {
+    e.stopPropagation();
+    closeIconSelects(list);
+    list.classList.toggle("hidden");
+    const on = list.querySelector(".on");
+    if (!list.classList.contains("hidden") && on) on.scrollIntoView({ block: "center" });
+  });
+  list.querySelectorAll(".isel-opt").forEach((o) => o.addEventListener("click", () => {
+    list.classList.add("hidden");
+    if (o.dataset.id !== cur.id) onPick(o.dataset.id);
+  }));
+}
+function closeIconSelects(except) {
+  document.querySelectorAll(".isel-list").forEach((l) => {
+    if (l !== except) l.classList.add("hidden");
+  });
+}
+document.addEventListener("click", () => closeIconSelects());
+
+// поле суммы: живые разделители разрядов («1 500 000»)
+function wireBudget(el, setter) {
+  el.addEventListener("input", () => {
+    const digits = el.value.replace(/\D/g, "").replace(/^0+(?=\d)/, "").slice(0, 12);
+    el.value = digits.replace(/\B(?=(\d{3})+(?!\d))/g, " ");
+    setter(Math.max(1, +digits || 1));
+  });
+}
+
 function wireBuilds(cont) {
   page.querySelectorAll(".btab").forEach((b) => b.addEventListener("click", () => {
     buildTab = b.dataset.tab;
     renderBuilds();
   }));
-  $("bCont").addEventListener("change", (e) => {
-    buildState.container = e.target.value;
-    const c = buildContainer();
-    const old = buildState.slots;
-    buildState.slots = Array(c.slots).fill(null).map((_, i) => old[i] || null);
-    renderBuilds();
-  });
+  iconSelect($("bContSel"),
+    BUILD_DICT.containers.map((c) => ({ id: c.id, icon: c.icon, label: contLabel(c) })),
+    buildState.container, (id) => {
+      buildState.container = id;
+      const c = buildContainer();
+      const old = buildState.slots;
+      buildState.slots = Array(c.slots).fill(null).map((_, i) => old[i] || null);
+      renderBuilds();
+    });
 
   if (buildTab === "auto") {
-    $("aBudget").addEventListener("change", (e) => { autoState.budget = Math.max(1, +e.target.value || 1); });
+    wireBudget($("aBudget"), (v) => { autoState.budget = v; });
     page.querySelectorAll(".aStat").forEach((s) => s.addEventListener("change", () => {
       autoState.stats[+s.dataset.i].key = s.value;
       renderBuilds();
@@ -1230,8 +1364,13 @@ function wireBuilds(cont) {
   }
 
   if (buildTab === "hp") {
-    $("hBudget").addEventListener("change", (e) => { hpState.budget = Math.max(1, +e.target.value || 1); });
-    $("hArmor").addEventListener("change", (e) => { hpState.armor = e.target.value; });
+    wireBudget($("hBudget"), (v) => { hpState.budget = v; });
+    iconSelect($("hArmorSel"),
+      (BUILD_DICT.armor || []).map((a) => ({
+        id: a.id, icon: a.icon,
+        label: `${a.name} · ПУЛЕСТОЙ ${Math.round(a.bullet0)}`,
+      })),
+      hpState.armor, (id) => { hpState.armor = id; renderBuilds(); });   // перерисовка обновляет иконку
     $("hPtn").addEventListener("change", (e) => { hpState.armorPtn = +e.target.value; });
     $("hGo").addEventListener("click", async () => {
       if (!hpState.armor) return;
@@ -1403,7 +1542,7 @@ function renderProfile(dict, prof, user) {
     }
   });
   const b = detail.querySelector(".back");
-  if (b) b.addEventListener("click", () => { navigate("/"); });
+  if (b) b.addEventListener("click", () => { navigate("/craft"); });
 }
 
 // ---------- интерактивная карта мира (Leaflet, тайлы из КПК STALZONE) ----------
@@ -1552,7 +1691,7 @@ function openPage(key) {
     <div class="stub-title">▸ ${p.title}</div>
     <div class="stub-desc">${p.desc}</div>
     <div class="stub-status">СТАТУС: В РАЗРАБОТКЕ</div>
-    <a class="stub-back" href="/">◂ ВЕРНУТЬСЯ К КРАФТУ</a>
+    <a class="stub-back" href="/">◂ НА ГЛАВНУЮ</a>
   </div>`;
   window.scrollTo(0, 0);
 }
@@ -1582,6 +1721,9 @@ function route() {
   const strip = document.querySelector(".search-strip");
   let mm;
 
+  // десктопный масштаб 120% ломает координаты Leaflet — на карте отключаем
+  document.documentElement.classList.toggle("on-map", path.startsWith("/map"));
+
   if (mapCleanup && !path.startsWith("/map")) { mapCleanup(); mapCleanup = null; }
   if ((mm = path.match(/^\/map(?:\/([a-z0-9_-]+))?$/))) {
     strip.classList.add("hidden");
@@ -1605,7 +1747,16 @@ function route() {
     setNav(path.slice(1)); openPage(path.slice(1)); return;
   }
 
-  // крафт-контекст: главная / лендинг / поиск / карточка / профиль
+  // "/" — дашборд-главная
+  if (path === "/") {
+    strip.classList.add("hidden"); page.classList.add("hidden");
+    setNav("home");
+    detail.classList.add("hidden"); results.innerHTML = "";
+    home.classList.remove("hidden");
+    loadDashboard(); return;
+  }
+
+  // крафт-контекст: раздел / лендинг / поиск / карточка / профиль
   strip.classList.remove("hidden");
   page.classList.add("hidden");
   setNav("craft");
@@ -1615,7 +1766,7 @@ function route() {
     const q = new URLSearchParams(location.search).get("q") || "";
     input.value = q; lastQuery = ""; doSearch(); return;
   }
-  // "/" и "/vygodno-kraftit" (лендинг) — главная
+  // "/craft" и "/vygodno-kraftit" (лендинг) — раздел крафта
   input.value = ""; lastQuery = "";
   detail.classList.add("hidden");
   results.innerHTML = "";
