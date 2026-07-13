@@ -58,6 +58,9 @@ async def startup() -> None:
         asyncio.create_task(artwatch.loop())       # биржа артефактов (корзины qlt×ptn)
     if config.ART_LOTS_ENABLED:
         asyncio.create_task(artlots.loop())        # живые лоты (цены сборок первой недели)
+    if config.EMISSION_WATCH_ENABLED:
+        from app.services.emission_watch import ewatch
+        asyncio.create_task(ewatch.loop())         # история выбросов для дашборда
 
 
 # API и SSR-страницы — ДО статики, чтобы не перекрылись catch-all маунтом.

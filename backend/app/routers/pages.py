@@ -190,6 +190,16 @@ async def artefact_page(request: Request, item_id: str):
              f"качество × заточка (+0/+5/+10/+15), динамика и активные лоты.")
 
 
+@router.get("/market", response_class=HTMLResponse)
+async def market_page(request: Request):
+    return render_index(
+        request, "/market",
+        title="Аукцион STALZONE (Stalcraft) — живые лоты и история продаж",
+        desc="Полный аукцион STALZONE (ранее Stalcraft — Сталкрафт): активные лоты любого "
+             "предмета с ценой за штуку, история продаж, самые продаваемые и самые дорогие "
+             "позиции. Живые данные RU-региона.")
+
+
 @router.get("/auction", response_class=HTMLResponse)
 async def auction_page(request: Request):
     return render_index(
@@ -257,10 +267,10 @@ async def guides_page(request: Request):
 async def sitemap(request: Request):
     """Карта сайта: только осмысленные посадочные (без тысяч карточек — под спрос)."""
     base = _base_url(request)
-    paths = ["/", "/craft", "/vygodno-kraftit", "/auction", "/builds", "/map"]
+    paths = ["/", "/craft", "/vygodno-kraftit", "/auction", "/market", "/builds", "/map"]
     urls = "".join(
         f"<url><loc>{_html.escape(base + p, quote=True)}</loc>"
-        f"<changefreq>{'daily' if p in ('/', '/craft', '/vygodno-kraftit', '/auction') else 'weekly'}</changefreq>"
+        f"<changefreq>{'daily' if p in ('/', '/craft', '/vygodno-kraftit', '/auction', '/market') else 'weekly'}</changefreq>"
         f"</url>" for p in paths)
     xml = ('<?xml version="1.0" encoding="UTF-8"?>'
            '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'

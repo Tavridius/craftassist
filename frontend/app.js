@@ -544,17 +544,63 @@ async function loadDashboard() {
       && home.dataset.ts && Date.now() - +home.dataset.ts < 60000) return;
   home.innerHTML = `<div class="spinner">// ЗАГРУЗКА ГЛАВНОЙ</div>`;
   try {
-    const [top, art, watch] = await Promise.all([
+    const [top, art, watch, em] = await Promise.all([
       fetch(api(`/top${availParam("?")}`)).then((r) => r.json()).catch(() => null),
       fetch(api("/artmarket/top?window=7d")).then((r) => r.json()).catch(() => null),
       fetch(api("/watch")).then((r) => r.json()).catch(() => null),
+      fetch(api("/emission")).then((r) => r.json()).catch(() => null),
     ]);
     home.dataset.ts = Date.now();
     home.dataset.view = "dash";
-    renderDashboard(top, art, watch);
+    renderDashboard(top, art, watch, em);
   } catch (e) {
     home.innerHTML = `<div class="empty">[!] НЕ УДАЛОСЬ ЗАГРУЗИТЬ ГЛАВНУЮ</div>`;
   }
+}
+
+// ---------- карточка выбросов ----------
+let emTick = null;
+
+const fmtAgo = (ms) => {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  return h ? `${h} Ч ${String(m).padStart(2, "0")} МИН` : `${m} МИН ${String(s % 60).padStart(2, "0")} С`;
+};
+const fmtMsk = (iso) => {
+  const d = new Date(iso);
+  return isNaN(d) ? "" : d.toLocaleString("ru-RU", {
+    timeZone: "Europe/Moscow", day: "2-digit", month: "2-digit",
+    hour: "2-digit", minute: "2-digit",
+  }).replace(",", " ·") + " МСК";
+};
+
+function emissionBody(em) {
+  if (!em || (!em.history?.length && !em.previous_start && !em.current_start))
+    return `<div class="empty-sm">ЖДЁМ ПЕРВЫЙ ЗАМЕР ВОТЧЕРА ВЫБРОСОВ.</div>`;
+  const hist = em.history?.length ? em.history
+    : [em.current_start, em.previous_start].filter(Boolean);
+  let head;
+  if (em.current_start) {
+    head = `<div class="em-now">⚠ ВЫБРОС ИДЁТ ПРЯМО СЕЙЧАС</div>
+      <div class="em-sub">НАЧАЛСЯ <span class="em-ago" data-ts="${em.current_start}">…</span> НАЗАД</div>`;
+  } else {
+    head = `<div class="em-since"><span class="em-ago" data-ts="${hist[0]}">…</span></div>
+      <div class="em-sub">С ПОСЛЕДНЕГО ВЫБРОСА</div>`;
+  }
+  const rows = hist.slice(0, 3).map((t) =>
+    `<div class="em-row">☢ ${fmtMsk(t)}</div>`).join("");
+  return `${head}<div class="em-hist"><div class="dash-grp">ПОСЛЕДНИЕ ВЫБРОСЫ</div>${rows}</div>`;
+}
+
+function startEmTick() {
+  if (emTick) clearInterval(emTick);
+  const upd = () => {
+    const els = document.querySelectorAll(".em-ago");
+    if (!els.length) { clearInterval(emTick); emTick = null; return; }
+    els.forEach((el) => { el.textContent = fmtAgo(Date.now() - new Date(el.dataset.ts)); });
+  };
+  upd();
+  emTick = setInterval(upd, 1000);
 }
 
 function dashCraftRow(e) {
@@ -574,7 +620,7 @@ function dashArtRow(r) {
   </div>`;
 }
 
-function renderDashboard(top, art, watch) {
+function renderDashboard(top, art, watch, em) {
   const card = (title, note, body, link, linkText) => `<section class="dash-card">
     <div class="side-head">
       <div class="side-title">▸ ${title}</div>
@@ -626,14 +672,14 @@ function renderDashboard(top, art, watch) {
       ${card("КРАФТЫ ДНЯ", "ВЫГОДА · ЛИКВИДНОСТЬ · СПРОС", crafts, "/craft", "В РАЗДЕЛ КРАФТА")}
       ${card("ТРЕНДЫ БИРЖИ АРТЕФАКТОВ", "ЦЕНА ЗА 7 ДНЕЙ", trends, "/auction", "НА БИРЖУ")}
       ${card("ГРАФИКИ ИНГРЕДИЕНТОВ", "СРЕДНЯЯ ЦЕНА ПРОДАЖ", charts, "/craft", "ВСЕ ГРАФИКИ")}
+      ${card("ВЫБРОС", "ВРЕМЯ МСК · ЗАМЕР РАЗ В МИНУТУ", emissionBody(em))}
       ${card("СБОРКА ДНЯ", "СЛУЧАЙНАЯ ПОПУЛЯРНАЯ СБОРКА", stub("Случайная сборка артефактов из калькулятора — с ценой и статами."), "/builds", "К КАЛЬКУЛЯТОРУ")}
-      ${card("АКТУАЛЬНЫЙ ЯЩИК", "ЦЕНА НА АУКЦИОНЕ", stub("Цена актуального сезонного ящика и динамика за неделю."), "/auction", "НА БИРЖУ")}
-      ${card("КАРТА ЗОНЫ", "ГЛОБАЛЬНАЯ + ТЕРРИТОРИИ", `<div class="dash-stub"><span class="stub-code">[ МОДУЛЬ ]</span>
-        Спутниковая карта мира и детальные карты территорий из КПК.<div class="stub-status">В РАЗРАБОТКЕ</div></div>`, "/map", "ОТКРЫТЬ КАРТУ")}
+      ${card("АКТУАЛЬНЫЙ ЯЩИК", "ЦЕНА НА АУКЦИОНЕ", stub("Цена актуального сезонного ящика и динамика за неделю."), "/market", "НА АУКЦИОН")}
     </div>
   </div>`;
   home.querySelectorAll("[data-nav]").forEach((el) =>
     el.addEventListener("click", () => { navigate(el.dataset.nav); }));
+  startEmTick();
 }
 
 // линия средней цены по снапшотам (2 замера/сутки)
@@ -749,6 +795,141 @@ function renderHome(d, w) {
   home.innerHTML = h;
   home.querySelectorAll(".side-row, .watch-card").forEach((r) =>
     r.addEventListener("click", () => { navigate(`/item/${r.dataset.id}`); }));
+}
+
+// ---------- полный аукцион: живые лоты и история продаж любого предмета ----------
+const marketState = { itemId: null };
+let mkTimer = null;
+
+async function openMarket() {
+  home.classList.add("hidden");
+  detail.classList.add("hidden");
+  results.innerHTML = "";
+  page.classList.remove("hidden");
+  page.innerHTML = `<div class="spinner">// ЗАГРУЗКА АУКЦИОНА</div>`;
+  window.scrollTo(0, 0);
+  let ov = null;
+  try {
+    ov = await fetch(api("/market/overview")).then((r) => r.json());
+  } catch (e) { /* покажем без подборок */ }
+  if (location.pathname !== "/market") return;
+  renderMarket(ov);
+  if (marketState.itemId) loadMarketItem(marketState.itemId);
+}
+
+function mkRow(r, val) {
+  return `<div class="side-row mk-row" data-id="${r.id}" style="border-left-color:transparent">
+    <img loading="lazy" src="${asset(r.icon)}" alt="">
+    <div class="info"><div class="nm" style="color:${rank(r.color).color}">${escapeHtml(r.name)}</div>
+      <div class="meta">${val}</div></div></div>`;
+}
+
+function renderMarket(ov) {
+  const col = (title, note, rows) => `<section>
+    <div class="side-head"><div class="side-title">▸ ${title}</div><div class="side-note">${note}</div></div>
+    ${rows && rows.length ? `<div class="side-list">${rows.join("")}</div>`
+                          : `<div class="empty-sm">ЦЕНЫ ЕЩЁ СЧИТАЮТСЯ В ФОНЕ.</div>`}
+  </section>`;
+  const liquid = (ov && ov.liquid || []).map((r) =>
+    mkRow(r, `${fmtSales(r.sales_per_hour)} ПРОД/Ч${r.min_buyout ? " · ОТ " + fmt(r.min_buyout) + " ₽" : ""}`));
+  const expensive = (ov && ov.expensive || []).map((r) =>
+    mkRow(r, `ОТ ${fmt(r.min_buyout)} ₽${r.sales_per_hour ? " · " + fmtSales(r.sales_per_hour) + " ПРОД/Ч" : ""}`));
+  page.innerHTML = `<div class="mkmod">
+    <div class="section-head">
+      <div class="section-title">▸ АУКЦИОН · ЖИВЫЕ ЛОТЫ И ПРОДАЖИ</div>
+      <div class="section-note">ЛОТЫ ОБНОВЛЯЮТСЯ ПРИ ОТКРЫТИИ ПРЕДМЕТА</div>
+    </div>
+    <div class="search-box mk-search">
+      <div class="search-prompt">&gt;_</div>
+      <input id="mkInput" type="search" autocomplete="off" placeholder="НАЙТИ ПРЕДМЕТ НА АУКЦИОНЕ…">
+    </div>
+    <div id="mkResults"></div>
+    <div id="mkDetail"></div>
+    <div class="home-cols mk-cols">
+      ${col("САМЫЕ ПРОДАВАЕМЫЕ", "ПРОДАЖ В ЧАС", liquid)}
+      ${col("САМЫЕ ДОРОГИЕ", "МИН. ВЫКУП", expensive)}
+    </div>
+  </div>`;
+  const inp = $("mkInput");
+  inp.addEventListener("input", () => {
+    clearTimeout(mkTimer);
+    mkTimer = setTimeout(async () => {
+      const q = inp.value.trim();
+      const box = $("mkResults");
+      if (!q) { box.innerHTML = ""; return; }
+      try {
+        const r = await fetch(api(`/search?q=${encodeURIComponent(q)}&limit=12`)).then((x) => x.json());
+        box.innerHTML = (r.results || []).map((it) =>
+          mkRow(it, "")).join("") || `<div class="empty-sm">НИЧЕГО НЕ НАЙДЕНО.</div>`;
+        wireMkRows(box);
+      } catch (e) { /* тихо */ }
+    }, 250);
+  });
+  wireMkRows(page);
+}
+
+function wireMkRows(root) {
+  root.querySelectorAll(".mk-row").forEach((r) => r.addEventListener("click", () => {
+    marketState.itemId = r.dataset.id;
+    $("mkResults").innerHTML = "";
+    $("mkInput").value = "";
+    loadMarketItem(r.dataset.id);
+  }));
+}
+
+const fmtLotTime = (iso) => {
+  const d = new Date(iso);
+  return isNaN(d) ? "—" : d.toLocaleString("ru-RU", {
+    timeZone: "Europe/Moscow", day: "2-digit", month: "2-digit",
+    hour: "2-digit", minute: "2-digit" });
+};
+
+async function loadMarketItem(id) {
+  const box = $("mkDetail");
+  if (!box) return;
+  box.innerHTML = `<div class="spinner">// ЗАПРАШИВАЮ ЛОТЫ</div>`;
+  let d;
+  try {
+    d = await fetch(api(`/market/item/${id}`)).then((r) => r.json());
+  } catch (e) {
+    box.innerHTML = `<div class="empty">[!] ОШИБКА СЕТИ</div>`;
+    return;
+  }
+  if (marketState.itemId !== id || !$("mkDetail")) return;
+  const it = d.item || {};
+  const lots = (d.lots || []).slice(0, 20).map((l) => `<tr>
+      <td class="r">${l.unit != null ? fmt(l.unit) : "—"}</td>
+      <td class="r">${l.amount}</td>
+      <td class="r">${l.buyout != null ? fmt(l.buyout) : "—"}</td>
+      <td>${l.end ? fmtLotTime(l.end) : "—"}</td>
+    </tr>`).join("");
+  const sales = (d.sales || []).slice(0, 20).map((s) => `<tr>
+      <td>${s.time ? fmtLotTime(s.time) : "—"}</td>
+      <td class="r">${s.unit != null ? fmt(s.unit) : "—"}</td>
+      <td class="r">${s.amount}</td>
+      <td class="r">${s.price != null ? fmt(s.price) : "—"}</td>
+    </tr>`).join("");
+  box.innerHTML = `<div class="mk-item">
+    <div class="mk-head">
+      <img src="${asset(it.icon)}" alt="">
+      <div class="mk-title" style="color:${rank(it.color).color}">${escapeHtml(it.name || id)}</div>
+      <a class="mk-card" href="/item/${id}">КАРТОЧКА ПРЕДМЕТА ▸</a>
+    </div>
+    ${d.error ? `<div class="note-warn"><span class="mark">[!]</span> АУКЦИОН НЕ ОТВЕТИЛ (${escapeHtml(String(d.error))}) — ПОКАЗЫВАЮ ЧТО ЕСТЬ.</div>` : ""}
+    <div class="mk-tables">
+      <div class="mk-tbl">
+        <div class="dash-grp">АКТИВНЫЕ ЛОТЫ${d.lots_total != null ? ` · ВСЕГО ${fmt(d.lots_total)}` : ""} (20 ДЕШЁВЫХ)</div>
+        ${lots ? `<table><thead><tr><th class="r">ЦЕНА/ШТ</th><th class="r">КОЛ-ВО</th><th class="r">ВЫКУП</th><th>ДО (МСК)</th></tr></thead><tbody>${lots}</tbody></table>`
+               : `<div class="empty-sm">АКТИВНЫХ ЛОТОВ НЕТ.</div>`}
+      </div>
+      <div class="mk-tbl">
+        <div class="dash-grp">ПОСЛЕДНИЕ ПРОДАЖИ</div>
+        ${sales ? `<table><thead><tr><th>ВРЕМЯ (МСК)</th><th class="r">ЦЕНА/ШТ</th><th class="r">КОЛ-ВО</th><th class="r">СУММА</th></tr></thead><tbody>${sales}</tbody></table>`
+                : `<div class="empty-sm">ПРОДАЖ НЕ НАЙДЕНО.</div>`}
+      </div>
+    </div>
+  </div>`;
+  window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
 // ---------- биржа артефактов: топ роста цен по корзинам качество×заточка ----------
@@ -1730,6 +1911,10 @@ function route() {
     setNav("map"); openMap(mm[1] || null); return;
   }
 
+  if (path === "/market") {
+    strip.classList.add("hidden");
+    setNav("market"); openMarket(); return;
+  }
   if (path === "/auction") {
     strip.classList.add("hidden"); page.classList.add("hidden");
     setNav("auction"); openAuction(); return;

@@ -1,19 +1,23 @@
 """HTTP API: поиск, инфо о предмете, цена, расчёт крафта, рейтинги.
 
-Все данные — из тёплых кэшей (GameDB + PriceStore); запросы пользователей
-НЕ обращаются к внешнему API, поэтому отвечают мгновенно при любом трафике.
+Данные — из тёплых кэшей (GameDB + PriceStore); исключение — /market/item/{id}
+(живые лоты полного аукциона): внешний запрос по требованию с коротким кэшем.
 """
+import asyncio
+import time
 from datetime import datetime, timedelta
 
+import httpx
 from fastapi import APIRouter, Body, HTTPException, Query, Request
 
 from app import config
 from app.db import market, users
 from app.db.index import db
 from app.routers.auth import current_user
-from app.services import builds, craft, hideout, oauth
+from app.services import auction, builds, craft, hideout, oauth
 from app.services.artefact_lots import artlots
 from app.services.artefact_watch import MSK
+from app.services.emission_watch import ewatch
 from app.services.ingredient_watch import watch
 from app.services.price_store import store
 from app.services.rankings import rankings
@@ -216,6 +220,87 @@ async def artmarket_item(item_id: str):
         out.append(b)
     return {"item": it, "buckets": out, "min_sales": config.ART_MIN_SALES,
             "last_slot": market.get_meta("last_slot")}
+
+
+# ---------- выбросы ----------
+
+@router.get("/emission")
+async def emission():
+    """Текущий/последние выбросы (история копится вотчером, API отдаёт только 2)."""
+    return ewatch.snapshot()
+
+
+# ---------- полный аукцион: живые лоты и история по предмету ----------
+
+_market_cache: dict[str, tuple[float, dict]] = {}
+_market_lock = asyncio.Lock()
+
+
+def _item_brief(iid: str) -> dict:
+    it = db.item(iid) or {}
+    p = store.prices.get(iid) or {}
+    h = store.history.get(iid) or {}
+    return {"id": iid, "name": it.get("name", iid), "icon": it.get("icon", ""),
+            "color": it.get("color", "DEFAULT"),
+            "min_buyout": p.get("min_buyout"), "avg": h.get("avg_unit_price"),
+            "sales_per_hour": h.get("sales_per_hour")}
+
+
+@router.get("/market/overview")
+async def market_overview():
+    """Подборки полного аукциона из тёплого кэша цен (без внешних запросов)."""
+    rows = [_item_brief(iid) for iid in store.prices]
+    liquid = sorted((r for r in rows if r["sales_per_hour"]),
+                    key=lambda r: -r["sales_per_hour"])[:15]
+    expensive = sorted((r for r in rows if r["min_buyout"]),
+                       key=lambda r: -r["min_buyout"])[:15]
+    return {"liquid": liquid, "expensive": expensive,
+            "tracked": len(rows)}
+
+
+@router.get("/market/item/{item_id}")
+async def market_item(item_id: str):
+    """Живые лоты + недавние продажи предмета. Внешний API, кэш MARKET_CACHE_SEC."""
+    it = db.item(item_id)
+    if not it:
+        raise HTTPException(404, "item not found")
+    now = time.monotonic()
+    cached = _market_cache.get(item_id)
+    if cached and now - cached[0] < config.MARKET_CACHE_SEC:
+        return cached[1]
+    async with _market_lock:                     # не дублируем внешние запросы
+        cached = _market_cache.get(item_id)
+        if cached and time.monotonic() - cached[0] < config.MARKET_CACHE_SEC:
+            return cached[1]
+        async with httpx.AsyncClient(trust_env=False) as client:
+            lots_raw = await auction.fetch_lots_page(client, item_id, limit=50)
+            hist_raw = await auction.fetch_history_page(client, item_id, limit=50,
+                                                        additional=False)
+    lots = []
+    for lot in (lots_raw.get("lots") or []):
+        amount = lot.get("amount") or 1
+        bp = lot.get("buyoutPrice")
+        lots.append({
+            "amount": amount,
+            "buyout": bp,
+            "unit": round(bp / amount) if bp else None,
+            "current": lot.get("currentPrice") or lot.get("startPrice"),
+            "end": lot.get("endTime"),
+        })
+    sales = [{"time": e.get("time"),
+              "amount": e.get("amount") or 1,
+              "price": e.get("price"),
+              "unit": round(e["price"] / (e.get("amount") or 1)) if e.get("price") else None}
+             for e in (hist_raw.get("prices") or [])]
+    res = {"item": _item_brief(item_id),
+           "lots_total": lots_raw.get("total"),
+           "lots": lots, "sales": sales,
+           "error": lots_raw.get("error") or hist_raw.get("error")}
+    _market_cache[item_id] = (time.monotonic(), res)
+    if len(_market_cache) > 500:                 # не разъедаемся
+        oldest = min(_market_cache, key=lambda k: _market_cache[k][0])
+        del _market_cache[oldest]
+    return res
 
 
 # ---------- интерактивная карта ----------

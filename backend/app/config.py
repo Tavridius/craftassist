@@ -97,6 +97,13 @@ ART_LOTS_TOP = int(os.getenv("ART_LOTS_TOP", "5"))  # средняя из N са
 # lots / avg7d — принудительно.
 BUILD_PRICE_SOURCE = os.getenv("BUILD_PRICE_SOURCE", "auto")
 
+# --- Вотчер выбросов (история стартов для дашборда) ---
+EMISSION_WATCH_ENABLED = os.getenv("EMISSION_WATCH_ENABLED", "1") not in ("0", "false", "False")
+EMISSION_POLL_SEC = int(os.getenv("EMISSION_POLL_SEC", "60"))
+
+# --- Полный аукцион (живые лоты/история по запросу, кэш) ---
+MARKET_CACHE_SEC = int(os.getenv("MARKET_CACHE_SEC", "90"))
+
 # --- Расчёт дерева крафта ---
 # На демо-API (лимит ~2 запроса/с) глубина×ветвление = долгий холодный запрос.
 # С prod-токеном лимиты выше — можно поднять глубину/варианты через env.

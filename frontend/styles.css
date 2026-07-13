@@ -751,6 +751,34 @@ a.auth-user:hover { color: var(--green); text-shadow: var(--glow); }
 .dc-head .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dc-price { font-size: 11px; color: var(--bright); margin-top: 4px; }
 
+/* ---------- карточка выбросов ---------- */
+.em-since { font-size: 26px; font-weight: 800; color: var(--green); letter-spacing: 0.06em; margin-top: 12px; }
+.em-now { font-size: 18px; font-weight: 800; color: var(--red); letter-spacing: 0.08em; margin-top: 12px;
+  animation: blink 1.2s steps(1) infinite; }
+.em-sub { font-size: 10px; letter-spacing: 0.14em; color: var(--dim); margin-top: 4px; }
+.em-hist { margin-top: 10px; }
+.em-row { font-size: 11px; color: var(--dim); padding: 3px 2px; letter-spacing: 0.06em; }
+
+/* ---------- полный аукцион ---------- */
+.mk-search { max-width: 560px; margin: 4px 0 12px; }
+.mkmod #mkResults .side-row { border: 1px solid var(--border-deep); margin-bottom: 2px; }
+.mk-item { border: 1px solid var(--border); background: var(--panel-main); padding: 12px 14px; margin: 10px 0 16px; }
+.mk-head { display: flex; align-items: center; gap: 10px; }
+.mk-head img { width: 34px; height: 34px; object-fit: contain; }
+.mk-title { font-size: 15px; font-weight: 800; letter-spacing: 0.05em; flex: 1; }
+.mk-card { font-size: 10px; letter-spacing: 0.1em; color: var(--green); text-decoration: none; white-space: nowrap; }
+.mk-card:hover { text-shadow: var(--glow); }
+.mk-tables { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 8px; }
+.mk-tbl table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.mk-tbl th {
+  text-align: left; font-size: 9px; letter-spacing: 0.14em; color: var(--dimmer);
+  padding: 4px 8px; border-bottom: 1px solid var(--border);
+}
+.mk-tbl td { padding: 4px 8px; border-bottom: 1px solid var(--border-deep); color: var(--text); }
+.mk-tbl th.r, .mk-tbl td.r { text-align: right; }
+.mk-tbl tbody tr:hover { background: var(--row-hover); }
+@media (max-width: 900px) { .mk-tables { grid-template-columns: 1fr; } }
+
 /* ---------- кастомный селектор с иконками (контейнер, броня) ---------- */
 .isel { position: relative; flex: 1; min-width: 0; }
 .isel-btn {
