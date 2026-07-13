@@ -158,25 +158,40 @@ async def fetch_history(client: httpx.AsyncClient, item_id: str) -> dict:
                 "error": f"http_{resp.status_code if resp else 'none'}"}
 
     entries = resp.json().get("prices", [])
-    times, units = [], []
+    times, units, dated = [], [], []
     for e in entries:
-        t = e.get("time")
-        if t:
+        t = None
+        if e.get("time"):
             try:
-                times.append(datetime.fromisoformat(t.replace("Z", "+00:00")))
+                t = datetime.fromisoformat(e["time"].replace("Z", "+00:00"))
+                times.append(t)
             except ValueError:
                 pass
         price, amount = e.get("price"), e.get("amount") or 1
         if price:
-            units.append(price / amount)  # цена продажи за 1 штуку
+            unit = price / amount  # цена продажи за 1 штуку
+            units.append(unit)
+            if t:
+                dated.append((t, unit))
     avg = round(sum(units) / len(units)) if units else None
+
+    # реальная цена продажи: последняя сделка + медиана 10 свежих сделок
+    # (мин. выкуп — цена ХОТЕЛОК продавцов; фактические сделки обычно ниже)
+    dated.sort(key=lambda p: p[0], reverse=True)
+    last_unit = round(dated[0][1]) if dated else None
+    recent = sorted(u for _, u in dated[:10])
+    recent_unit = round(recent[len(recent) // 2]) if recent else None
+
     if not times:
         return {"available": True, "sales_per_hour": 0.0, "sold_count": 0,
-                "avg_unit_price": avg}
+                "avg_unit_price": avg, "last_unit_price": last_unit,
+                "recent_unit_price": recent_unit}
 
     now = datetime.now(timezone.utc)
     span_h = max((now - min(times)).total_seconds() / 3600, 1 / 60)
     return {"available": True,
             "sales_per_hour": round(len(times) / span_h, 1),
             "sold_count": len(times),
-            "avg_unit_price": avg}
+            "avg_unit_price": avg,
+            "last_unit_price": last_unit,
+            "recent_unit_price": recent_unit}

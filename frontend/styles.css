@@ -751,6 +751,8 @@ a.auth-user:hover { color: var(--green); text-shadow: var(--glow); }
 .dc-head .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dc-price { font-size: 11px; color: var(--bright); margin-top: 4px; }
 
+.v-lastsale { font-size: 10px; letter-spacing: 0.1em; color: var(--dim); margin-top: 6px; text-align: right; }
+
 /* ---------- карточка выбросов ---------- */
 .em-since { font-size: 26px; font-weight: 800; color: var(--green); letter-spacing: 0.06em; margin-top: 12px; }
 .em-now { font-size: 18px; font-weight: 800; color: var(--red); letter-spacing: 0.08em; margin-top: 12px;

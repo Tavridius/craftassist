@@ -243,14 +243,17 @@ async function openItem(id) {
 function verdictBlock(d) {
   const v = d.verdict || {};
   let cls = "warn", main = "—", sub = "";
+  const basis = v.sell_basis === "sales"
+    ? "ПО РЕАЛЬНЫМ ПРОДАЖАМ (МЕДИАНА 10 ПОСЛЕДНИХ)"
+    : "ПО МИН. ВЫКУПУ (ИСТОРИИ ПРОДАЖ ЕЩЁ НЕТ)";
   if (v.status === "profitable") {
     cls = "ok";
     main = `ВЫГОДНО ▲+${v.pct}%`;
-    sub = `МАРЖА +${fmt(v.diff)} ₽ НА ЕДИНИЦУ ПРИ ТЕКУЩИХ ЦЕНАХ`;
+    sub = `МАРЖА +${fmt(v.diff)} ₽ НА ЕДИНИЦУ · ${basis}`;
   } else if (v.status === "unprofitable") {
     cls = "bad";
     main = `НЕВЫГОДНО ▼−${Math.abs(v.pct)}%`;
-    sub = `МАРЖА −${fmt(Math.abs(v.diff))} ₽ НА ЕДИНИЦУ ПРИ ТЕКУЩИХ ЦЕНАХ`;
+    sub = `МАРЖА −${fmt(Math.abs(v.diff))} ₽ НА ЕДИНИЦУ · ${basis}`;
   } else if (v.status === "unknown") {
     main = `РАСЧЁТ ЦЕН…`;
     sub = `ЦЕНЫ ЧАСТИ ИНГРЕДИЕНТОВ СЧИТАЮТСЯ В ФОНЕ — ОБНОВИ СТРАНИЦУ ЧЕРЕЗ 1–2 МИНУТЫ`;
@@ -264,18 +267,18 @@ function verdictBlock(d) {
   }
 
   let bars = "";
-  if (d.craft_cost != null && d.buy_price != null) {
-    const maxv = Math.max(d.craft_cost, d.buy_price) || 1;
-    bars = `<div class="v-bars">
+  if (d.craft_cost != null && (d.buy_price != null || d.sell_price != null)) {
+    const rowsArr = [["КРАФТ", d.craft_cost, "craft"]];
+    if (d.sell_price != null) rowsArr.push(["ПРОДАЖА ~", d.sell_price, ""]);
+    if (d.buy_price != null) rowsArr.push(["ВЫКУП ОТ", d.buy_price, ""]);
+    const maxv = Math.max(...rowsArr.map((r) => r[1])) || 1;
+    bars = `<div class="v-bars">` + rowsArr.map(([lbl, val, extra]) => `
       <div class="v-bar">
-        <div class="row"><span>КРАФТ</span><span class="num">${fmt(d.craft_cost)} ₽</span></div>
-        <div class="track"><div class="fill craft" style="width:${Math.round(d.craft_cost / maxv * 100)}%"></div></div>
-      </div>
-      <div class="v-bar">
-        <div class="row"><span>АУК</span><span class="num">${fmt(d.buy_price)} ₽</span></div>
-        <div class="track"><div class="fill" style="width:${Math.round(d.buy_price / maxv * 100)}%"></div></div>
-      </div>
-    </div>`;
+        <div class="row"><span>${lbl}</span><span class="num">${fmt(val)} ₽</span></div>
+        <div class="track"><div class="fill ${extra}" style="width:${Math.round(val / maxv * 100)}%"></div></div>
+      </div>`).join("") + `</div>`;
+    if (d.last_sale != null)
+      bars += `<div class="v-lastsale">ПОСЛЕДНЯЯ ПРОДАЖА: ${fmt(d.last_sale)} ₽</div>`;
   }
 
   return `<div class="verdict ${cls}">
@@ -608,7 +611,7 @@ function dashCraftRow(e) {
     <img loading="lazy" src="${asset(e.icon)}" alt="">
     <div class="nm">${escapeHtml(e.name)}</div>
     ${e.pct != null ? `<span class="pct ${e.pct > 0 ? "up" : "down"}">${e.pct > 0 ? "+" : ""}${e.pct}%</span>`
-                    : e.buy_price != null ? `<span class="dash-p">${fmt(e.buy_price)} ₽</span>` : ""}
+                    : (e.sell_price ?? e.buy_price) != null ? `<span class="dash-p">${fmt(e.sell_price ?? e.buy_price)} ₽</span>` : ""}
   </div>`;
 }
 
@@ -743,7 +746,8 @@ function sideRow(e, extra) {
     : `<span class="pct ${e.pct > 0 ? "up" : "down"}">${e.pct > 0 ? "+" : ""}${e.pct}%</span>`;
   const meta = [];
   if (e.craft_cost != null) meta.push(`КРАФТ ${fmt(e.craft_cost)}`);
-  if (e.buy_price != null) meta.push(`АУК ${fmt(e.buy_price)}`);
+  if (e.sell_price != null) meta.push(`ПРОДАЖА ~${fmt(e.sell_price)}`);
+  else if (e.buy_price != null) meta.push(`АУК ${fmt(e.buy_price)}`);
   if (extra === "sales" && e.sales_per_hour != null) meta.push(`${fmtSales(e.sales_per_hour)} ПРОД/Ч`);
   if (extra === "opens" && e.opens) meta.push(`${e.opens} ОТКР`);
   return `<div class="side-row" data-id="${e.id}" style="border-left-color:transparent">

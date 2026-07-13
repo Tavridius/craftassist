@@ -72,7 +72,11 @@ class Rankings:
             cc, buy = node.get("craft_cost"), node.get("market_price")
             it = db.item(rid) or {}
             hist = store.history.get(rid) or {}
-            pct = round((buy - cc) / cc * 100) if (cc and buy and cc > 0) else None
+            # выгода — от реальной цены продажи (медиана свежих сделок),
+            # мин. выкуп — только fallback, пока истории нет
+            sell = craft.sell_price(rid)
+            base = sell if sell is not None else buy
+            pct = round((base - cc) / cc * 100) if (cc and base and cc > 0) else None
             rows[rid] = {
                 "id": rid,
                 "name": it.get("name", rid),
@@ -80,6 +84,7 @@ class Rankings:
                 "color": it.get("color", "DEFAULT"),
                 "craft_cost": cc,
                 "buy_price": buy,
+                "sell_price": sell,
                 "pct": pct,
                 "sales_per_hour": hist.get("sales_per_hour"),
                 "opens": self.opens.get(rid, 0),

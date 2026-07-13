@@ -153,6 +153,9 @@ class PriceStore:
         r = await auction.fetch_history(client, iid)
         if r.get("available"):
             self.history[iid] = {"sales_per_hour": r.get("sales_per_hour", 0.0),
+                                 "avg_unit_price": r.get("avg_unit_price"),
+                                 "last_unit_price": r.get("last_unit_price"),
+                                 "recent_unit_price": r.get("recent_unit_price"),
                                  "ts": time.time()}
         self._save_ctr += 1
         if self._save_ctr % 25 == 0:

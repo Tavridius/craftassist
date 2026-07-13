@@ -133,34 +133,51 @@ def analyze(item_id: str) -> dict:
 
     buy_price = tree.get("market_price")
     craft_cost = tree.get("craft_cost")
+    hist = store.history.get(item_id) or {}
     return {
         "item": _item_info(item_id),
         "craftable": tree.get("craftable", False),
         "buy_price": buy_price,
         "buy_available": buy_price is not None,
         "craft_cost": craft_cost,
-        "sales_per_hour": (store.history.get(item_id) or {}).get("sales_per_hour"),
+        "sales_per_hour": hist.get("sales_per_hour"),
+        "sell_price": sell_price(item_id),
+        "last_sale": hist.get("last_unit_price"),
         "description": db.description(item_id),
         "used_in": [_item_info(rid) for rid in db.used_in.get(item_id, [])],
         "tree": tree,
-        "verdict": _verdict(tree, buy_price, craft_cost),
+        "verdict": _verdict(tree, buy_price, craft_cost, item_id),
     }
 
 
-def _verdict(tree: dict, buy_price, craft_cost) -> dict:
+def sell_price(item_id: str):
+    """Реальная цена продажи: медиана 10 последних сделок → последняя сделка.
+
+    Мин. выкуп — это цена желающих ПРОДАТЬ (за неё предмет обычно не уходит);
+    выгоду продажи считаем по фактическим сделкам из истории аукциона.
+    """
+    h = store.history.get(item_id) or {}
+    return h.get("recent_unit_price") or h.get("last_unit_price") or h.get("avg_unit_price")
+
+
+def _verdict(tree: dict, buy_price, craft_cost, item_id: str) -> dict:
     if not tree.get("craftable"):
         return {"status": "not_craftable", "text": "Не крафтится"}
     if craft_cost is None:
         return {"status": "unknown", "text": "Цены части ингредиентов ещё считаются"}
-    if buy_price is None:
+    sp = sell_price(item_id)
+    if buy_price is None and sp is None:
         return {"status": "no_market", "text": "Готового нет на ауке — не с чем сравнить",
                 "craft_cost": craft_cost}
-    diff = buy_price - craft_cost
-    # ROI на вложенное: (аук − крафт) / крафт — та же формула, что в рейтингах главной
+    # выгода крафта НА ПРОДАЖУ — от реальных сделок (fallback: мин. выкуп)
+    base = sp if sp is not None else buy_price
+    diff = base - craft_cost
     pct = round(diff / craft_cost * 100) if craft_cost > 0 else 0
     profitable = diff > 0
     return {
         "status": "profitable" if profitable else "unprofitable",
         "text": f"{'ВЫГОДНО' if profitable else 'НЕВЫГОДНО'} {pct:+d}%",
-        "craft_cost": craft_cost, "buy_price": buy_price, "diff": round(diff), "pct": pct,
+        "craft_cost": craft_cost, "buy_price": buy_price,
+        "sell_price": sp, "sell_basis": "sales" if sp is not None else "buyout",
+        "diff": round(diff), "pct": pct,
     }
