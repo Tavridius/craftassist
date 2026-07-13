@@ -220,27 +220,19 @@ async def artmarket_item(item_id: str):
 
 # ---------- интерактивная карта ----------
 
-# Оверворлд-зоны с топ-даун картами (извлечены из клиента игры, decals/maps).
-# Порядок — прогрессия от старта к северу; названия — из локализации игры
-# (map.location.id.<id>.name). Красные пометки полей артефактов уже на картах.
-MAP_ZONES = [
-    {"id": "svalka", "name": "Свалка техники"},
-    {"id": "agroprom", "name": "Агрокомплекс «Колос»"},
-    {"id": "td", "name": "Чёрные Ивы"},
-    {"id": "armsklad", "name": "Полесское"},
-    {"id": "les", "name": "Лес"},
-    {"id": "yantar_pit", "name": "Яма"},
-    {"id": "pd", "name": "Путь Дураков"},
-]
+# Тайловая карта мира (Leaflet CRS.Simple). Пирамида собрана из global_map КПК
+# (pda/global_map, 9×4 тайла 2048²): полный мир 18432×8192, zoom 0..6, тайл 256px.
+# Значения синхронны генератору тайлов (scripts/gen_map_pyramid.py).
+MAP_META = {
+    "w": 18432, "h": 8192, "tile_size": 256, "min_zoom": 0, "max_zoom": 6,
+    "tile_url": "wmap/{z}/{x}/{y}.webp",
+}
 
 
-@router.get("/map/zones")
-async def map_zones():
-    """Зоны интерактивной карты — только те, чьи изображения реально лежат в maps/."""
-    mdir = config.FRONTEND_DIR / "maps"
-    zones = [{**z, "image": f"maps/{z['id']}.webp"}
-             for z in MAP_ZONES if (mdir / f"{z['id']}.webp").exists()]
-    return {"zones": zones}
+@router.get("/map/meta")
+async def map_meta():
+    """Параметры тайловой карты мира для Leaflet."""
+    return MAP_META
 
 
 # ---------- калькулятор сборок ----------

@@ -215,9 +215,10 @@ async def search_page(request: Request):
 async def map_page(request: Request):
     return render_index(
         request, "/map",
-        title="Интерактивная карта STALZONE (Stalcraft) — зоны и поля артефактов",
-        desc="Карты зон STALZONE (ранее Stalcraft — Сталкрафт): Свалка, Агропром, Чёрные Ивы, "
-             "Полесское, Лес, Яма, Путь Дураков. Отмечены поля артефактов; зум и перетаскивание.")
+        title="Интерактивная карта мира STALZONE (Stalcraft) — спутниковый вид",
+        desc="Интерактивная карта мира STALZONE (ранее Stalcraft — Сталкрафт): цельный "
+             "спутниковый вид всей Зоны с зумом и перетаскиванием. Дальше — метки локаций "
+             "и точки артефактов, тайников и переходов.")
 
 
 @router.get("/guides", response_class=HTMLResponse)
