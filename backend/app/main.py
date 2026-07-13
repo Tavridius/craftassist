@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app import config
-from app.db import loader, market, users
+from app.db import chat, loader, market, users
 from app.db.index import db
 from app.routers.api import router as api_router
 from app.routers.auth import router as auth_router
@@ -38,6 +38,7 @@ app.add_middleware(
 async def startup() -> None:
     loader.ensure_data()
     users.init()
+    chat.init()
     market.init()
     db.load()
     store.load()
@@ -61,6 +62,9 @@ async def startup() -> None:
     if config.EMISSION_WATCH_ENABLED:
         from app.services.emission_watch import ewatch
         asyncio.create_task(ewatch.loop())         # история выбросов для дашборда
+    if config.SALES_STATS_ENABLED:
+        from app.services.sales_stats import sstats
+        asyncio.create_task(sstats.loop())         # снапшоты продаж (топ за неделю)
 
 
 # API и SSR-страницы — ДО статики, чтобы не перекрылись catch-all маунтом.

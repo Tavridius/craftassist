@@ -137,6 +137,7 @@ async function loadAuth() {
   } catch (e) { ME = null; authBox.innerHTML = ""; }
   renderModeToggle();
   renderOnboard();
+  chatDockRender();   // форма чата зависит от авторизации
   // стартовый рендер мог уйти без фильтра, пока /me не ответил — перерисовать
   if (ME && ME.authenticated && availMode()) {
     lastQuery = null; home.dataset.ts = "";
@@ -549,15 +550,17 @@ async function loadDashboard() {
       && home.dataset.ts && Date.now() - +home.dataset.ts < 60000) return;
   home.innerHTML = `<div class="spinner">// ЗАГРУЗКА ГЛАВНОЙ</div>`;
   try {
-    const [top, art, watch, em] = await Promise.all([
+    const [top, art, watch, em, sales, box] = await Promise.all([
       fetch(api(`/top${availParam("?")}`)).then((r) => r.json()).catch(() => null),
       fetch(api("/artmarket/top?window=7d")).then((r) => r.json()).catch(() => null),
       fetch(api("/watch")).then((r) => r.json()).catch(() => null),
       fetch(api("/emission")).then((r) => r.json()).catch(() => null),
+      fetch(api("/sales/top?n=5")).then((r) => r.json()).catch(() => null),
+      fetch(api("/box")).then((r) => r.json()).catch(() => null),
     ]);
     home.dataset.ts = Date.now();
     home.dataset.view = "dash";
-    renderDashboard(top, art, watch, em);
+    renderDashboard(top, art, watch, em, sales, box);
   } catch (e) {
     home.innerHTML = `<div class="empty">[!] НЕ УДАЛОСЬ ЗАГРУЗИТЬ ГЛАВНУЮ</div>`;
   }
@@ -625,7 +628,37 @@ function dashArtRow(r) {
   </div>`;
 }
 
-function renderDashboard(top, art, watch, em) {
+function salesBody(s) {
+  if (!s || !(s.today || []).length)
+    return `<div class="empty-sm">ИСТОРИЯ ПРОДАЖ ПРОГРЕВАЕТСЯ — ЗАГЛЯНИ ЧЕРЕЗ ПАРУ МИНУТ.</div>`;
+  const row = (r) => `<div class="dash-row" data-nav="/item/${r.id}">
+    <img loading="lazy" src="${asset(r.icon)}" alt="">
+    <div class="nm">${escapeHtml(r.name)}</div>
+    <span class="dash-p">~${fmt(r.per_day)}/СУТ</span></div>`;
+  const today = s.today.slice(0, 3).map(row).join("");
+  const week = (s.week || []).length
+    ? s.week.slice(0, 3).map(row).join("")
+    : `<div class="empty-sm">КОПИМ СНАПШОТЫ (ЕСТЬ ${s.snapshots || 0}) — НЕДЕЛЬНЫЙ ТОП СОБЕРЁТСЯ ЗА ПАРУ ДНЕЙ.</div>`;
+  return `<div class="sales-tabs">
+      <button class="stab on" data-view="today">СЕГОДНЯ</button>
+      <button class="stab" data-view="week">НЕДЕЛЯ</button></div>
+    <div class="sales-view" data-view="today">${today}</div>
+    <div class="sales-view hidden" data-view="week">${week}</div>`;
+}
+
+function boxBody(b) {
+  if (!b || b.missing)
+    return `<div class="dash-stub"><span class="stub-code">[ МОДУЛЬ ]</span>
+      Ящик «${escapeHtml((b && b.name) || "Тактический резерв")}»: сезонных ящиков нет в базе
+      EXBO — оживёт, как только узнаем его ID на аукционе.<div class="stub-status">ЖДЁМ ID</div></div>`;
+  return `<div class="dash-row" data-nav="/item/${b.id}">
+      <img src="${asset(b.icon)}" alt="">
+      <div class="nm">${escapeHtml(b.name)}</div>
+      <span class="dash-p">${b.min_buyout != null ? "ОТ " + fmt(b.min_buyout) + " ₽" : "ЦЕНА СЧИТАЕТСЯ…"}</span></div>
+    ${b.sales_per_hour != null ? `<div class="em-sub">${fmtSales(b.sales_per_hour)} ПРОД/Ч</div>` : ""}`;
+}
+
+function renderDashboard(top, art, watch, em, sales, box) {
   const card = (title, note, body, link, linkText) => `<section class="dash-card">
     <div class="side-head">
       <div class="side-title">▸ ${title}</div>
@@ -675,15 +708,21 @@ function renderDashboard(top, art, watch, em) {
     </div>
     <div class="dash-grid">
       ${card("КРАФТЫ ДНЯ", "ВЫГОДА · ЛИКВИДНОСТЬ · СПРОС", crafts, "/craft", "В РАЗДЕЛ КРАФТА")}
+      ${card("САМОЕ ПРОДАВАЕМОЕ", "ТОП-3 ПО ТЕМПУ ПРОДАЖ", salesBody(sales), "/market", "НА АУКЦИОН")}
       ${card("ТРЕНДЫ БИРЖИ АРТЕФАКТОВ", "ЦЕНА ЗА 7 ДНЕЙ", trends, "/auction", "НА БИРЖУ")}
       ${card("ГРАФИКИ ИНГРЕДИЕНТОВ", "СРЕДНЯЯ ЦЕНА ПРОДАЖ", charts, "/craft", "ВСЕ ГРАФИКИ")}
       ${card("ВЫБРОС", "ВРЕМЯ МСК · ЗАМЕР РАЗ В МИНУТУ", emissionBody(em))}
       ${card("СБОРКА ДНЯ", "СЛУЧАЙНАЯ ПОПУЛЯРНАЯ СБОРКА", stub("Случайная сборка артефактов из калькулятора — с ценой и статами."), "/builds", "К КАЛЬКУЛЯТОРУ")}
-      ${card("АКТУАЛЬНЫЙ ЯЩИК", "ЦЕНА НА АУКЦИОНЕ", stub("Цена актуального сезонного ящика и динамика за неделю."), "/market", "НА АУКЦИОН")}
+      ${card("АКТУАЛЬНЫЙ ЯЩИК", "ТАКТИЧЕСКИЙ РЕЗЕРВ", boxBody(box), "/market", "НА АУКЦИОН")}
     </div>
   </div>`;
   home.querySelectorAll("[data-nav]").forEach((el) =>
     el.addEventListener("click", () => { navigate(el.dataset.nav); }));
+  home.querySelectorAll(".stab").forEach((b) => b.addEventListener("click", () => {
+    home.querySelectorAll(".stab").forEach((x) => x.classList.toggle("on", x === b));
+    home.querySelectorAll(".sales-view").forEach((v) =>
+      v.classList.toggle("hidden", v.dataset.view !== b.dataset.view));
+  }));
   startEmTick();
 }
 
@@ -801,6 +840,91 @@ function renderHome(d, w) {
   home.innerHTML = h;
   home.querySelectorAll(".side-row, .watch-card").forEach((r) =>
     r.addEventListener("click", () => { navigate(`/item/${r.dataset.id}`); }));
+}
+
+// ---------- чаты: виджет справа снизу (общий + баги/предложения) ----------
+const CHAT_ROOMS = [["general", "ОБЩИЙ"], ["bugs", "БАГИ/ИДЕИ"]];
+let chatRoom = localStorage.getItem("sz_chat_room") || "general";
+let chatOpen = localStorage.getItem("sz_chat_open") === "1";
+let chatLastId = 0, chatPollTimer = null, chatBusy = false;
+
+function chatDockRender() {
+  const dock = $("chatDock");
+  if (!dock) return;
+  if (chatPollTimer) { clearInterval(chatPollTimer); chatPollTimer = null; }
+  if (!chatOpen) {
+    dock.className = "chat-dock collapsed";
+    dock.innerHTML = `<button class="chat-fab" id="chatFab">▲ ЧАТ // СВЯЗЬ</button>`;
+    $("chatFab").addEventListener("click", () => {
+      chatOpen = true; localStorage.setItem("sz_chat_open", "1"); chatDockRender();
+    });
+    return;
+  }
+  dock.className = "chat-dock open";
+  const tabs = CHAT_ROOMS.map(([id, label]) =>
+    `<button class="chat-tab ${id === chatRoom ? "on" : ""}" data-room="${id}">${label}</button>`).join("");
+  const canPost = ME && ME.authenticated;
+  dock.innerHTML = `
+    <div class="chat-head">${tabs}<button class="chat-min" id="chatMin" title="Свернуть">▼</button></div>
+    <div class="chat-msgs" id="chatMsgs"><div class="spinner">// ЗАГРУЗКА</div></div>
+    <div class="chat-form">${canPost
+      ? `<input id="chatInput" maxlength="500" autocomplete="off" placeholder="СООБЩЕНИЕ…"><button id="chatSend">▸</button>`
+      : `<a class="chat-login" href="${BASE}/auth/login">ВОЙТИ ЧЕРЕЗ EXBO, ЧТОБЫ ПИСАТЬ</a>`}</div>`;
+  dock.querySelectorAll(".chat-tab").forEach((b) => b.addEventListener("click", () => {
+    if (b.dataset.room === chatRoom) return;
+    chatRoom = b.dataset.room; localStorage.setItem("sz_chat_room", chatRoom);
+    chatLastId = 0; chatDockRender();
+  }));
+  $("chatMin").addEventListener("click", () => {
+    chatOpen = false; localStorage.setItem("sz_chat_open", "0"); chatDockRender();
+  });
+  if (canPost) {
+    const send = async () => {
+      const inp = $("chatInput");
+      const text = inp.value.trim();
+      if (!text) return;
+      inp.value = "";
+      try {
+        const r = await fetch(api(`/chat/${chatRoom}`), {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text }),
+        });
+        if (r.status === 429) inp.placeholder = "НЕ ТАК БЫСТРО…";
+        chatRefresh();
+      } catch (e) { /* тихо */ }
+    };
+    $("chatSend").addEventListener("click", send);
+    $("chatInput").addEventListener("keydown", (e) => { if (e.key === "Enter") send(); });
+  }
+  chatLastId = 0;
+  chatRefresh(true);
+  chatPollTimer = setInterval(() => chatRefresh(), 5000);
+}
+
+function chatMsgHtml(m) {
+  const t = new Date(m.ts * 1000).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+  return `<div class="chat-msg"><span class="t">${t}</span> <span class="u">${escapeHtml(m.login)}</span> ${escapeHtml(m.text)}</div>`;
+}
+
+async function chatRefresh(reset = false) {
+  if (chatBusy) return;
+  chatBusy = true;
+  try {
+    const d = await fetch(api(`/chat/${chatRoom}?after=${reset ? 0 : chatLastId}`)).then((r) => r.json());
+    const box = $("chatMsgs");
+    if (!box) return;
+    if (reset) box.innerHTML = "";
+    if (d.messages && d.messages.length) {
+      const ph = box.querySelector(".chat-empty, .spinner");
+      if (ph) box.innerHTML = "";
+      const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+      box.insertAdjacentHTML("beforeend", d.messages.map(chatMsgHtml).join(""));
+      chatLastId = d.last_id;
+      if (reset || atBottom) box.scrollTop = box.scrollHeight;
+    } else if (!box.children.length) {
+      box.innerHTML = `<div class="chat-empty">ПОКА ПУСТО — НАПИШИ ПЕРВЫМ.</div>`;
+    }
+  } catch (e) { /* тихо */ } finally { chatBusy = false; }
 }
 
 // ---------- полный аукцион: живые лоты и история продаж любого предмета ----------

@@ -11,7 +11,7 @@ import httpx
 from fastapi import APIRouter, Body, HTTPException, Query, Request
 
 from app import config
-from app.db import market, users
+from app.db import chat, market, users
 from app.db.index import db
 from app.routers.auth import current_user
 from app.services import auction, builds, craft, hideout, oauth
@@ -19,6 +19,7 @@ from app.services.artefact_lots import artlots
 from app.services.artefact_watch import MSK
 from app.services.emission_watch import ewatch
 from app.services.ingredient_watch import watch
+from app.services.sales_stats import sstats
 from app.services.price_store import store
 from app.services.rankings import rankings
 
@@ -228,6 +229,62 @@ async def artmarket_item(item_id: str):
 async def emission():
     """Текущий/последние выбросы (история копится вотчером, API отдаёт только 2)."""
     return ewatch.snapshot()
+
+
+# ---------- чаты: общий и баги/предложения ----------
+
+_chat_last_post: dict[int, float] = {}      # антифлуд: user_id -> ts последнего поста
+
+
+@router.get("/chat/{room}")
+async def chat_fetch(room: str, after: int = 0):
+    """Сообщения комнаты (читать может любой). after — инкрементальная догрузка."""
+    if room not in chat.ROOMS:
+        raise HTTPException(404, "no such room")
+    msgs = chat.fetch(room, after=after)
+    return {"messages": msgs, "last_id": msgs[-1]["id"] if msgs else after}
+
+
+@router.post("/chat/{room}")
+async def chat_post(room: str, request: Request, payload: dict = Body(...)):
+    """Отправка сообщения — только вошедшим через EXBO. Антифлуд 3с."""
+    if room not in chat.ROOMS:
+        raise HTTPException(404, "no such room")
+    user = current_user(request)
+    if not user:
+        raise HTTPException(401, "не авторизован")
+    text = " ".join(str(payload.get("text") or "").split())[:chat.MAX_LEN]
+    if not text:
+        raise HTTPException(422, "пустое сообщение")
+    now = datetime.now().timestamp()
+    if now - _chat_last_post.get(user["id"], 0) < 3:
+        raise HTTPException(429, "слишком часто — подожди пару секунд")
+    _chat_last_post[user["id"]] = now
+    mid = chat.post(room, user["id"], user.get("display_login") or user["login"], text)
+    return {"ok": True, "id": mid}
+
+
+# ---------- топ продаваемых (дашборд) ----------
+
+@router.get("/sales/top")
+async def sales_top(n: int = 10):
+    """Самые продаваемые предметы: сейчас (последние сделки) и в среднем за неделю."""
+    def rows(pairs):
+        return [{**_item_brief(iid), "per_day": round(rate * 24)} for iid, rate in pairs]
+    return {"today": rows(sstats.today_top(n)),
+            "week": rows(sstats.week_top(n)),
+            "snapshots": len(sstats.snaps)}
+
+
+# ---------- актуальный ящик сезона (дашборд) ----------
+
+@router.get("/box")
+async def season_box():
+    """Карточка актуального ящика. Пока item-id не известен — missing:true."""
+    if not config.DASH_BOX_ID or not db.item(config.DASH_BOX_ID):
+        return {"missing": True, "name": config.DASH_BOX_NAME}
+    store.request([config.DASH_BOX_ID])          # греть цену приоритетно
+    return {"missing": False, **_item_brief(config.DASH_BOX_ID)}
 
 
 # ---------- полный аукцион: живые лоты и история по предмету ----------

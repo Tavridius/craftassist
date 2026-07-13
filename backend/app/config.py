@@ -104,6 +104,16 @@ BUILD_PRICE_SOURCE = os.getenv("BUILD_PRICE_SOURCE", "auto")
 EMISSION_WATCH_ENABLED = os.getenv("EMISSION_WATCH_ENABLED", "1") not in ("0", "false", "False")
 EMISSION_POLL_SEC = int(os.getenv("EMISSION_POLL_SEC", "60"))
 
+# --- Статистика продаж (топ продаваемых: сегодня/неделя) ---
+SALES_STATS_ENABLED = os.getenv("SALES_STATS_ENABLED", "1") not in ("0", "false", "False")
+SALES_SNAP_HOURS = int(os.getenv("SALES_SNAP_HOURS", "6"))
+
+# --- Актуальный ящик сезона на дашборде ---
+# «Тактический резерв» ОТСУТСТВУЕТ в базе EXBO (сезонные ящики туда не попадают) —
+# как узнаем item-id, впишем сюда (env или прямо тут), карточка оживёт.
+DASH_BOX_ID = os.getenv("DASH_BOX_ID", "")
+DASH_BOX_NAME = os.getenv("DASH_BOX_NAME", "Тактический резерв")
+
 # --- Полный аукцион (живые лоты/история по запросу, кэш) ---
 MARKET_CACHE_SEC = int(os.getenv("MARKET_CACHE_SEC", "90"))
 

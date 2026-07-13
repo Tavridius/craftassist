@@ -781,6 +781,69 @@ a.auth-user:hover { color: var(--green); text-shadow: var(--glow); }
 .mk-tbl tbody tr:hover { background: var(--row-hover); }
 @media (max-width: 900px) { .mk-tables { grid-template-columns: 1fr; } }
 
+/* ---------- вкладки топа продаж на дашборде ---------- */
+.sales-tabs { display: flex; gap: 4px; margin: 8px 0 4px; }
+.stab {
+  background: none; border: 1px solid var(--border); color: var(--dim);
+  font: inherit; font-size: 9px; letter-spacing: 0.14em; padding: 3px 10px; cursor: pointer;
+}
+.stab.on { border-color: var(--green-border); color: var(--green); background: rgba(124, 230, 142, 0.07); }
+.stab:hover { color: var(--green); }
+
+/* ---------- чаты: виджет справа снизу ---------- */
+.chat-dock { position: fixed; right: 16px; bottom: 0; z-index: 90; }
+.chat-fab {
+  background: var(--panel-deep); border: 1px solid var(--green-border); border-bottom: none;
+  color: var(--green); font: inherit; font-size: 11px; font-weight: 700; letter-spacing: 0.12em;
+  padding: 8px 16px; cursor: pointer;
+}
+.chat-fab:hover { box-shadow: var(--glow); }
+.chat-dock.open {
+  width: 340px; max-width: calc(100vw - 24px);
+  display: flex; flex-direction: column; height: 440px; max-height: 70vh;
+  background: var(--panel-main); border: 1px solid var(--green-border); border-bottom: none;
+  box-shadow: 0 -8px 40px rgba(0, 0, 0, 0.6);
+}
+.chat-head { display: flex; border-bottom: 1px solid var(--border); }
+.chat-tab {
+  flex: 1; background: none; border: none; border-right: 1px solid var(--border-deep);
+  color: var(--dim); font: inherit; font-size: 10px; font-weight: 700; letter-spacing: 0.12em;
+  padding: 9px 4px; cursor: pointer;
+}
+.chat-tab.on { color: var(--green); background: rgba(124, 230, 142, 0.07); }
+.chat-tab:hover { color: var(--green); }
+.chat-min {
+  background: none; border: none; color: var(--dim); font: inherit; padding: 0 12px; cursor: pointer;
+}
+.chat-min:hover { color: var(--green); }
+.chat-msgs {
+  flex: 1; overflow-y: auto; padding: 8px 10px; font-size: 12px; line-height: 1.55;
+  scrollbar-width: thin; scrollbar-color: var(--green-border) var(--panel-main);
+}
+.chat-msgs::-webkit-scrollbar { width: 8px; }
+.chat-msgs::-webkit-scrollbar-track { background: var(--panel-main); }
+.chat-msgs::-webkit-scrollbar-thumb { background: var(--green-border); border: 2px solid var(--panel-main); }
+.chat-msg { margin-bottom: 4px; overflow-wrap: anywhere; }
+.chat-msg .t { color: var(--faint); font-size: 10px; }
+.chat-msg .u { color: var(--green); font-weight: 700; }
+.chat-empty { color: var(--dimmer); font-size: 11px; letter-spacing: 0.08em; padding: 14px 4px; }
+.chat-form { display: flex; border-top: 1px solid var(--border); }
+.chat-form input {
+  flex: 1; background: var(--panel-deep); border: none; color: var(--text);
+  font: inherit; font-size: 12px; padding: 10px 12px; outline: none;
+}
+.chat-form input:focus { background: var(--panel-side); }
+.chat-form button {
+  background: var(--panel-deep); border: none; border-left: 1px solid var(--border);
+  color: var(--green); font: inherit; font-size: 16px; padding: 0 16px; cursor: pointer;
+}
+.chat-form button:hover { text-shadow: var(--glow); }
+.chat-login {
+  flex: 1; text-align: center; padding: 10px; font-size: 10px; letter-spacing: 0.1em;
+  color: var(--amber); text-decoration: none;
+}
+@media (max-width: 900px) { .chat-dock { right: 8px; } .chat-dock.open { width: calc(100vw - 16px); } }
+
 /* ---------- кастомный селектор с иконками (контейнер, броня) ---------- */
 .isel { position: relative; flex: 1; min-width: 0; }
 .isel-btn {
