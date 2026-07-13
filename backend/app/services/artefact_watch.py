@@ -18,7 +18,7 @@ import httpx
 from app import config
 from app.db import market
 from app.db.index import db
-from app.services import auction, oauth
+from app.services import auction, oauth, sales_log
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +104,7 @@ class ArtefactWatch:
             floor = datetime.now(timezone.utc) - timedelta(hours=step_h)
 
         buckets: dict = {}
+        all_prices: list = []       # все страницы — в sales_log (годовой график)
         newest_all: datetime | None = None
         offset = 0
         for _ in range(config.ART_WATCH_MAX_PAGES):
@@ -114,12 +115,15 @@ class ArtefactWatch:
             prices = page.get("prices") or []
             if not prices:
                 break
+            all_prices.extend(prices)
             newest, reached_floor = bucket_page(prices, floor, buckets)
             if newest and (newest_all is None or newest > newest_all):
                 newest_all = newest
             if reached_floor or len(prices) < 200:
                 break
             offset += len(prices)
+        # у sales_log своя граница sale_ts — страницы передаём одним вызовом
+        sales_log.record(iid, all_prices)
 
         # границу двигаем только ВПЕРЁД: без новых продаж newest со страницы старее floor
         new_ts = newest_all.isoformat() if newest_all and newest_all > floor else None

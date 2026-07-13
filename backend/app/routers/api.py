@@ -14,7 +14,7 @@ from app import config
 from app.db import chat, market, users
 from app.db.index import db
 from app.routers.auth import current_user
-from app.services import auction, builds, craft, hideout, oauth
+from app.services import auction, builds, craft, hideout, oauth, sales_log
 from app.services.artefact_lots import artlots
 from app.services.artefact_watch import MSK
 from app.services.emission_watch import ewatch
@@ -334,6 +334,8 @@ async def market_item(item_id: str):
             lots_raw = await auction.fetch_lots_page(client, item_id, limit=50)
             hist_raw = await auction.fetch_history_page(client, item_id, limit=50,
                                                         additional=False)
+    sales_log.record(item_id, hist_raw.get("prices") or [])  # копим годовой график
+    store.request_history(item_id)   # воркер продолжит снимать историю предмета
     lots = []
     for lot in (lots_raw.get("lots") or []):
         amount = lot.get("amount") or 1
@@ -359,6 +361,52 @@ async def market_item(item_id: str):
         oldest = min(_market_cache, key=lambda k: _market_cache[k][0])
         del _market_cache[oldest]
     return res
+
+
+@router.get("/market/item/{item_id}/sales")
+async def market_item_sales(item_id: str,
+                            days: float = Query(7.0, ge=0.04, le=366.0),
+                            since: str | None = None, until: str | None = None):
+    """Серия продаж предмета для графика: часы в свежем окне, дальше — дни.
+
+    Данные копятся пассивно из ответов истории аука (sales_log), ретенция —
+    год. since/until — 'YYYY-MM-DDTHH:00' МСК (масштабирование выделением);
+    без них окно = последние `days` суток.
+    """
+    if not db.item(item_id):
+        raise HTTPException(404, "item not found")
+
+    def _pdt(s: str | None):
+        if not s:
+            return None
+        try:
+            return datetime.fromisoformat(s).replace(tzinfo=MSK)
+        except ValueError:
+            return None
+
+    now = datetime.now(MSK)
+    u = min(_pdt(until) or now, now)
+    s = _pdt(since) or (u - timedelta(days=days))
+    s = max(s, now - timedelta(days=config.ITEM_SALES_KEEP_DAYS))
+    if s >= u:
+        s = u - timedelta(hours=1)
+    hourly = (u - s <= timedelta(days=33)
+              and s >= now - timedelta(days=config.ITEM_SALES_HOURLY_DAYS))
+    u_slot = u.strftime("%Y-%m-%dT%H:59")
+    if hourly:
+        rows = market.item_sales_hourly(item_id, s.strftime("%Y-%m-%dT%H:00"), u_slot)
+    else:  # окно ровняем на начало дня — не терять частичный первый день
+        rows = market.item_sales_daily(item_id, s.strftime("%Y-%m-%dT00:00"), u_slot)
+    for r in rows:
+        r["avg"] = round(r["avg"])
+        r["min"] = round(r["min"])
+        r["max"] = round(r["max"])
+    return {"granularity": "h" if hourly else "d",
+            "since": s.strftime("%Y-%m-%dT%H:00"), "until": u.strftime("%Y-%m-%dT%H:00"),
+            "first": market.item_sales_first(item_id),
+            "hourly_days": config.ITEM_SALES_HOURLY_DAYS,
+            "keep_days": config.ITEM_SALES_KEEP_DAYS,
+            "series": rows}
 
 
 # ---------- интерактивная карта ----------
@@ -458,4 +506,5 @@ async def health():
             "users": users.stats(),
             "prices": store.stats(),
             "artmarket": market.stats(),
+            "item_sales": market.item_sales_stats(),
             "artlots": artlots.stats()}

@@ -117,6 +117,13 @@ DASH_BOX_NAME = os.getenv("DASH_BOX_NAME", "Тактический резерв"
 # --- Полный аукцион (живые лоты/история по запросу, кэш) ---
 MARKET_CACHE_SEC = int(os.getenv("MARKET_CACHE_SEC", "90"))
 
+# --- Годовая история продаж предметов (график в карточке полного аука) ---
+# Пассивный сбор: каждый ответ /auction/{id}/history агрегируется по часовым
+# слотам МСК в market.db (services/sales_log.py). Часы храним окно, старше —
+# роллап в дневные агрегаты; дни живут год.
+ITEM_SALES_HOURLY_DAYS = int(os.getenv("ITEM_SALES_HOURLY_DAYS", "35"))
+ITEM_SALES_KEEP_DAYS = int(os.getenv("ITEM_SALES_KEEP_DAYS", "365"))
+
 # --- Расчёт дерева крафта ---
 # На демо-API (лимит ~2 запроса/с) глубина×ветвление = долгий холодный запрос.
 # С prod-токеном лимиты выше — можно поднять глубину/варианты через env.

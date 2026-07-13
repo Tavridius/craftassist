@@ -168,6 +168,9 @@ async def fetch_history(client: httpx.AsyncClient, item_id: str) -> dict:
                 "error": f"http_{resp.status_code if resp else 'none'}"}
 
     entries = resp.json().get("prices", [])
+    # сырые записи отдаём вызывающему (PriceStore скармливает их sales_log —
+    # так копится годовая история продаж без лишних запросов)
+    raw = entries
     times, units, dated = [], [], []
     for e in entries:
         t = None
@@ -195,7 +198,7 @@ async def fetch_history(client: httpx.AsyncClient, item_id: str) -> dict:
     if not times:
         return {"available": True, "sales_per_hour": 0.0, "sold_count": 0,
                 "avg_unit_price": avg, "last_unit_price": last_unit,
-                "recent_unit_price": recent_unit}
+                "recent_unit_price": recent_unit, "prices_raw": raw}
 
     now = datetime.now(timezone.utc)
     span_h = max((now - min(times)).total_seconds() / 3600, 1 / 60)
@@ -204,4 +207,5 @@ async def fetch_history(client: httpx.AsyncClient, item_id: str) -> dict:
             "sold_count": len(times),
             "avg_unit_price": avg,
             "last_unit_price": last_unit,
-            "recent_unit_price": recent_unit}
+            "recent_unit_price": recent_unit,
+            "prices_raw": raw}

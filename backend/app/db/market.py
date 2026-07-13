@@ -29,6 +29,17 @@ CREATE TABLE IF NOT EXISTS art_sales_agg (
     PRIMARY KEY (item, qlt, ptn, slot)
 );
 CREATE INDEX IF NOT EXISTS idx_art_slot ON art_sales_agg(slot);
+CREATE TABLE IF NOT EXISTS item_sales (
+    item TEXT NOT NULL,
+    res  TEXT NOT NULL,              -- разрешение: 'h' — час, 'd' — день (роллап)
+    slot TEXT NOT NULL,              -- ISO МСК 'YYYY-MM-DDTHH:00' ('d' — 'YYYY-MM-DDT00:00')
+    n    INTEGER NOT NULL,           -- продано ШТУК за слот
+    sum  REAL NOT NULL,              -- Σ (цена/шт × шт) — для средневзвешенной
+    min  REAL NOT NULL,              -- мин/макс цена за 1 шт в слоте
+    max  REAL NOT NULL,
+    PRIMARY KEY (item, res, slot)
+);
+CREATE INDEX IF NOT EXISTS idx_item_sales_slot ON item_sales(res, slot);
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -117,6 +128,94 @@ def item_series(item: str) -> list[dict]:
             "SELECT qlt, ptn, slot, sum/n AS avg, n FROM art_sales_agg "
             "WHERE item = ? ORDER BY slot", (item,)).fetchall()
     return [dict(r) for r in rows]
+
+
+# ---------- годовая история продаж предметов (график карточки полного аука) ----------
+def add_item_sales(item: str, buckets: dict) -> None:
+    """buckets: {hour_slot: {n, sum, min, max}} — складывается с уже записанным
+    (дедуп продаж — граница sale_ts в sales_log, сюда попадают только новые)."""
+    with _lock:
+        for slot, b in buckets.items():
+            _conn.execute(
+                """INSERT INTO item_sales (item, res, slot, n, sum, min, max)
+                   VALUES (?,'h',?,?,?,?,?)
+                   ON CONFLICT(item, res, slot) DO UPDATE SET
+                     n = n + excluded.n, sum = sum + excluded.sum,
+                     min = MIN(min, excluded.min), max = MAX(max, excluded.max)""",
+                (item, slot, b["n"], b["sum"], b["min"], b["max"]))
+        _conn.commit()
+
+
+def item_sales_hourly(item: str, since_slot: str, until_slot: str) -> list[dict]:
+    """Часовые агрегаты в окне [since; until] включительно (доступны в окне роллапа)."""
+    with _lock:
+        rows = _conn.execute(
+            "SELECT slot AS t, n, sum/n AS avg, min, max FROM item_sales "
+            "WHERE item = ? AND res = 'h' AND slot >= ? AND slot <= ? ORDER BY slot",
+            (item, since_slot, until_slot)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def item_sales_daily(item: str, since_slot: str, until_slot: str) -> list[dict]:
+    """Дневные агрегаты: роллап-строки + свежие часы, сгруппированные по дню."""
+    with _lock:
+        rows = _conn.execute(
+            "SELECT substr(slot, 1, 10) AS t, SUM(n) AS n, SUM(sum)/SUM(n) AS avg, "
+            "MIN(min) AS min, MAX(max) AS max FROM item_sales "
+            "WHERE item = ? AND slot >= ? AND slot <= ? "
+            "GROUP BY substr(slot, 1, 10) ORDER BY t",
+            (item, since_slot, until_slot)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def item_sales_first(item: str) -> str | None:
+    with _lock:
+        row = _conn.execute("SELECT MIN(slot) AS s FROM item_sales WHERE item = ?",
+                            (item,)).fetchone()
+    return row["s"] if row else None
+
+
+def rollup_item_sales(before_slot: str) -> int:
+    """Часовые строки старше границы схлопнуть в дневные (res='d'). Возвращает
+    число убранных часовых строк. Аддитивный upsert — безопасно при повторе."""
+    with _lock:
+        rows = _conn.execute(
+            "SELECT item, substr(slot, 1, 10) AS day, SUM(n) AS n, SUM(sum) AS sum, "
+            "MIN(min) AS min, MAX(max) AS max FROM item_sales "
+            "WHERE res = 'h' AND slot < ? GROUP BY item, day", (before_slot,)).fetchall()
+        for r in rows:
+            _conn.execute(
+                """INSERT INTO item_sales (item, res, slot, n, sum, min, max)
+                   VALUES (?,'d',?,?,?,?,?)
+                   ON CONFLICT(item, res, slot) DO UPDATE SET
+                     n = n + excluded.n, sum = sum + excluded.sum,
+                     min = MIN(min, excluded.min), max = MAX(max, excluded.max)""",
+                (r["item"], r["day"] + "T00:00", r["n"], r["sum"], r["min"], r["max"]))
+        n = _conn.execute("DELETE FROM item_sales WHERE res = 'h' AND slot < ?",
+                          (before_slot,)).rowcount
+        _conn.commit()
+    if n:
+        logger.info("market: rolled up %d hourly item_sales rows older than %s",
+                    n, before_slot)
+    return n
+
+
+def cleanup_item_sales(before_slot: str) -> int:
+    """Удалить агрегаты старше годовой ретенции."""
+    with _lock:
+        n = _conn.execute("DELETE FROM item_sales WHERE slot < ?", (before_slot,)).rowcount
+        _conn.commit()
+    if n:
+        logger.info("market: cleaned %d item_sales rows older than %s", n, before_slot)
+    return n
+
+
+def item_sales_stats() -> dict:
+    with _lock:
+        row = _conn.execute(
+            "SELECT COUNT(*) AS rows, COUNT(DISTINCT item) AS items, "
+            "MIN(slot) AS first_slot FROM item_sales").fetchone()
+    return dict(row)
 
 
 def stats() -> dict:

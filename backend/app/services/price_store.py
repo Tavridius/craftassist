@@ -17,7 +17,7 @@ import time
 import httpx
 
 from app import config
-from app.services import auction, oauth
+from app.services import auction, oauth, sales_log
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +30,7 @@ class PriceStore:
         self.results: list[str] = []        # крафт-результаты: для них ещё и история продаж
         self.extra: set[str] = set()        # запрошенные вне графа предметы
         self.pending: set[str] = set()      # не посчитанные — обновить вне очереди
+        self.hist_extra: set[str] = set()   # интерес к истории (открывали карточку в ауке)
         self.cycles = 0
         self.last_cycle_ts: float | None = None
         self.started = False
@@ -87,6 +88,12 @@ class PriceStore:
             if iid not in self.prices:
                 self.pending.add(iid)
 
+    def request_history(self, item_id: str) -> None:
+        """Интерес к истории продаж (открыли карточку в ауке): воркер начнёт
+        снимать историю предмета каждый цикл — график будет копиться дальше.
+        После первого замера предмет попадает в self.history (персистентен)."""
+        self.hist_extra.add(item_id)
+
     def stats(self) -> dict:
         now = time.time()
         fresh = sum(1 for p in self.prices.values()
@@ -128,8 +135,11 @@ class PriceStore:
                 pid = self.pending.pop()
                 await self._fetch(client, pid)
             await self._fetch(client, iid)
-        # 2) частота продаж — только для крафт-результатов (для рейтинга профитных)
-        for iid in self.results:
+        # 2) частота продаж: крафт-результаты (рейтинг профитных) + всё, к чьей
+        # истории проявляли интерес (график продаж в карточке аука)
+        hist_work = dict.fromkeys(self.results
+                                  + sorted(self.hist_extra | set(self.history)))
+        for iid in hist_work:
             while self.pending:
                 pid = self.pending.pop()
                 await self._fetch(client, pid)
@@ -152,6 +162,7 @@ class PriceStore:
 
     async def _fetch_history(self, client, iid: str) -> None:
         r = await auction.fetch_history(client, iid)
+        sales_log.record(iid, r.get("prices_raw") or [])  # копим годовой график
         if r.get("available"):
             self.history[iid] = {"sales_per_hour": r.get("sales_per_hour", 0.0),
                                  "avg_unit_price": r.get("avg_unit_price"),

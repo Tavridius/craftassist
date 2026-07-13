@@ -815,6 +815,28 @@ a.auth-user:hover { color: var(--green); border-color: var(--green-border); text
 .mk-title { font-size: 15px; font-weight: 800; letter-spacing: 0.05em; flex: 1; }
 .mk-card { font-size: 10px; letter-spacing: 0.1em; color: var(--green); text-decoration: none; white-space: nowrap; }
 .mk-card:hover { text-shadow: var(--glow); }
+/* график продаж: цена/шт (линия + коридор мин-макс) и объём (бары) */
+.mk-chart-wrap { position: relative; margin-top: 10px; }
+.mkc-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.mkc-ranges { display: inline-flex; gap: 4px; }
+.mkc-btn {
+  background: none; border: 1px solid var(--border-dim); color: var(--dim);
+  font: inherit; font-size: 10px; letter-spacing: 0.1em; padding: 2px 8px; cursor: pointer;
+}
+.mkc-btn:hover { border-color: var(--border); color: var(--text); }
+.mkc-btn.on { border-color: var(--green-border); color: var(--green); background: rgba(124, 230, 142, 0.07); }
+.mk-chart { margin-top: 8px; min-height: 60px; }
+.mk-chart.dim { opacity: 0.45; }
+.mkc-svg { display: block; width: 100%; height: auto; cursor: crosshair; touch-action: pan-y; user-select: none; }
+.mkc-svg text.mkc-lbl { font: 9px "JetBrains Mono", monospace; fill: var(--dimmer); letter-spacing: 0.06em; }
+.mkc-bar { fill: var(--amber); opacity: 0.55; }
+.mkc-tip {
+  position: absolute; pointer-events: none; z-index: 5;
+  background: var(--panel-deep); border: 1px solid var(--border); color: var(--text);
+  font-size: 10px; line-height: 1.5; letter-spacing: 0.05em; padding: 6px 9px; white-space: nowrap;
+}
+.mkc-tip b { color: var(--amber); }
+.mkc-note { margin-top: 6px; font-size: 9px; letter-spacing: 0.08em; color: var(--dimmer); }
 .mk-tables { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 8px; }
 .mk-tbl table { width: 100%; border-collapse: collapse; font-size: 11px; }
 .mk-tbl th {

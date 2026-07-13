@@ -1053,6 +1053,12 @@ async function loadMarketItem(id) {
       <a class="mk-card" href="/item/${id}">КАРТОЧКА ПРЕДМЕТА ▸</a>
     </div>
     ${d.error ? `<div class="note-warn"><span class="mark">[!]</span> АУКЦИОН НЕ ОТВЕТИЛ (${escapeHtml(String(d.error))}) — ПОКАЗЫВАЮ ЧТО ЕСТЬ.</div>` : ""}
+    <div class="mk-chart-wrap">
+      <div class="dash-grp mkc-head"><span>ГРАФИК ПРОДАЖ · ЦЕНА/ШТ И ОБЪЁМ</span>
+        <span class="mkc-ranges" id="mkcRanges"></span></div>
+      <div class="mk-chart" id="mkChartBox"></div>
+      <div class="mkc-note" id="mkChartNote"></div>
+    </div>
     <div class="mk-tables">
       <div class="mk-tbl">
         <div class="dash-grp">АКТИВНЫЕ ЛОТЫ${d.lots_total != null ? ` · ВСЕГО ${fmt(d.lots_total)}` : ""} (20 ДЕШЁВЫХ)</div>
@@ -1066,7 +1072,187 @@ async function loadMarketItem(id) {
       </div>
     </div>
   </div>`;
+  initSalesChart(id);
   window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+// ---------- график продаж предмета: масштабируемый, данные копятся до года ----------
+const mkChart = { itemId: null, preset: 7, custom: null, data: null };
+const MKC_PRESETS = [[1, "24Ч"], [7, "7Д"], [30, "30Д"], [90, "90Д"], [365, "ГОД"]];
+// слоты серии — МСК: 'YYYY-MM-DDTHH:00' (часы) или 'YYYY-MM-DD' (дни)
+const mkcSlotMs = (t) => Date.parse(t.length === 10 ? `${t}T00:00:00+03:00` : `${t}:00+03:00`);
+const mkcSlotStr = (ms) => {
+  const s = new Date(ms).toLocaleString("sv-SE", { timeZone: "Europe/Moscow" });
+  return s.slice(0, 13).replace(" ", "T") + ":00";
+};
+const mkcFmtP = (v) =>
+  v >= 1e6 ? (v / 1e6 >= 10 ? Math.round(v / 1e6) : (v / 1e6).toFixed(1)) + "М"
+  : v >= 1000 ? (v / 1000 >= 10 ? Math.round(v / 1000) : (v / 1000).toFixed(1)) + "К"
+  : String(Math.round(v));
+const mkcFmtT = (ms, spanMs, gran) => {
+  const o = { timeZone: "Europe/Moscow" };
+  const d = new Date(ms);
+  if (spanMs <= 36 * 3.6e6) return d.toLocaleString("ru-RU", { ...o, hour: "2-digit", minute: "2-digit" });
+  if (gran === "h" || spanMs <= 15 * 86400e3)
+    return d.toLocaleString("ru-RU", { ...o, day: "2-digit", month: "2-digit" })
+      + (spanMs <= 4 * 86400e3 ? " " + d.toLocaleString("ru-RU", { ...o, hour: "2-digit", minute: "2-digit" }) : "");
+  return d.toLocaleString("ru-RU", { ...o, day: "2-digit", month: "2-digit" });
+};
+
+function initSalesChart(itemId) {
+  mkChart.itemId = itemId;
+  mkChart.custom = null;
+  mkChart.data = null;
+  loadSalesChart();
+}
+
+async function loadSalesChart() {
+  const box = $("mkChartBox");
+  if (!box) return;
+  const q = mkChart.custom
+    ? `since=${mkChart.custom[0]}&until=${mkChart.custom[1]}`
+    : `days=${mkChart.preset}`;
+  box.classList.add("dim");
+  let d = null;
+  try {
+    d = await fetch(api(`/market/item/${mkChart.itemId}/sales?${q}`)).then((r) => r.json());
+  } catch (e) { /* нарисуем ошибку */ }
+  if (!$("mkChartBox")) return;   // карточку уже закрыли
+  mkChart.data = d;
+  drawSalesChart();
+}
+
+function drawSalesChart() {
+  const box = $("mkChartBox"), note = $("mkChartNote"), ranges = $("mkcRanges");
+  if (!box) return;
+  box.classList.remove("dim");
+  ranges.innerHTML = MKC_PRESETS.map(([days, lbl]) =>
+    `<button class="mkc-btn ${!mkChart.custom && mkChart.preset === days ? "on" : ""}" data-days="${days}">${lbl}</button>`)
+    .join("") + (mkChart.custom ? `<button class="mkc-btn on" data-reset="1">⤺ СБРОС</button>` : "");
+  ranges.querySelectorAll(".mkc-btn").forEach((b) => b.addEventListener("click", () => {
+    if (!b.dataset.reset) mkChart.preset = +b.dataset.days;
+    mkChart.custom = null;
+    loadSalesChart();
+  }));
+
+  const d = mkChart.data;
+  if (!d || d.error) {
+    box.innerHTML = `<div class="empty-sm">[!] СЕРИЯ ПРОДАЖ НЕ ЗАГРУЗИЛАСЬ.</div>`;
+    note.textContent = "";
+    return;
+  }
+  note.textContent = (d.first ? `ДАННЫЕ КОПЯТСЯ С ${mkcFmtT(mkcSlotMs(d.first), 99 * 86400e3)} · ` : "")
+    + `ХРАНИМ ГОД (ЧАСЫ — ${d.hourly_days} ДН, СТАРШЕ — ПО ДНЯМ) · МАСШТАБ: ВЫДЕЛИ УЧАСТОК МЫШЬЮ, СБРОС — ДВОЙНОЙ КЛИК`;
+  const S = d.series || [];
+  const bucketMs = d.granularity === "d" ? 86400e3 : 3600e3;
+  const t0 = mkcSlotMs(d.since), t1 = mkcSlotMs(d.until) + bucketMs;
+  if (!S.length) {
+    box.innerHTML = `<div class="empty-sm">${d.first
+      ? "В ЭТОМ ОКНЕ ПРОДАЖ НЕ ЗАПИСАНО."
+      : "ПРОДАЖИ НАЧАЛИ КОПИТЬСЯ С ЭТОГО ОТКРЫТИЯ КАРТОЧКИ — ГРАФИК НАПОЛНИТСЯ СО ВРЕМЕНЕМ."}</div>`;
+    return;
+  }
+  const pts = S.map((r) => ({ ...r, t: mkcSlotMs(r.t) }));
+  const W = Math.max(box.clientWidth || 800, 480), H = 250;
+  const padL = 8, padR = 56, padT = 10, padB = 20, volH = 46, gap = 8;
+  const plotW = W - padL - padR, priceH = H - padT - padB - volH - gap;
+  const volTop = padT + priceH + gap, volBot = volTop + volH;
+  const x = (t) => padL + ((t - t0) / (t1 - t0)) * plotW;
+  let lo = Math.min(...pts.map((p) => p.min)), hi = Math.max(...pts.map((p) => p.max));
+  if (hi <= lo) { hi = lo + Math.max(1, lo * 0.05); lo = Math.max(0, lo - Math.max(1, lo * 0.05)); }
+  const padY = (hi - lo) * 0.07;
+  lo = Math.max(0, lo - padY); hi += padY;
+  const y = (v) => padT + (1 - (v - lo) / (hi - lo)) * priceH;
+  const vmax = Math.max(...pts.map((p) => p.n), 1);
+  const barW = Math.max(1, (plotW * bucketMs) / (t1 - t0) - 1);
+
+  let g = "";
+  for (let i = 0; i <= 3; i++) {   // сетка цены + подписи справа
+    const v = lo + ((hi - lo) * i) / 3, yy = y(v);
+    g += `<line x1="${padL}" y1="${yy}" x2="${W - padR}" y2="${yy}" stroke="var(--bar-track)" stroke-width="1"/>
+      <text x="${W - padR + 5}" y="${yy + 3.5}" class="mkc-lbl">${mkcFmtP(v)}</text>`;
+  }
+  for (let i = 1; i <= 5; i++) {   // тики времени
+    const t = t0 + ((t1 - t0) * i) / 6, xx = x(t);
+    g += `<line x1="${xx}" y1="${padT}" x2="${xx}" y2="${volBot}" stroke="var(--bar-track)" stroke-width="1" opacity="0.5"/>
+      <text x="${xx}" y="${H - 6}" text-anchor="middle" class="mkc-lbl">${mkcFmtT(t, t1 - t0, d.granularity)}</text>`;
+  }
+  const cx = (p) => x(p.t + bucketMs / 2);
+  const band = pts.map((p) => `${cx(p).toFixed(1)},${y(p.max).toFixed(1)}`).join(" ")
+    + " " + [...pts].reverse().map((p) => `${cx(p).toFixed(1)},${y(p.min).toFixed(1)}`).join(" ");
+  const line = pts.map((p) => `${cx(p).toFixed(1)},${y(p.avg).toFixed(1)}`).join(" ");
+  const bars = pts.map((p) => {
+    const h = Math.max(1, (p.n / vmax) * volH);
+    return `<rect x="${(cx(p) - barW / 2).toFixed(1)}" y="${(volBot - h).toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" class="mkc-bar"/>`;
+  }).join("");
+  const dots = pts.length <= 60
+    ? pts.map((p) => `<circle cx="${cx(p).toFixed(1)}" cy="${y(p.avg).toFixed(1)}" r="2" fill="var(--green)"/>`).join("") : "";
+  g += `<text x="${W - padR + 5}" y="${volTop + 9}" class="mkc-lbl">${mkcFmtP(vmax)}</text>
+    <text x="${W - padR + 5}" y="${volBot}" class="mkc-lbl">ШТ</text>`;
+
+  box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" class="mkc-svg">
+      ${g}
+      <polygon points="${band}" fill="var(--green)" opacity="0.10"/>
+      <polyline points="${line}" fill="none" stroke="var(--green)" stroke-width="1.6"/>
+      ${dots}${bars}
+      <line class="mkc-cross" y1="${padT}" y2="${volBot}" stroke="var(--amber)" stroke-width="1" opacity="0"/>
+      <rect class="mkc-sel" y="${padT}" height="${volBot - padT}" width="0" fill="var(--amber)" opacity="0.15"/>
+      <rect x="0" y="0" width="${W}" height="${H}" fill="transparent" class="mkc-overlay"/>
+    </svg><div class="mkc-tip hidden"></div>`;
+
+  const svg = box.querySelector("svg"), tip = box.querySelector(".mkc-tip");
+  const cross = svg.querySelector(".mkc-cross"), sel = svg.querySelector(".mkc-sel");
+  const svgX = (ev) => {
+    const r = svg.getBoundingClientRect();
+    return ((ev.clientX - r.left) / r.width) * W;
+  };
+  let drag0 = null;
+  svg.addEventListener("pointerdown", (ev) => {
+    drag0 = svgX(ev);
+    svg.setPointerCapture(ev.pointerId);
+  });
+  svg.addEventListener("pointermove", (ev) => {
+    const px = svgX(ev);
+    if (drag0 != null) {
+      sel.setAttribute("x", Math.min(drag0, px));
+      sel.setAttribute("width", Math.abs(px - drag0));
+    }
+    let best = null, bd = 1e18;   // ближайшая точка — перекрестие + тултип
+    for (const p of pts) {
+      const dd = Math.abs(cx(p) - px);
+      if (dd < bd) { bd = dd; best = p; }
+    }
+    if (!best) return;
+    cross.setAttribute("x1", cx(best));
+    cross.setAttribute("x2", cx(best));
+    cross.setAttribute("opacity", "0.8");
+    tip.innerHTML = `<b>${mkcFmtT(best.t, 0, d.granularity)}${d.granularity === "h" ? " МСК" : ""}</b><br>
+      СР ${fmt(best.avg)} ₽<br>МИН ${fmt(best.min)} · МАКС ${fmt(best.max)}<br>ПРОДАНО ${fmt(best.n)} ШТ`;
+    tip.classList.remove("hidden");
+    const wr = box.getBoundingClientRect();
+    const tx = Math.min(ev.clientX - wr.left + 14, wr.width - tip.offsetWidth - 6);
+    tip.style.left = Math.max(0, tx) + "px";
+    tip.style.top = Math.min(ev.clientY - wr.top + 14, wr.height - tip.offsetHeight - 4) + "px";
+  });
+  svg.addEventListener("pointerup", (ev) => {
+    if (drag0 == null) return;
+    const a = Math.min(drag0, svgX(ev)), b = Math.max(drag0, svgX(ev));
+    drag0 = null;
+    sel.setAttribute("width", 0);
+    if (b - a < 10) return;   // клик, не выделение
+    const ta = t0 + ((a - padL) / plotW) * (t1 - t0);
+    const tb = t0 + ((b - padL) / plotW) * (t1 - t0);
+    if (tb - ta < 2 * 3600e3) return;   // мельче 2 часов не масштабируем
+    mkChart.custom = [mkcSlotStr(Math.max(ta, t0)), mkcSlotStr(Math.min(tb, t1))];
+    loadSalesChart();
+  });
+  svg.addEventListener("pointerleave", () => {
+    tip.classList.add("hidden");
+    cross.setAttribute("opacity", "0");
+  });
+  svg.addEventListener("dblclick", () => {
+    if (mkChart.custom) { mkChart.custom = null; loadSalesChart(); }
+  });
 }
 
 // ---------- биржа артефактов: топ роста цен по корзинам качество×заточка ----------
