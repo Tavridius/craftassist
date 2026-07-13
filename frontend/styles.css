@@ -668,16 +668,34 @@ a.auth-user:hover { color: var(--green); text-shadow: var(--glow); }
   background: #050805; border: 1px solid var(--border);
 }
 .map-legend { font-size: 11px; line-height: 1.6; color: var(--dim); margin-top: 10px; }
+.map-back { color: var(--green); text-decoration: none; letter-spacing: 0.08em; }
+.map-back:hover { text-shadow: var(--glow); }
 
-/* тёмная тема под терминал для контролов Leaflet */
-.leaflet-container { background: #050805; font: inherit; }
-.leaflet-bar { border: 1px solid var(--border); box-shadow: none; }
+/* тёмная тема под терминал для Leaflet.
+   !important — leaflet.css грузится лениво ПОСЛЕ styles.css и иначе
+   перебивает фон своим светло-серым (#ddd). */
+.leaflet-container { background: #050805 !important; font: inherit !important; }
+.leaflet-bar { border: 1px solid var(--border); box-shadow: none !important; }
 .leaflet-bar a, .leaflet-bar a:hover {
   background: rgba(7, 10, 7, 0.88); color: var(--text);
   border-bottom: 1px solid var(--border-dim);
 }
 .leaflet-bar a:hover { color: var(--green); }
 .leaflet-touch .leaflet-bar a { width: 32px; height: 32px; line-height: 32px; }
+
+/* метки территорий на глобальной карте */
+.map-terr {
+  transform: translate(-50%, -50%);
+  white-space: nowrap; width: max-content;
+  font-family: inherit; font-size: 12px; font-weight: 700; letter-spacing: 0.08em;
+  color: var(--bright); background: rgba(7, 10, 7, 0.78);
+  border: 1px solid var(--green-border); padding: 4px 10px;
+  text-shadow: 0 1px 3px #000;
+}
+.map-terr.openable { cursor: pointer; }
+.map-terr.openable:hover { border-color: var(--green); color: var(--green); box-shadow: var(--glow); }
+.map-terr.closed { color: var(--dim); border-color: var(--border-dim); }
+.map-terr.closed.openable:hover { border-color: var(--amber); color: var(--amber); box-shadow: none; }
 
 /* ---------- адаптив ---------- */
 @media (max-width: 1100px) {

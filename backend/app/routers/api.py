@@ -220,18 +220,52 @@ async def artmarket_item(item_id: str):
 
 # ---------- интерактивная карта ----------
 
-# Тайловая карта мира (Leaflet CRS.Simple). Пирамида собрана из global_map КПК
-# (pda/global_map, 9×4 тайла 2048²): полный мир 18432×8192, zoom 0..6, тайл 256px.
-# Значения синхронны генератору тайлов (scripts/gen_map_pyramid.py).
+# Двухуровневая карта как в игре: глобальная (pda/global_map, стилизованный
+# коллаж миров 18432×8192) и детальная (pda/map, общий план 1px=1блок,
+# начало — регион (-86,-38)). Пирамиды: scripts/gen_map_pyramid.py и
+# scripts/gen_detail_pyramid.py. Клик по территории на глобальной открывает
+# её фрагмент детальной.
+#
+# label — px на глобальной; bbox — регионы детального плана (x0,y0,x1,y1 вкл.).
+# Позиции получены сопоставлением планов (FFT-корреляция, якоря Бар и Кузня-11,
+# масштаб глобальной ≈ 1.7 блока/px) + визуальной привязкой. closed — территория
+# сейчас закрыта в игре (как на игровой глобальной карте).
+_DETAIL_X0, _DETAIL_Y0 = -86, -38                  # регион (0,0) детальной пирамиды
+
+
+def _bbox_px(x0: int, y0: int, x1: int, y1: int) -> list[int]:
+    """Регионы (вкл.) → px детального плана."""
+    return [(x0 - _DETAIL_X0) * 512, (y0 - _DETAIL_Y0) * 512,
+            (x1 - _DETAIL_X0 + 1) * 512, (y1 - _DETAIL_Y0 + 1) * 512]
+
+
+MAP_TERRITORIES = [
+    {"id": "south", "name": "Южная Зона", "label": [8490, 4700],
+     "bbox": _bbox_px(-14, -3, -4, 13)},
+    {"id": "sever", "name": "Северная Зона", "label": [6000, 3000],
+     "bbox": _bbox_px(-27, 0, -13, 10)},
+    {"id": "wnorth", "name": "Дикий Север", "label": [9900, 3450],
+     "bbox": _bbox_px(12, -3, 18, 3)},
+    {"id": "limansk", "name": "Любеч-3", "label": [7050, 5250],
+     "bbox": _bbox_px(-4, -2, 0, 2)},
+    {"id": "dmz", "name": "Бораль", "label": [5700, 6200],
+     "bbox": _bbox_px(6, -3, 11, 3), "closed": True},
+    {"id": "pripyat", "name": "Припять", "label": [8670, 1340], "closed": True},
+    {"id": "cnpp", "name": "ЧАЭС", "label": [9750, 2150], "closed": True},
+]
+
 MAP_META = {
-    "w": 18432, "h": 8192, "tile_size": 256, "min_zoom": 0, "max_zoom": 6,
-    "tile_url": "wmap/{z}/{x}/{y}.webp",
+    "global": {"w": 18432, "h": 8192, "tile_size": 256, "min_zoom": 0, "max_zoom": 6,
+               "tile_url": "wmap/{z}/{x}/{y}.webp"},
+    "detail": {"w": 112128, "h": 51712, "tile_size": 256, "min_zoom": 0, "max_zoom": 6,
+               "tile_url": "dmap/{z}/{x}/{y}.webp"},
+    "territories": MAP_TERRITORIES,
 }
 
 
 @router.get("/map/meta")
 async def map_meta():
-    """Параметры тайловой карты мира для Leaflet."""
+    """Параметры тайловой карты мира и территории для Leaflet."""
     return MAP_META
 
 

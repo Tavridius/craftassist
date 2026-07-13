@@ -216,9 +216,25 @@ async def map_page(request: Request):
     return render_index(
         request, "/map",
         title="Интерактивная карта мира STALZONE (Stalcraft) — спутниковый вид",
-        desc="Интерактивная карта мира STALZONE (ранее Stalcraft — Сталкрафт): цельный "
-             "спутниковый вид всей Зоны с зумом и перетаскиванием. Дальше — метки локаций "
-             "и точки артефактов, тайников и переходов.")
+        desc="Интерактивная карта мира STALZONE (ранее Stalcraft — Сталкрафт): глобальный "
+             "спутниковый вид Зоны и детальные карты территорий — Южная Зона, Северная "
+             "Зона, Дикий Север, Любеч-3. Зум, перетаскивание, как в КПК игры.")
+
+
+@router.get("/map/{territory_id}", response_class=HTMLResponse)
+async def map_territory_page(request: Request, territory_id: str):
+    from app.routers.api import MAP_TERRITORIES
+    terr = next((t for t in MAP_TERRITORIES
+                 if t["id"] == territory_id and t.get("bbox")), None)
+    if not terr:
+        return render_index(request, f"/map/{territory_id}",
+                            title=f"Территория не найдена — {SITE}", noindex=True)
+    name = terr["name"]
+    return render_index(
+        request, f"/map/{territory_id}",
+        title=f"{name} — детальная карта STALZONE (Stalcraft)",
+        desc=f"Детальная карта территории «{name}» STALZONE (ранее Stalcraft — Сталкрафт) "
+             f"из КПК игры: зум до отдельных зданий, перетаскивание.")
 
 
 @router.get("/guides", response_class=HTMLResponse)

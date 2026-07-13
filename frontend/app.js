@@ -1427,7 +1427,9 @@ function ensureLeaflet() {
   return leafletReady;
 }
 
-async function openMap() {
+let mapMeta = null;                                   // кэш /api/map/meta
+
+async function openMap(territoryId) {
   if (mapCleanup) { mapCleanup(); mapCleanup = null; }
   home.classList.add("hidden");
   detail.classList.add("hidden");
@@ -1435,52 +1437,94 @@ async function openMap() {
   page.classList.remove("hidden");
   page.innerHTML = `<div class="mapmod"><div class="spinner">// ЗАГРУЗКА КАРТЫ</div></div>`;
   window.scrollTo(0, 0);
-  let meta;
+  const want = territoryId ? `/map/${territoryId}` : "/map";
   try {
-    [meta] = await Promise.all([
-      fetch(api("/map/meta")).then((r) => r.json()),
-      ensureLeaflet(),
-    ]);
+    if (!mapMeta) {
+      [mapMeta] = await Promise.all([
+        fetch(api("/map/meta")).then((r) => r.json()),
+        ensureLeaflet(),
+      ]);
+    } else {
+      await ensureLeaflet();
+    }
   } catch (e) {
-    if (location.pathname === "/map")
+    if (location.pathname === want)
       page.innerHTML = `<div class="mapmod"><div class="empty">[!] КАРТА НЕДОСТУПНА</div></div>`;
     return;
   }
-  if (location.pathname !== "/map") return;           // пользователь ушёл, пока грузилось
-  renderWorldMap(meta);
+  if (location.pathname !== want) return;             // пользователь ушёл, пока грузилось
+  const terr = territoryId
+    && (mapMeta.territories || []).find((t) => t.id === territoryId && t.bbox);
+  if (territoryId && !terr) { navigate("/map", { replace: true }); return; }
+  if (terr) renderTerritory(terr);
+  else renderWorldMap();
 }
 
-function renderWorldMap(meta) {
-  page.innerHTML = `<div class="mapmod">
-    <div class="section-head">
-      <div class="section-title">▸ КАРТА МИРА · СПУТНИКОВЫЙ ВИД</div>
-      <div class="section-note">КОЛЁСИКО / ЩИПОК — ЗУМ · ПЕРЕТАСКИВАЙ</div>
-    </div>
-    <div class="map-view" id="mapView"></div>
-    <div class="map-legend">Карта извлечена из КПК STALZONE. Дальше — метки локаций и
-      привязка точек (поля артефактов, тайники) к предметам из базы.</div>
-  </div>`;
-
+// Общая инициализация Leaflet-вида (CRS.Simple, границы строго по изображению).
+function makeTileMap(layerMeta, viewBoundsPx) {
   const map = L.map("mapView", {
     crs: L.CRS.Simple,
-    minZoom: meta.min_zoom,
-    maxZoom: meta.max_zoom,
-    zoomSnap: 0.5,
+    zoomSnap: 0.25,
     wheelPxPerZoomLevel: 90,
     attributionControl: false,
+    maxBoundsViscosity: 1.0,
   });
-  // пиксель (0,0) — верх-лево, (w,h) — низ-право (адресация тайлов y↓)
-  const px = (x, y) => map.unproject([x, y], meta.max_zoom);
-  const bounds = L.latLngBounds(px(0, 0), px(meta.w, meta.h));
-  L.tileLayer(asset(meta.tile_url), {
-    tileSize: meta.tile_size,
-    minZoom: meta.min_zoom, maxZoom: meta.max_zoom,
-    minNativeZoom: meta.min_zoom, maxNativeZoom: meta.max_zoom,
-    bounds, noWrap: true,
+  const px = (x, y) => map.unproject([x, y], layerMeta.max_zoom);
+  const [bx0, by0, bx1, by1] = viewBoundsPx;
+  const bounds = L.latLngBounds(px(bx0, by0), px(bx1, by1));
+  L.tileLayer(asset(layerMeta.tile_url), {
+    tileSize: layerMeta.tile_size,
+    minNativeZoom: layerMeta.min_zoom, maxNativeZoom: layerMeta.max_zoom,
+    bounds: L.latLngBounds(px(0, 0), px(layerMeta.w, layerMeta.h)),
+    noWrap: true,
   }).addTo(map);
-  map.setMaxBounds(bounds.pad(0.2));
+  map.setMaxBounds(bounds);
+  // не даём отдалиться дальше, чем вписанный вид
+  const fitZoom = map.getBoundsZoom(bounds, false);
+  map.setMinZoom(Math.min(fitZoom, layerMeta.max_zoom));
+  map.setMaxZoom(layerMeta.max_zoom);
   map.fitBounds(bounds);
   mapCleanup = () => { map.remove(); };
+  return { map, px, bounds };
+}
+
+function renderWorldMap() {
+  const g = mapMeta.global;
+  page.innerHTML = `<div class="mapmod">
+    <div class="section-head">
+      <div class="section-title">▸ КАРТА МИРА · ГЛОБАЛЬНЫЙ ВИД</div>
+      <div class="section-note">КЛИК ПО ТЕРРИТОРИИ — ПОДРОБНАЯ КАРТА</div>
+    </div>
+    <div class="map-view" id="mapView"></div>
+    <div class="map-legend">Карта из КПК STALZONE. Территории с меткой открываются в
+      детальном виде; ✕ — сейчас закрыто в игре.</div>
+  </div>`;
+  const { map, px } = makeTileMap(g, [0, 0, g.w, g.h]);
+  (mapMeta.territories || []).forEach((t) => {
+    const openable = !!t.bbox;
+    const cls = "map-terr" + (t.closed ? " closed" : "") + (openable ? " openable" : "");
+    const icon = L.divIcon({
+      className: "",
+      html: `<div class="${cls}">${t.closed ? "✕ " : ""}${escapeHtml(t.name)}</div>`,
+      iconSize: null,
+    });
+    const m = L.marker(px(t.label[0], t.label[1]), { icon }).addTo(map);
+    if (openable) m.on("click", () => { navigate(`/map/${t.id}`); });
+  });
+}
+
+function renderTerritory(terr) {
+  const d = mapMeta.detail;
+  page.innerHTML = `<div class="mapmod">
+    <div class="section-head">
+      <div class="section-title">▸ КАРТА · ${escapeHtml(terr.name.toUpperCase())}${terr.closed ? " · ЗАКРЫТО" : ""}</div>
+      <div class="section-note"><a href="/map" class="map-back">◂ К ГЛОБАЛЬНОЙ КАРТЕ</a></div>
+    </div>
+    <div class="map-view" id="mapView"></div>
+    <div class="map-legend">Детальная карта из КПК STALZONE (облака — как в игре).
+      Дальше — точки локаций и артефактов с привязкой к базе предметов.</div>
+  </div>`;
+  makeTileMap(d, terr.bbox);
 }
 
 // ---------- разделы в разработке: заглушки с описанием модуля ----------
@@ -1538,10 +1582,10 @@ function route() {
   const strip = document.querySelector(".search-strip");
   let mm;
 
-  if (mapCleanup && path !== "/map") { mapCleanup(); mapCleanup = null; }
-  if (path === "/map") {
+  if (mapCleanup && !path.startsWith("/map")) { mapCleanup(); mapCleanup = null; }
+  if ((mm = path.match(/^\/map(?:\/([a-z0-9_-]+))?$/))) {
     strip.classList.add("hidden");
-    setNav("map"); openMap(); return;
+    setNav("map"); openMap(mm[1] || null); return;
   }
 
   if (path === "/auction") {
