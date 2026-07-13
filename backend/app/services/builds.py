@@ -6,11 +6,14 @@ M — множитель качества: тиры непрерывны по +0
 Вредные статы (красные эмиссии заражения) НЕ масштабируются — константа; полезные
 защиты (зелёные, отрицательные accumulation) масштабируются как обычные статы.
 
-Заражения (минусы артефактов) — учитываются как ОГРАНИЧЕНИЕ:
+Заражения (минусы артефактов) — ЖЁСТКОЕ ограничение:
   net_type = Σ по артам (эмиссия + защита);  контейнер гасит положительное:
   net_eff = net × (1 − Внутр.защита%/100).  Игрок терпит до лимита (радиация/
-  температура/био — 1.0, пси — 3.0). Оптимизатор штрафует эмиттеров и чинит сборку
-  (банит худшего) при превышении.
+  температура/био/холод — 1.0, пси — 3.0); отрицательный net — запас защиты,
+  не вреден (подтверждено юзером). Превышение оптимизатор чинит в три эшелона:
+  замена слабейших слотов контрартами (арты с защитой заражений — «4 арта +
+  2 контрарта»), удорожание эмиссии (двойственный подъём λ с демпфером),
+  бан худшего эмиттера. Сборка сверх лимитов НЕ выдаётся.
 
 Эффективность контейнера НЕ масштабирует величину статов (в текущей игре это темп
 разряда энергии) — суммы берём сырые, как в игровой формуле.
@@ -50,7 +53,7 @@ _CONTAM = {
     "thermal_accumulation": ("Температура", 1.0),
     "biological_accumulation": ("Биозаражение", 1.0),
     "psycho_accumulation": ("Пси-излучение", 3.0),
-    "frost_accumulation": ("Холод", None),
+    "frost_accumulation": ("Холод", 1.0),   # лимит 1.0 подтверждён юзером
     "combustion_accumulation": ("Горение", None),
 }
 CONTAM_KEYS = {f"stalker.artefact_properties.factor.{k}": v for k, v in _CONTAM.items()}
@@ -59,8 +62,9 @@ ACCUM_KEYS = set(CONTAM_KEYS)  # accumulation-статы идут в блок з
 
 BUDGET_STEPS = 400   # дискретизация бюджета в DP
 ALTERNATIVES = 2     # запасных сборок
-CONTAM_PENALTY = 2.5  # штраф оптимизатора за заражение (в единицах ценности)
-REPAIR_ITERS = 6     # попыток «починить» сборку баном худшего эмиттера
+DUAL_ITERS = 8       # шагов двойственного подъёма λ (цены эмиссии) на раунд
+BAN_ROUNDS = 3       # раундов «починки» баном худшего эмиттера (1-й — без бана)
+DUAL_STEP = 1.5      # стартовый шаг λ; при смене знака превышения — деление пополам
 
 
 def tier_bounds(qlt: int) -> tuple[float, float]:
@@ -161,35 +165,104 @@ def contamination(variants: list[dict], cont: dict) -> list[dict]:
     return out
 
 
-def _contam_penalty(v: dict, prot: float) -> float:
-    """Штраф варианта за эмиссию заражения к лимитированным типам (норм. на лимит)."""
-    p = 0.0
+def _is_counter(art: dict) -> bool:
+    """Контрарт: несёт защиту (зелёный минус) хотя бы по одному лимитированному
+    заражению — в игре такими гасят минусы сильных артов («народное» название)."""
     for key, (_n, limit) in CONTAM_KEYS.items():
         if limit is None:
             continue
-        st = db.artefacts[v["item"]]["stats"].get(key)
-        if st:
-            val = stat_value(st, v["m"], v["ptn"])
+        st = art["stats"].get(key)
+        if st and not st["harmful"]:
+            return True
+    return False
+
+
+def _contam_contrib(v: dict, prot: float, eff: float) -> tuple[dict, dict]:
+    """Вклады варианта в лимитированные заражения, нормированные на лимит:
+    (эмиссия ≥0 с учётом защиты контейнера, защита ≥0 с учётом эффективности)."""
+    em: dict = {}
+    pr: dict = {}
+    stats = db.artefacts[v["item"]]["stats"]
+    for key, (_n, limit) in CONTAM_KEYS.items():
+        if limit is None:
+            continue
+        st = stats.get(key)
+        if not st:
+            continue
+        val = stat_value(st, v["m"], v["ptn"])
+        if st["harmful"]:
+            reduce = 1.0 if key == FROST_KEY else (1.0 - prot)
             if val > 0:
-                p += val * (1 - prot) / limit
-    return p
+                em[key] = em.get(key, 0.0) + val * reduce / limit
+        elif val < 0:
+            pr[key] = pr.get(key, 0.0) - val * eff / limit
+    return em, pr
 
 
-def _worst_emitter(variants: list[dict], contam: list[dict]) -> str | None:
-    """id арта, сильнее всех вносящего в самый превышенный тип (для «починки»)."""
-    over = [c for c in contam if c["over"]]
-    if not over:
-        return None
-    worst = max(over, key=lambda c: c["net"] - (c["limit"] or 0))
-    key = worst["key"]
-    best_id, best_val = None, 0.0
+def _norms(variants: list[dict]) -> dict:
+    """n_k = net/limit по кэшам _em/_pr вариантов; сборка в норме ⇔ все n_k ≤ 1."""
+    n: dict = {}
     for v in variants:
-        st = db.artefacts[v["item"]]["stats"].get(key)
-        if st:
-            val = stat_value(st, v["m"], v["ptn"])
-            if val > best_val:
-                best_val, best_id = val, v["item"]
-    return best_id
+        for k, x in v["_em"].items():
+            n[k] = n.get(k, 0.0) + x
+        for k, x in v["_pr"].items():
+            n[k] = n.get(k, 0.0) - x
+    return n
+
+
+def _overage(n: dict) -> float:
+    return sum(max(0.0, x - 1.0) for x in n.values())
+
+
+def _worst_emitter(variants: list[dict], n: dict) -> str | None:
+    """id арта, сильнее всех вносящего в самый превышенный тип (для «починки»)."""
+    key = max((k for k in n if n[k] > 1.0 + 1e-10), key=lambda k: n[k], default=None)
+    if key is None:
+        return None
+    v = max(variants, key=lambda v: v["_em"].get(key, 0.0))
+    return v["item"] if v["_em"].get(key) else None
+
+
+def _swap_repair(picked: list[dict], pool: list[dict], banned: set,
+                 budget: float, score) -> list[dict] | None:
+    """Гасим превышение заменой слотов: как игроки — «4 арта + 2 контрарта».
+    Жадно меняем слот на вариант из пула (обычно контрарт), выбирая замену с
+    минимальной потерей ценности на единицу снятого превышения. None — не вышло."""
+    cur = list(picked)
+    cost = sum(v["price"] for v in cur)
+    for _ in range(len(cur) * 3):
+        n = _norms(cur)
+        ov = _overage(n)
+        if ov <= 1e-10:
+            return cur
+        best = None    # (ratio, i, cand)
+        for i, out_v in enumerate(cur):
+            for cand in pool:
+                if cand["item"] in banned:
+                    continue
+                if cost - out_v["price"] + cand["price"] > budget + 1e-9:
+                    continue
+                n2 = dict(n)
+                for k, x in out_v["_em"].items():
+                    n2[k] = n2.get(k, 0.0) - x
+                for k, x in out_v["_pr"].items():
+                    n2[k] = n2.get(k, 0.0) + x
+                for k, x in cand["_em"].items():
+                    n2[k] = n2.get(k, 0.0) + x
+                for k, x in cand["_pr"].items():
+                    n2[k] = n2.get(k, 0.0) - x
+                red = ov - _overage(n2)
+                if red <= 1e-12:
+                    continue
+                ratio = (score(out_v) - score(cand)) / red
+                if best is None or ratio < best[0]:
+                    best = (ratio, i, cand)
+        if best is None:
+            return None
+        _, i, cand = best
+        cost += cand["price"] - cur[i]["price"]
+        cur[i] = cand
+    return None
 
 
 # ---------- справочник для фронта ----------
@@ -276,29 +349,88 @@ def _dp_build(frontier: list[dict], slots: int, budget: float) -> list[dict]:
     return picked
 
 
-def _optimize(pool: list[dict], cont: dict, budget: float, score, banned: set) -> list[dict]:
-    """Парето+DP+штраф заражения+починка. score(v)->ценность (до штрафа)."""
+def _optimize(pool: list[dict], cont: dict, budget: float, score, banned: set,
+              duals: dict | None = None) -> list[dict]:
+    """Парето+DP + жёсткие лимиты заражения. Если DP-ядро превышает лимит:
+    1) чиним заменой слабейших слотов на контрарты (_swap_repair);
+    2) поднимаем цену эмиссии λ (двойственный подъём с демпфером) — DP берёт
+       ядро чище; 3) баним худшего эмиттера. Возвращаем ТОЛЬКО сборку в норме
+    (лучшую по score из найденных); [] — не собрать. duals — состояние λ
+    (тёплый старт между вызовами)."""
     prot = (cont.get("protection") or 0.0) / 100.0
+    eff = (cont.get("efficiency") or 100.0) / 100.0
     slots = cont["slots"]
+    state = duals if duals is not None else {}
+    lam = state.setdefault("lam", {})    # цена единицы отн. эмиссии
+    stp = state.setdefault("step", {})   # адаптивный шаг (демпфер осцилляций)
+    sgn = state.setdefault("sign", {})   # знак прошлого превышения
+    for key, (_n, limit) in CONTAM_KEYS.items():
+        if limit is not None:
+            lam.setdefault(key, 0.0)
+            stp.setdefault(key, DUAL_STEP)
+            sgn.setdefault(key, 0)
+    for v in pool:
+        if "_em" not in v:
+            v["_em"], v["_pr"] = _contam_contrib(v, prot, eff)
     local_ban = set(banned)
-    best = []
-    for _ in range(REPAIR_ITERS):
-        sub = []
-        for v in pool:
-            if v["item"] in local_ban:
-                continue
-            v = dict(v)
-            v["value"] = score(v) - CONTAM_PENALTY * _contam_penalty(v, prot)
-            sub.append(v)
-        picked = _dp_build(_pareto(sub), slots, budget)
-        if not picked:
+    best, best_sc = [], -1e18
+
+    def consider(cand: list[dict]) -> None:
+        nonlocal best, best_sc
+        sc = sum(score(v) for v in cand)
+        if sc > best_sc:
+            best, best_sc = cand, sc
+
+    for _round in range(BAN_ROUNDS):
+        picked = []
+        n = {}
+        tried_swap = False
+        for _ in range(DUAL_ITERS):
+            sub = []
+            for v in pool:
+                if v["item"] in local_ban:
+                    continue
+                em = v["_em"]
+                v = dict(v)
+                v["value"] = score(v) - sum(lam[k] * x for k, x in em.items())
+                sub.append(v)
+            picked = _dp_build(_pareto(sub), slots, budget)
+            if not picked:
+                return best
+            n = _norms(picked)
+            if _overage(n) <= 1e-10:
+                consider(picked)
+            elif not tried_swap:
+                tried_swap = True
+                fixed = _swap_repair(picked, pool, local_ban, budget, score)
+                if fixed:
+                    consider(fixed)
+            # двойственный шаг: λ растёт на превышении, плавно спадает при запасе;
+            # при смене знака превышения шаг делится пополам (гасим осцилляцию)
+            moved = False
+            for k in lam:
+                rel = max(-1.0, min(4.0, n.get(k, 0.0) - 1.0))
+                s = 1 if rel > 1e-9 else (-1 if rel < -1e-9 else 0)
+                if s and sgn[k] and s != sgn[k]:
+                    stp[k] = max(stp[k] * 0.5, 0.05)
+                if s:
+                    sgn[k] = s
+                nl = max(0.0, lam[k] + stp[k] * rel)
+                if abs(nl - lam[k]) > 1e-6:
+                    moved = True
+                lam[k] = nl
+            if not moved:
+                break    # λ стабилен — лучше не станет
+        if best:
             break
-        best = picked
-        contam = contamination(picked, cont)
-        offender = _worst_emitter(picked, contam)
+        offender = _worst_emitter(picked, n)
         if offender is None:
-            return picked          # заражение в норме
-        local_ban.add(offender)    # чиним: баним худшего эмиттера, пробуем снова
+            break
+        local_ban.add(offender)    # чиним баном худшего эмиттера
+
+    # страховка: наружу — только сборка в пределах лимитов
+    if best and any(c["over"] for c in contamination(best, cont)):
+        return []
     return best
 
 
@@ -349,14 +481,10 @@ def _price_note() -> str:
 
 def _warnings(builds: list[dict]) -> list[str]:
     out = ["Случайные доп-свойства заточки (+5/+10/+15) и свежесть не моделируются.",
-           "Заражения гасятся внутренней защитой контейнера; лимиты игрока: радиация/"
-           "температура/био — 1.0, пси — 3.0.",
+           "Заражения гасятся внутренней защитой контейнера (кроме холода); сборки "
+           "сверх лимитов (рад/темп/био/холод — 1.0, пси — 3.0) не выдаются.",
            _price_note()]
     if builds:
-        for c in builds[0]["totals"]["contamination"]:
-            if c["over"]:
-                out.append(f"⚠ {c['name']} {c['net']} превышает лимит {c['limit']} — "
-                           "под этот бюджет чище не собрать.")
         for name in builds[0].get("low_liquidity", []):
             out.append(f"Корзина {name} малоликвидна — цена ориентировочная.")
     return out
@@ -377,7 +505,8 @@ def auto_build(budget: float, container_id: str, stats_req: list[dict]) -> dict:
     keys = list(weights)
 
     pool = _make_pool(budget, lambda art: any(
-        k in art["stats"] and not art["stats"][k]["harmful"] for k in keys))
+        k in art["stats"] and not art["stats"][k]["harmful"] for k in keys)
+        or _is_counter(art))
     if not pool:
         return {"error": "no_priced_variants",
                 "hint": "Биржа артефактов ещё копит цены (нужна неделя замеров) "
@@ -397,18 +526,28 @@ def auto_build(budget: float, container_id: str, stats_req: list[dict]) -> dict:
         s = 0.0
         for k, w in weights.items():
             st = art.get(k)
-            if st and not st["harmful"]:
-                s += w * abs(stat_value(st, v["m"], v["ptn"])) / ref[k]
+            if not st:
+                continue
+            val = abs(stat_value(st, v["m"], v["ptn"])) / ref[k]
+            s += -w * val if st["harmful"] else w * val   # вредная версия стата — в минус
         return s
 
-    builds, banned = [], set()
+    builds, banned, seen = [], set(), set()
     for _ in range(1 + ALTERNATIVES):
         picked = _optimize(pool, cont, budget, score, banned)
-        if not picked:
+        key = frozenset((v["item"], v["qlt"], v["ptn"]) for v in picked)
+        if not picked or key in seen:
             break
+        seen.add(key)
         builds.append(_present_build(picked, cont))
-        banned.update(v["item"] for v in picked)
+        # баним только носителей запрошенных статов; чистые контрарты (score≈0)
+        # оставляем — они нужны и альтернативным сборкам
+        banned.update(v["item"] for v in picked if score(v) > 1e-9)
 
+    if not builds:
+        return {"error": "no_clean_build",
+                "hint": "Под этот бюджет не собрать сборку в пределах лимитов "
+                        "заражения — поднимите бюджет, смените контейнер или статы."}
     return {"container": cont, "stat_keys": keys, "builds": builds,
             "pool_size": len(pool), "warnings": _warnings(builds)}
 
@@ -430,16 +569,27 @@ def auto_hp(budget: float, container_id: str, armor_id: str, armor_ptn: int) -> 
         return {"error": "bad_request"}
     ast = db.armor_stats(armor_id, armor_ptn)
     base_bullet, base_vit = ast["bullet"], ast["vitality"]
+    eff = (cont.get("efficiency") or 100.0) / 100.0   # усиливает положительные статы
 
     def bv(v):
+        """Эффективный вклад арта в (пулестой, живучесть): полезный × эффективность,
+        вредный (красный минус) — как есть. Минус НЕ игнорируем — иначе оптимизатор
+        берёт арты, роняющие живучесть."""
         st = db.artefacts[v["item"]]["stats"]
-        b = stat_value(st[BULLET_KEY], v["m"], v["ptn"]) if BULLET_KEY in st and not st[BULLET_KEY]["harmful"] else 0.0
-        h = stat_value(st[HEALTH_KEY], v["m"], v["ptn"]) if HEALTH_KEY in st and not st[HEALTH_KEY]["harmful"] else 0.0
-        return b, h
+        out = []
+        for key in (BULLET_KEY, HEALTH_KEY):
+            s = st.get(key)
+            if not s:
+                out.append(0.0)
+                continue
+            val = stat_value(s, v["m"], v["ptn"])
+            out.append(val if s["harmful"] else val * eff)
+        return out
 
     pool = _make_pool(budget, lambda art: (
         (BULLET_KEY in art["stats"] and not art["stats"][BULLET_KEY]["harmful"])
-        or (HEALTH_KEY in art["stats"] and not art["stats"][HEALTH_KEY]["harmful"])))
+        or (HEALTH_KEY in art["stats"] and not art["stats"][HEALTH_KEY]["harmful"])
+        or _is_counter(art)))
     if not pool:
         return {"error": "no_priced_variants",
                 "hint": "Нет корзин артефактов с пулестойкостью/живучестью под бюджет "
@@ -450,30 +600,30 @@ def auto_hp(budget: float, container_id: str, armor_id: str, armor_ptn: int) -> 
     hmax = max((v["_h"] for v in pool), default=0.0) or 1.0
 
     # свип λ: value = b_norm + λ·h_norm; каждый λ даёт сборку, оцениваем истинное ХП
-    eff = (cont.get("efficiency") or 100.0) / 100.0   # эффективность усиливает вклад артов
     best, best_hp = None, -1.0
     banned: set = set()
+    duals: dict = {}   # тёплый старт двойственных штрафов заражения между λ
     lambdas = [0.0] + [round(0.25 * i, 2) for i in range(1, 33)]  # 0 … 8
     for lam in lambdas:
         def score(v, lam=lam):
             return v["_b"] / bmax + lam * (v["_h"] / hmax)
-        picked = _optimize(pool, cont, budget, score, banned)
+        picked = _optimize(pool, cont, budget, score, banned, duals)
         if not picked:
             continue
-        b = base_bullet + eff * sum(v["_b"] for v in picked)
-        h = base_vit + eff * sum(v["_h"] for v in picked)
+        b = base_bullet + sum(v["_b"] for v in picked)
+        h = base_vit + sum(v["_h"] for v in picked)
         hp = _eff_hp(b, h)
         if hp > best_hp:
             best_hp, best = hp, picked
 
     if not best:
-        return {"error": "no_priced_variants",
-                "hint": "Не удалось собрать под бюджет."}
+        return {"error": "no_clean_build",
+                "hint": "Под этот бюджет не собрать сборку в пределах лимитов "
+                        "заражения — поднимите бюджет или смените контейнер."}
 
     res = _present_build(best, cont)
-    eff = (cont.get("efficiency") or 100.0) / 100.0   # усиливает вклад артефактов
-    art_bullet = sum(v["_b"] for v in best) * eff
-    art_vit = sum(v["_h"] for v in best) * eff
+    art_bullet = sum(v["_b"] for v in best)   # eff уже внутри bv
+    art_vit = sum(v["_h"] for v in best)
     total_bullet = base_bullet + art_bullet
     total_vit = base_vit + art_vit
     res["hp"] = {

@@ -118,6 +118,22 @@ a.brand-wrap:hover .brand { color: var(--green); text-shadow: var(--glow); }
 }
 .auth-login:hover { border-color: var(--green); box-shadow: var(--glow); }
 .auth-user { color: var(--bright); letter-spacing: 0.04em; }
+a.auth-user {
+  display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid var(--border); padding: 3px 10px;
+}
+a.auth-user .gear { color: var(--dim); font-size: 12px; }
+a.auth-user:hover .gear { color: var(--green); }
+/* профиль ещё не заполнен — медленная мягкая пульсация оттенками зелёного */
+a.auth-user.unset { animation: auth-pulse 3.6s ease-in-out infinite; }
+a.auth-user.unset .gear { color: inherit; }
+@keyframes auth-pulse {
+  0%, 100% { color: var(--text); border-color: var(--green-border); box-shadow: none; }
+  50% { color: var(--green); border-color: var(--green); box-shadow: 0 0 10px rgba(124, 230, 142, 0.28); }
+}
+@media (prefers-reduced-motion: reduce) {
+  a.auth-user.unset { animation: none; color: var(--green); border-color: var(--green-border); }
+}
 .auth-out {
   background: none; border: 1px solid var(--border); color: var(--dim);
   padding: 2px 8px; letter-spacing: 0.1em; font: inherit; font-size: 11px; cursor: pointer;
@@ -125,7 +141,7 @@ a.brand-wrap:hover .brand { color: var(--green); text-shadow: var(--glow); }
 .auth-out:hover { border-color: var(--red-border); color: var(--red); }
 .auth-err { color: var(--red); letter-spacing: 0.08em; }
 a.auth-user { text-decoration: none; }
-a.auth-user:hover { color: var(--green); text-shadow: var(--glow); }
+a.auth-user:hover { color: var(--green); border-color: var(--green-border); text-shadow: var(--glow); }
 .mode-toggle {
   background: none; border: 1px solid var(--border); color: var(--dim);
   height: 38px; padding: 0 14px; letter-spacing: 0.08em; font: inherit; font-size: 11px;
@@ -162,29 +178,58 @@ a.auth-user:hover { color: var(--green); text-shadow: var(--glow); }
 /* ---------- профиль убежища ---------- */
 .prof-hint { color: var(--dim); font-size: 12px; margin: 10px 0 16px; }
 .prof-lbl { margin: 18px 0 10px; }
-.prof-perks { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 8px 24px; }
+/* навыки — как в игре: имя, уровень и сегментная шкала; сетка в три столбца */
+.prof-perks { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
 .prof-perk {
-  display: grid; grid-template-columns: 1fr auto minmax(90px, 160px) auto 64px;
-  align-items: center; gap: 8px;
-  border: 1px solid var(--border-dim); background: var(--panel-deep); padding: 8px 10px;
+  border: 1px solid var(--border-dim); background: var(--panel-deep);
+  padding: 10px 14px 12px;
 }
-.prof-perk .nm { font-size: 12px; color: var(--bright); }
-.prof-perk .plvl { font-size: 12px; color: var(--amber); text-align: right; font-variant-numeric: tabular-nums; }
+.prof-perk .phead {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
+  margin-bottom: 8px;
+}
+.prof-perk .nm {
+  font-size: 14px; font-weight: 700; letter-spacing: 0.08em;
+  color: var(--bright); text-transform: uppercase;
+}
+.prof-perk .plvl {
+  font-size: 10px; letter-spacing: 0.1em; color: var(--amber);
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+.prof-perk .plvl span { font-size: 13px; }
+.prof-perk .pbar { display: flex; align-items: center; gap: 8px; }
+.prof-perk .pips { flex: 1; gap: 4px; }
 .pbtn {
   background: none; border: 1px solid var(--border); color: var(--text);
-  width: 26px; height: 26px; font: inherit; font-weight: 700; cursor: pointer;
+  width: 26px; height: 26px; flex: none; font: inherit; font-weight: 700; cursor: pointer;
 }
 .pbtn:hover { border-color: var(--green); color: var(--green); }
-.ppip { cursor: pointer; height: 12px; }
+.ppip { cursor: pointer; height: 16px; }
 .ppip:hover { border-color: var(--amber); }
-.prof-feats { display: flex; flex-wrap: wrap; gap: 6px; }
+/* станки и инструменты — группы столов в три столбца */
+.prof-feats {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px;
+  align-items: start;
+}
+.feat-grp-ttl {
+  font-size: 11px; font-weight: 700; letter-spacing: 0.14em; color: var(--dim);
+  margin-bottom: 8px; padding-bottom: 5px;
+  border-bottom: 1px solid var(--border-deep);
+}
+.feat-col { display: flex; flex-direction: column; gap: 6px; }
+@media (max-width: 1100px) {
+  .prof-perks, .prof-feats { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 900px) {
+  .prof-perks, .prof-feats { grid-template-columns: 1fr; }
+}
 .feat {
   background: var(--panel-deep); border: 1px solid var(--border-dim); color: var(--dim);
-  padding: 6px 10px; font: inherit; font-size: 12px; cursor: pointer;
-  display: inline-flex; align-items: center; gap: 6px;
+  padding: 8px 12px; font: inherit; font-size: 13px; cursor: pointer; text-align: left;
+  display: flex; align-items: center; gap: 10px;
 }
-.feat .fmark { font-weight: 700; }
-.feat-ic { width: 18px; height: 18px; object-fit: contain; vertical-align: middle; }
+.feat .fmark { font-weight: 700; width: 14px; text-align: center; flex: none; }
+.feat-ic { width: 30px; height: 30px; object-fit: contain; flex: none; }
 .feat:hover { border-color: var(--border); color: var(--text); }
 .feat.on { border-color: var(--green-border); color: var(--green); background: rgba(124, 230, 142, 0.06); }
 .prof-actions { margin-top: 18px; display: flex; align-items: center; gap: 14px; }

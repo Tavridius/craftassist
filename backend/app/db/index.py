@@ -29,9 +29,10 @@ class GameDB:
         self.hideout_perks: list[dict] = []       # [{id, name}] — навыки крафта из БД
         self.hideout_features: list[str] = []     # все станки/фичи из requirements рецептов
         self.hideout_feature_icons: dict[str, str] = {}  # фича -> игровая иконка станка
+        self.hideout_feature_bench: dict[str, str] = {}  # фича -> стол (workbench/laboratory_table/kitchen_table)
         self.artefacts: dict[str, dict] = {}      # id -> {class, weight, stats{key: {name,min,max,harmful}}}
         self.artefact_stat_names: dict[str, dict] = {}  # stat_key -> {name, harmful} (справочник)
-        self.containers: dict[str, dict] = {}     # id -> {name, icon, rank, slots, efficiency, protection, weight}
+        self.containers: dict[str, dict] = {}     # id -> {name, icon, color, rank, slots, efficiency, protection, weight}
         self.armor: dict[str, dict] = {}          # id -> {name, icon, color, class, weight, bullet0, vit0, rel}
         self._armor_lvl: dict[tuple, dict] = {}   # (id, ptn) -> {bullet, vitality} (ленивый кэш заточки)
         self._search: list[tuple[str, str]] = []  # (id, "имя_ru имя_en" в нижнем регистре)
@@ -81,8 +82,13 @@ class GameDB:
         self.hideout_perks = [{"id": p["id"], "name": _tr(p.get("name")) or p["id"]}
                               for p in doc.get("perks", []) if p.get("id")]
         feats: set[str] = set()
+        bench_cnt: dict[str, dict[str, int]] = {}  # фича -> {стол: сколько рецептов требуют}
         for rc in doc.get("recipes", []):
-            feats.update((rc.get("requirements") or {}).get("features") or [])
+            for f in (rc.get("requirements") or {}).get("features") or []:
+                feats.add(f)
+                if rc.get("bench"):
+                    c = bench_cnt.setdefault(f, {})
+                    c[rc["bench"]] = c.get(rc["bench"], 0) + 1
             recipe = {
                 "bench": rc.get("bench"),
                 "category": _tr(rc.get("category")),
@@ -95,6 +101,13 @@ class GameDB:
             for res in recipe["result"]:
                 self.recipe_by_result.setdefault(res["item"], []).append(recipe)
         self.hideout_features = sorted(feats)
+        # станок относим к столу, на чьих рецептах он чаще всего требуется; нужно для
+        # группировки в профиле (при равенстве — кухня > лаборатория > верстак:
+        # единственный спорный случай — вытяжка, в игре это апгрейд кухни)
+        prio = {"kitchen_table": 2, "laboratory_table": 1, "workbench": 0}
+        self.hideout_feature_bench = {
+            f: max(c, key=lambda b: (c[b], prio.get(b, -1)))
+            for f, c in bench_cnt.items()}
         # иконки станков/инструментов — игровые рендеры (frontend/hideout/<фича>.png),
         # извлечённые из клиента (в базе EXBO этих предметов часто нет)
         hdir = config.FRONTEND_DIR / "hideout"
@@ -173,7 +186,8 @@ class GameDB:
                 if cont["slots"]:
                     it = self.items.get(iid, {})
                     self.containers[iid] = {"id": iid, "name": it.get("name", iid),
-                                            "icon": it.get("icon", ""), **cont,
+                                            "icon": it.get("icon", ""),
+                                            "color": it.get("color", "DEFAULT"), **cont,
                                             "slots": int(cont["slots"])}
             elif rel.startswith("items/armor/"):
                 doc = self._item_json(iid)

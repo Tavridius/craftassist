@@ -121,8 +121,9 @@ async function loadAuth() {
     ME = await fetch(api("/me")).then((r) => r.json());
     if (ME.authenticated) {
       const name = ME.user.display_login || ME.user.login;
-      authBox.innerHTML = `<a class="auth-user" href="/profile" title="Профиль убежища · EXBO ID ${ME.user.exbo_id}">${escapeHtml(name)}</a>
+      authBox.innerHTML = `<a class="auth-user" href="/profile" title="Профиль убежища: навыки и станки · EXBO ID ${ME.user.exbo_id}"><span class="gear">⚙</span>${escapeHtml(name)}</a>
         <button class="auth-out" id="logoutBtn" title="Завершить сессию">ВЫХОД</button>`;
+      renderAuthGlow();
       $("logoutBtn").addEventListener("click", async () => {
         await fetch(`${BASE}/auth/logout`, { method: "POST" }).catch(() => {});
         localStorage.removeItem("sz_avail");
@@ -143,6 +144,12 @@ async function loadAuth() {
     lastQuery = null; home.dataset.ts = "";
     route();
   }
+}
+
+// кнопка с ником мягко пульсирует зелёным, пока профиль убежища не заполнен
+function renderAuthGlow() {
+  const el = authBox.querySelector(".auth-user");
+  if (el) el.classList.toggle("unset", !!(ME && ME.profile_empty));
 }
 
 // ---------- онбординг: подсказка заполнить профиль после первого входа ----------
@@ -1275,8 +1282,10 @@ const statVal = (st, m, ptn) => {
   return statBase(st) * m * sharp(ptn);
 };
 const fmtStat = (v) => (v > 0 ? "+" : "") + (Math.abs(v) >= 100 ? Math.round(v) : v.toFixed(2));
+// имя контейнера красится в цвет его качества (редкости)
 const contLabel = (c) =>
-  `${c.name} · ${c.slots} СЛОТ${c.slots > 1 ? "А" : ""} · ЭФФ ${c.efficiency ?? "—"}% · ЗАЩИТА ${c.protection ?? "—"}%`;
+  `<span style="color:${rank(c.color).color}">${escapeHtml(c.name)}</span>` +
+  ` · ${c.slots} СЛОТ${c.slots > 1 ? "А" : ""} · ЭФФ ${c.efficiency ?? "—"}% · ЗАЩИТА ${c.protection ?? "—"}%`;
 const FROST_KEY = "stalker.artefact_properties.factor.frost_accumulation";  // «холод» — защита не гасит
 
 // заражение сборки: эмиссия (красный) гасится защитой (кроме мороза), защита
@@ -1471,9 +1480,10 @@ function renderBuilds() {
   const footer = buildTab === "manual"
     ? `КАЧЕСТВО — РЕДКОСТЬ ИЛИ ПОЛЕ % (85–175%): ВЫХОД ЗА ТИР МЕНЯЕТ РЕДКОСТЬ. ЦВЕТ ИМЕНИ — РЕДКОСТЬ.
        ЭФФЕКТИВНОСТЬ КОНТЕЙНЕРА УСИЛИВАЕТ ПОЛОЖИТЕЛЬНЫЕ СТАТЫ; ВНУТР. ЗАЩИТА ГАСИТ ЗАРАЖЕНИЯ (КРОМЕ ХОЛОДА).
-       ЛИМИТЫ ИГРОКА: РАД/ТЕМП/БИО — 1.0, ПСИ — 3.0.`
-    : `ПОЛОЖИТЕЛЬНЫЕ СТАТЫ АРТОВ × ЭФФЕКТИВНОСТЬ КОНТЕЙНЕРА; ЗАРАЖЕНИЯ ГАСЯТСЯ ВНУТР. ЗАЩИТОЙ (КРОМЕ ХОЛОДА),
-       ЛИМИТЫ РАД/ТЕМП/БИО — 1.0, ПСИ — 3.0. СЛУЧАЙНЫЕ ДОП-СВОЙСТВА ЗАТОЧКИ НЕ МОДЕЛИРУЮТСЯ.`;
+       ЛИМИТЫ ИГРОКА: РАД/ТЕМП/БИО/ХОЛОД — 1.0, ПСИ — 3.0; МИНУС — ЗАПАС ЗАЩИТЫ, НЕ ВРЕДЕН.`
+    : `ПОЛОЖИТЕЛЬНЫЕ СТАТЫ АРТОВ × ЭФФЕКТИВНОСТЬ КОНТЕЙНЕРА; ЗАРАЖЕНИЯ ГАСЯТСЯ ВНУТР. ЗАЩИТОЙ (КРОМЕ ХОЛОДА).
+       ЛИМИТЫ РАД/ТЕМП/БИО/ХОЛОД — 1.0, ПСИ — 3.0 — ЖЁСТКИЕ: СБОРКИ СВЕРХ ЛИМИТА НЕ ВЫДАЮТСЯ,
+       ПРИ НУЖДЕ ДОБАВЛЯЮТСЯ КОНТРАРТЫ. СЛУЧАЙНЫЕ ДОП-СВОЙСТВА ЗАТОЧКИ НЕ МОДЕЛИРУЮТСЯ.`;
   h += `<div class="side-foot">${footer}</div>`;
   page.innerHTML = h;
   wireBuilds(cont);
@@ -1501,7 +1511,7 @@ function renderAuto(cont) {
   }).join("");
   let res = "";
   const r = autoState.result;
-  if (r && r.error === "no_priced_variants")
+  if (r && r.error)
     res = `<div class="note-warn"><span class="mark">[!]</span> ${escapeHtml(r.hint || "НЕТ ЦЕНОВЫХ ДАННЫХ")}</div>`;
   else if (r && r.builds && r.builds.length) res = renderAutoResult(r, autoState.budget);
   else if (r && r.builds) res = `<div class="empty">НИЧЕГО НЕ ПОДОБРАЛОСЬ ПОД БЮДЖЕТ.</div>`;
@@ -1567,13 +1577,13 @@ function renderHPResult(r) {
   let h = `<div class="hp-hero">
       <div class="hp-num"><div class="hp-val">${fmt(hp.effective_hp)}</div>
         <div class="hp-lbl">ПРИВЕДЁННОЕ ХП ОТ ПУЛЬ</div></div>
-      <div class="hp-formula">(100 + <b>${fmt(hp.total_bullet)}</b> пулестой) × <b>${hp.total_vitality.toFixed(2)}%</b> живучести</div>
+      <div class="hp-formula">(100 + <b>${fmt(hp.total_bullet)}</b> пулестой) × <b>${(100 + hp.total_vitality).toFixed(2)}%</b> живучести</div>
     </div>
     <div class="hp-break">
       <div class="bt-row"><span class="k">БРОНЯ <span style="color:${rank(arm.color).color}">${escapeHtml(arm.name)} +${arm.ptn}</span></span>
         <span class="v">ПУЛЕСТОЙ ${fmt(arm.bullet)}${arm.vitality ? ` · ЖИВУЧ +${arm.vitality}` : ""}</span></div>
       <div class="bt-row"><span class="k">АРТЕФАКТЫ</span>
-        <span class="v">ПУЛЕСТОЙ +${fmt(hp.artefact_bullet)} · ЖИВУЧ +${hp.artefact_vitality.toFixed(2)}%</span></div>
+        <span class="v">ПУЛЕСТОЙ ${fmtStat(hp.artefact_bullet)} · ЖИВУЧ ${fmtStat(hp.artefact_vitality)}%</span></div>
     </div>
     <div class="bgrid">${b.slots.map(resultSlotCard).join("")}</div>
     ${totalsBlock({ stats: b.totals.stats, cost: b.totals.cost, unpriced: 0,
@@ -1589,12 +1599,13 @@ function renderHPResult(r) {
 function iconSelect(host, items, curId, onPick) {
   const cur = items.find((it) => it.id === curId) || items[0];
   if (!cur) { host.innerHTML = ""; return; }
+  const lbl = (it) => it.labelHtml || escapeHtml(it.label);  // labelHtml — уже экранирован вызывающим
   host.innerHTML = `<button type="button" class="isel-btn">
       <img src="${asset(cur.icon)}" alt="">
-      <span class="isel-lbl">${escapeHtml(cur.label)}</span><span class="isel-arr">▾</span></button>
+      <span class="isel-lbl">${lbl(cur)}</span><span class="isel-arr">▾</span></button>
     <div class="isel-list hidden">${items.map((it) => `
       <div class="isel-opt${it.id === cur.id ? " on" : ""}" data-id="${it.id}">
-        <img loading="lazy" src="${asset(it.icon)}" alt=""><span>${escapeHtml(it.label)}</span>
+        <img loading="lazy" src="${asset(it.icon)}" alt=""><span>${lbl(it)}</span>
       </div>`).join("")}</div>`;
   const list = host.querySelector(".isel-list");
   host.querySelector(".isel-btn").addEventListener("click", (e) => {
@@ -1631,7 +1642,7 @@ function wireBuilds(cont) {
     renderBuilds();
   }));
   iconSelect($("bContSel"),
-    BUILD_DICT.containers.map((c) => ({ id: c.id, icon: c.icon, label: contLabel(c) })),
+    BUILD_DICT.containers.map((c) => ({ id: c.id, icon: c.icon, labelHtml: contLabel(c) })),
     buildState.container, (id) => {
       buildState.container = id;
       const c = buildContainer();
@@ -1679,7 +1690,8 @@ function wireBuilds(cont) {
     iconSelect($("hArmorSel"),
       (BUILD_DICT.armor || []).map((a) => ({
         id: a.id, icon: a.icon,
-        label: `${a.name} · ПУЛЕСТОЙ ${Math.round(a.bullet0)}`,
+        labelHtml: `<span style="color:${rank(a.color).color}">${escapeHtml(a.name)}</span>` +
+                   ` · ПУЛЕСТОЙ ${Math.round(a.bullet0)}`,
       })),
       hpState.armor, (id) => { hpState.armor = id; renderBuilds(); });   // перерисовка обновляет иконку
     $("hPtn").addEventListener("change", (e) => { hpState.armorPtn = +e.target.value; });
@@ -1774,18 +1786,41 @@ function renderProfile(dict, prof, user) {
   const feats = [...(dict.features || [])]
     .sort((a, b) => featureName(a).localeCompare(featureName(b), "ru"));
 
+  // навык — как в игре: имя, уровень и широкая сегментная шкала (без опыта)
   const perkRow = (p) => {
     const lvl = P.perks[p.id] || 0;
     let pips = "";
     for (let i = 0; i < pm; i++)
       pips += `<div class="pip ppip ${i < lvl ? "on" : ""}" data-lvl="${i + 1}"></div>`;
     return `<div class="prof-perk" data-perk="${p.id}">
-      <div class="nm">${escapeHtml(p.name || perkName(p.id))}</div>
-      <button class="pbtn" data-d="-1">−</button>
-      <div class="pips">${pips}</div>
-      <button class="pbtn" data-d="1">+</button>
-      <div class="plvl">УР. <span>${lvl}</span></div>
+      <div class="phead">
+        <div class="nm">${escapeHtml(p.name || perkName(p.id))}</div>
+        <div class="plvl">УРОВЕНЬ <span>${lvl}</span> / ${pm}</div>
+      </div>
+      <div class="pbar">
+        <button class="pbtn" data-d="-1">−</button>
+        <div class="pips">${pips}</div>
+        <button class="pbtn" data-d="1">+</button>
+      </div>
     </div>`;
+  };
+
+  // станки — в столбик, сгруппированы по столу, к которому относятся
+  const FB = dict.feature_bench || {};
+  const byBench = {};
+  feats.forEach((f) => {
+    const b = FB[f] || "workbench";
+    (byBench[b] = byBench[b] || []).push(f);
+  });
+  const benchOrder = ["workbench", "laboratory_table", "kitchen_table"]
+    .concat(Object.keys(byBench).filter((b) =>
+      !["workbench", "laboratory_table", "kitchen_table"].includes(b)));
+  const featBtn = (f) => {
+    const ic = (dict.feature_icons || {})[f];
+    return `<button class="feat ${P.features.has(f) ? "on" : ""}" data-feat="${f}">
+       <span class="fmark">${P.features.has(f) ? "✓" : "+"}</span>
+       ${ic ? `<img class="feat-ic" loading="lazy" src="${asset(ic)}" alt="">` : ""}
+       ${escapeHtml(featureName(f))}</button>`;
   };
 
   detail.innerHTML = `<button class="back">◂ НАЗАД</button>
@@ -1797,12 +1832,12 @@ function renderProfile(dict, prof, user) {
     <div class="reqs-lbl prof-lbl">НАВЫКИ КРАФТА · УРОВЕНЬ 0–${pm}</div>
     <div class="prof-perks">${dict.perks.map(perkRow).join("")}</div>
     <div class="reqs-lbl prof-lbl">СТАНКИ И ИНСТРУМЕНТЫ · ${feats.length}</div>
-    <div class="prof-feats">${feats.map((f) => {
-      const ic = (dict.feature_icons || {})[f];
-      return `<button class="feat ${P.features.has(f) ? "on" : ""}" data-feat="${f}">
-         <span class="fmark">${P.features.has(f) ? "✓" : "+"}</span>
-         ${ic ? `<img class="feat-ic" loading="lazy" src="${asset(ic)}" alt="">` : ""}
-         ${escapeHtml(featureName(f))}</button>`; }).join("")}
+    <div class="prof-feats">${benchOrder
+      .filter((b) => (byBench[b] || []).length)
+      .map((b) => `<div class="feat-grp">
+        <div class="feat-grp-ttl">${benchName(b)} · ${byBench[b].length}</div>
+        <div class="feat-col">${byBench[b].map(featBtn).join("")}</div>
+      </div>`).join("")}
     </div>
     <div class="prof-actions">
       <button class="prof-save" id="profSave">СОХРАНИТЬ ПРОФИЛЬ</button>
@@ -1843,9 +1878,10 @@ function renderProfile(dict, prof, user) {
       msg.textContent = r.ok ? "СОХРАНЕНО ✓" : "[!] ОШИБКА СОХРАНЕНИЯ";
       msg.className = "prof-msg " + (r.ok ? "ok" : "bad");
       home.dataset.ts = "";   // главная пересчитается с новым профилем
-      if (r.ok && ME) {       // профиль заполнен — онбординг-подсказка больше не нужна
+      if (r.ok && ME) {       // профиль заполнен — онбординг-подсказка и пульсация ника больше не нужны
         ME.profile_empty = !(Object.keys(P.perks).length || P.features.size);
         renderOnboard();
+        renderAuthGlow();
       }
     } catch (e) {
       msg.textContent = "[!] ОШИБКА СЕТИ";

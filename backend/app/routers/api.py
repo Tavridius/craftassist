@@ -97,6 +97,7 @@ async def hideout_dict():
     """Справочник для страницы профиля: перки и все станки/фичи из рецептов."""
     return {"perks": db.hideout_perks, "features": db.hideout_features,
             "feature_icons": db.hideout_feature_icons,
+            "feature_bench": db.hideout_feature_bench,
             "perk_max": hideout.PERK_MAX}
 
 
