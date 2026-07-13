@@ -61,7 +61,10 @@ DB_REPO_ZIP = os.getenv(
 DB_LANG = os.getenv("DB_LANG", "ru")  # ветка данных в репо: ru / global
 
 # --- Троттлинг аукциона (единственный источник вызовов API — фоновый воркер) ---
-AUCTION_LOTS_LIMIT = int(os.getenv("AUCTION_LOTS_LIMIT", "20"))
+# 100 лотов за тот же бюджет лимита (любой limit = 2 единицы) — даёт глубину
+# стакана для честной цены закупки партии
+AUCTION_LOTS_LIMIT = int(os.getenv("AUCTION_LOTS_LIMIT", "100"))
+AUCTION_FEE = float(os.getenv("AUCTION_FEE", "0.05"))  # комиссия аука при продаже
 AUCTION_MIN_INTERVAL = float(os.getenv("AUCTION_MIN_INTERVAL", "0.5"))  # сек между запросами (демо держит ~2/с без 429)
 AUCTION_MAX_RETRIES = int(os.getenv("AUCTION_MAX_RETRIES", "2"))        # ретраи на 429
 

@@ -72,11 +72,12 @@ class Rankings:
             cc, buy = node.get("craft_cost"), node.get("market_price")
             it = db.item(rid) or {}
             hist = store.history.get(rid) or {}
-            # выгода — от реальной цены продажи (медиана свежих сделок),
-            # мин. выкуп — только fallback, пока истории нет
+            # выгода — от реальной цены продажи (медиана свежих сделок) минус
+            # комиссия аука; мин. выкуп — только fallback, пока истории нет
             sell = craft.sell_price(rid)
             base = sell if sell is not None else buy
-            pct = round((base - cc) / cc * 100) if (cc and base and cc > 0) else None
+            net = base * (1 - config.AUCTION_FEE) if base else None
+            pct = round((net - cc) / cc * 100) if (cc and net and cc > 0) else None
             rows[rid] = {
                 "id": rid,
                 "name": it.get("name", rid),

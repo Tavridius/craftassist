@@ -62,14 +62,24 @@ async def fetch_lots(client: httpx.AsyncClient, item_id: str) -> dict:
         return {"available": False, "error": f"http_{resp.status_code}"}
 
     lots = resp.json().get("lots", [])
-    buyouts = []
+    units = []  # (цена за 1 штуку, количество в лоте)
     for lot in lots:
         bp, amount = lot.get("buyoutPrice"), lot.get("amount") or 1
         if bp:
-            buyouts.append(bp / amount)  # цена за 1 штуку
-    if not buyouts:
+            units.append((bp / amount, amount))
+    if not units:
         return {"available": False, "error": "no_lots"}
-    return {"available": True, "min_buyout": round(min(buyouts)), "lots_count": len(lots)}
+    units.sort(key=lambda u: u[0])
+    # глубина стакана: дешёвые лоты (для средней цены закупки партии);
+    # ограничиваем объём, чтобы кэш цен не разбухал
+    depth, got = [], 0
+    for unit, amount in units:
+        depth.append([round(unit), amount])
+        got += amount
+        if got >= 600 or len(depth) >= 60:
+            break
+    return {"available": True, "min_buyout": round(units[0][0]),
+            "lots_count": len(lots), "depth": depth}
 
 
 async def fetch_lots_page(client: httpx.AsyncClient, item_id: str,

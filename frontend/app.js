@@ -243,9 +243,10 @@ async function openItem(id) {
 function verdictBlock(d) {
   const v = d.verdict || {};
   let cls = "warn", main = "—", sub = "";
-  const basis = v.sell_basis === "sales"
+  const fee = v.fee_pct != null ? ` − КОМИССИЯ ${v.fee_pct}%` : "";
+  const basis = (v.sell_basis === "sales"
     ? "ПО РЕАЛЬНЫМ ПРОДАЖАМ (МЕДИАНА 10 ПОСЛЕДНИХ)"
-    : "ПО МИН. ВЫКУПУ (ИСТОРИИ ПРОДАЖ ЕЩЁ НЕТ)";
+    : "ПО МИН. ВЫКУПУ (ИСТОРИИ ПРОДАЖ ЕЩЁ НЕТ)") + fee;
   if (v.status === "profitable") {
     cls = "ok";
     main = `ВЫГОДНО ▲+${v.pct}%`;
@@ -268,9 +269,10 @@ function verdictBlock(d) {
 
   let bars = "";
   if (d.craft_cost != null && (d.buy_price != null || d.sell_price != null)) {
+    const net = v.sell_net != null && v.sell_basis === "sales" ? v.sell_net : d.sell_price;
     const rowsArr = [["КРАФТ", d.craft_cost, "craft"]];
-    if (d.sell_price != null) rowsArr.push(["ПРОДАЖА ~", d.sell_price, ""]);
-    if (d.buy_price != null) rowsArr.push(["ВЫКУП ОТ", d.buy_price, ""]);
+    if (net != null) rowsArr.push([`ПРОДАЖА ~ (−${v.fee_pct ?? 5}%)`, net, ""]);
+    if (d.buy_price != null) rowsArr.push(["КУПИТЬ ~", d.buy_price, ""]);
     const maxv = Math.max(...rowsArr.map((r) => r[1])) || 1;
     bars = `<div class="v-bars">` + rowsArr.map(([lbl, val, extra]) => `
       <div class="v-bar">

@@ -143,6 +143,7 @@ class PriceStore:
         self.prices[iid] = {
             "available": r.get("available", False),
             "min_buyout": r.get("min_buyout"),
+            "depth": r.get("depth"),   # дешёвые лоты [[цена/шт, кол-во], …]
             "ts": time.time(),
         }
         self._save_ctr += 1
