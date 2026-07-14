@@ -612,19 +612,18 @@ async function loadDashboard() {
       && home.dataset.ts && Date.now() - +home.dataset.ts < 60000) return;
   home.innerHTML = `<div class="spinner">// ЗАГРУЗКА ГЛАВНОЙ</div>`;
   try {
-    const [top, art, watch, em, sales, box, fuelTop, patches] = await Promise.all([
+    const [top, art, watch, em, sales, fuelTop, patches] = await Promise.all([
       fetch(api(`/top${availParam("?")}`)).then((r) => r.json()).catch(() => null),
-      fetch(api("/artmarket/top?window=7d")).then((r) => r.json()).catch(() => null),
+      fetch(api("/artmarket/top?window=24h")).then((r) => r.json()).catch(() => null),
       fetch(api("/watch")).then((r) => r.json()).catch(() => null),
       fetch(api("/emission")).then((r) => r.json()).catch(() => null),
-      fetch(api("/sales/top?n=5")).then((r) => r.json()).catch(() => null),
-      fetch(api("/box")).then((r) => r.json()).catch(() => null),
+      fetch(api("/sales/top?n=12")).then((r) => r.json()).catch(() => null),
       fetch(api("/fuel/top?n=20")).then((r) => r.json()).catch(() => null),
       fetch(api("/patches?limit=3")).then((r) => r.json()).catch(() => null),
     ]);
     home.dataset.ts = Date.now();
     home.dataset.view = "dash";
-    renderDashboard(top, art, watch, em, sales, box, fuelTop, patches);
+    renderDashboard(top, art, watch, em, sales, fuelTop, patches);
   } catch (e) {
     home.innerHTML = `<div class="empty">[!] НЕ УДАЛОСЬ ЗАГРУЗИТЬ ГЛАВНУЮ</div>`;
   }
@@ -676,11 +675,14 @@ function startEmTick() {
 }
 
 function dashCraftRow(e) {
+  // выгода — дельта в рублях за цикл крафта (решение юзера), % в тултипе
+  const badge = e.diff != null
+    ? `<span class="pct ${e.diff > 0 ? "up" : "down"}" title="${e.pct != null ? (e.pct > 0 ? "+" : "") + e.pct + "%" : ""}">${e.diff > 0 ? "+" : ""}${fmt(e.diff)} ₽</span>`
+    : (e.sell_price ?? e.buy_price) != null ? `<span class="dash-p">${fmt(e.sell_price ?? e.buy_price)} ₽</span>` : "";
   return `<div class="dash-row" data-nav="/item/${e.id}">
     <img loading="lazy" src="${asset(e.icon)}" alt="">
     <div class="nm">${escapeHtml(e.name)}</div>
-    ${e.pct != null ? `<span class="pct ${e.pct > 0 ? "up" : "down"}">${e.pct > 0 ? "+" : ""}${e.pct}%</span>`
-                    : (e.sell_price ?? e.buy_price) != null ? `<span class="dash-p">${fmt(e.sell_price ?? e.buy_price)} ₽</span>` : ""}
+    ${badge}
   </div>`;
 }
 
@@ -699,9 +701,9 @@ function salesBody(s) {
     <img loading="lazy" src="${asset(r.icon)}" alt="">
     <div class="nm">${escapeHtml(r.name)}</div>
     <span class="dash-p">~${fmt(r.per_day)}/СУТ</span></div>`;
-  const today = s.today.slice(0, 3).map(row).join("");
+  const today = s.today.slice(0, 12).map(row).join("");
   const week = (s.week || []).length
-    ? s.week.slice(0, 3).map(row).join("")
+    ? s.week.slice(0, 12).map(row).join("")
     : `<div class="empty-sm">КОПИМ СНАПШОТЫ (ЕСТЬ ${s.snapshots || 0}) — НЕДЕЛЬНЫЙ ТОП СОБЕРЁТСЯ ЗА ПАРУ ДНЕЙ.</div>`;
   return `<div class="sales-tabs">
       <button class="stab on" data-view="today">СЕГОДНЯ</button>
@@ -726,19 +728,7 @@ function fuelBody(fu) {
     БАЗОВЫЙ ГЕНЕРАТОР ЖЖЁТ БЕНЗИН/ДИЗЕЛЬ, ГАЗ/БАТАРЕИ/АНОМАЛЬНОЕ — ПОСЛЕ ПРИСТРОЕК</div>`;
 }
 
-function boxBody(b) {
-  if (!b || b.missing)
-    return `<div class="dash-stub"><span class="stub-code">[ МОДУЛЬ ]</span>
-      Ящик «${escapeHtml((b && b.name) || "Тактический резерв")}»: сезонных ящиков нет в базе
-      EXBO — оживёт, как только узнаем его ID на аукционе.<div class="stub-status">ЖДЁМ ID</div></div>`;
-  return `<div class="dash-row" data-nav="/item/${b.id}">
-      <img src="${asset(b.icon)}" alt="">
-      <div class="nm">${escapeHtml(b.name)}</div>
-      <span class="dash-p">${b.min_buyout != null ? "ОТ " + fmt(b.min_buyout) + " ₽" : "ЦЕНА СЧИТАЕТСЯ…"}</span></div>
-    ${b.sales_per_hour != null ? `<div class="em-sub">${fmtSales(b.sales_per_hour)} ПРОД/Ч</div>` : ""}`;
-}
-
-function renderDashboard(top, art, watch, em, sales, box, fuelTop, patches) {
+function renderDashboard(top, art, watch, em, sales, fuelTop, patches) {
   const card = (title, note, body, link, linkText) => `<section class="dash-card">
     <div class="side-head">
       <div class="side-title">▸ ${title}</div>
@@ -808,15 +798,14 @@ function renderDashboard(top, art, watch, em, sales, box, fuelTop, patches) {
       <div class="dash-hero-s">Крафт, аукцион, сборки артефактов и карта Зоны — живые данные аукциона RU.</div>
     </div>
     <div class="dash-grid">
-      ${card("КРАФТЫ ДНЯ", "ВЫГОДА · ЛИКВИДНОСТЬ · СПРОС", crafts, "/craft", "В РАЗДЕЛ КРАФТА")}
-      ${card("САМОЕ ПРОДАВАЕМОЕ", "ТОП-3 ПО ТЕМПУ ПРОДАЖ", salesBody(sales), "/market", "НА АУКЦИОН")}
-      ${card("ТРЕНДЫ БИРЖИ АРТЕФАКТОВ", "ЦЕНА ЗА 7 ДНЕЙ", trends, "/auction", "НА БИРЖУ")}
+      ${card("КРАФТЫ ДНЯ", "ВЫГОДА В ₽ · ЛИКВИДНОСТЬ · СПРОС", crafts, "/craft", "В РАЗДЕЛ КРАФТА")}
+      ${card("САМОЕ ПРОДАВАЕМОЕ", "ТОП-12 ПО ТЕМПУ ПРОДАЖ", salesBody(sales), "/market", "НА АУКЦИОН")}
+      ${card("ТРЕНДЫ БИРЖИ АРТЕФАКТОВ", "ЦЕНА ЗА СУТКИ", trends, "/auction", "НА БИРЖУ")}
       ${card("ГРАФИКИ ИНГРЕДИЕНТОВ", "ВСЕ НАБЛЮДАЕМЫЕ · СР. ЦЕНА ПРОДАЖ", charts, "/craft", "В РАЗДЕЛ КРАФТА")}
       ${card("ЗАПРАВКА ГЕНЕРАТОРА", "ВСЕ ИСТОЧНИКИ · ₽ ЗА 1000 ЕД", fuelBody(fuelTop), "/profile", "ПРИСТРОЙКИ — В ПРОФИЛЕ")}
-      ${card("ПОСЛЕДНИЙ ПАТЧ", "ОБНОВЛЕНИЯ ИГРЫ", patchBody, "/patches", "ВСЕ ПАТЧИ")}
       ${card("ВЫБРОС", "ВРЕМЯ МСК · ЗАМЕР РАЗ В МИНУТУ", emissionBody(em))}
       ${card("СБОРКА ДНЯ", "СЛУЧАЙНАЯ ПОПУЛЯРНАЯ СБОРКА", stub("Случайная сборка артефактов из калькулятора — с ценой и статами."), "/builds", "К КАЛЬКУЛЯТОРУ")}
-      ${card("АКТУАЛЬНЫЙ ЯЩИК", "ТАКТИЧЕСКИЙ РЕЗЕРВ", boxBody(box), "/market", "НА АУКЦИОН")}
+      ${card("ПОСЛЕДНИЙ ПАТЧ", "ОБНОВЛЕНИЯ ИГРЫ", patchBody, "/patches", "ВСЕ ПАТЧИ")}
     </div>
   </div>`;
   home.querySelectorAll("[data-nav]").forEach((el) =>
@@ -885,13 +874,15 @@ function watchBlock(w) {
 }
 
 function sideRow(e, extra) {
-  const badge = e.pct == null
+  // выгода — дельта в рублях за цикл (решение юзера 14.07), % — в мете справочно
+  const badge = e.diff == null
     ? `<span class="pct dim">—</span>`
-    : `<span class="pct ${e.pct > 0 ? "up" : "down"}">${e.pct > 0 ? "+" : ""}${e.pct}%</span>`;
+    : `<span class="pct ${e.diff > 0 ? "up" : "down"}">${e.diff > 0 ? "+" : ""}${fmt(e.diff)} ₽</span>`;
   const meta = [];
   if (e.craft_cost != null) meta.push(`КРАФТ ${fmt(e.craft_cost)}`);
   if (e.sell_price != null) meta.push(`ПРОДАЖА ~${fmt(e.sell_price)}`);
   else if (e.buy_price != null) meta.push(`АУК ${fmt(e.buy_price)}`);
+  if (e.pct != null) meta.push(`${e.pct > 0 ? "+" : ""}${e.pct}%`);
   if (extra === "sales" && e.sales_per_hour != null) meta.push(`${fmtSales(e.sales_per_hour)} ПРОД/Ч`);
   if (extra === "opens" && e.opens) meta.push(`${e.opens} ОТКР`);
   return `<div class="side-row" data-id="${e.id}" style="border-left-color:transparent">
@@ -929,7 +920,7 @@ function renderHome(d, w) {
   const availEmpty = d.available_only
     ? "ПО ТВОЕЙ ПРОКАЧКЕ НИЧЕГО НЕ ПРОШЛО — ПРОВЕРЬ ПРОФИЛЬ ИЛИ ПЕРЕКЛЮЧИ НА «ВСЕ»." : null;
   const availNote = d.available_only ? " · ДОСТУПНЫЕ" : "";
-  h += sec("ВЫГОДНЫЕ КРАФТЫ", "КРАФТ VS АУК" + availNote, d.profitable, null,
+  h += sec("ВЫГОДНЫЕ КРАФТЫ", "ДЕЛЬТА ₽ ЗА ЦИКЛ" + availNote, d.profitable, null,
            availEmpty || "ЦЕНЫ СЧИТАЮТСЯ В ФОНЕ — ЗАГЛЯНИ ЧЕРЕЗ ПАРУ МИНУТ.");
   h += sec("ПРОФИТНЫЕ", `ПРОДАЖИ ${d.liquid_threshold || 10}+/Ч${availNote}`, d.liquid, "sales",
            availEmpty || "НЕТ ПРЕДМЕТОВ С ТАКОЙ ЧАСТОТОЙ ПРОДАЖ (ИЛИ ЦЕНЫ ЕЩЁ СЧИТАЮТСЯ).");
@@ -1046,8 +1037,8 @@ async function openMarket() {
     ov = await fetch(api("/market/overview")).then((r) => r.json());
   } catch (e) { /* покажем без подборок */ }
   if (location.pathname !== "/market") return;
+  marketState.itemId = null;   // карточка теперь в модале — при входе закрыта
   renderMarket(ov);
-  if (marketState.itemId) loadMarketItem(marketState.itemId);
 }
 
 function mkRow(r, val) {
@@ -1077,7 +1068,12 @@ function renderMarket(ov) {
       <input id="mkInput" type="search" autocomplete="off" placeholder="НАЙТИ ПРЕДМЕТ НА АУКЦИОНЕ…">
     </div>
     <div id="mkResults"></div>
-    <div id="mkDetail"></div>
+    <div id="mkModal" class="mk-modal hidden" aria-modal="true" role="dialog">
+      <div class="mk-modal-box">
+        <button class="mk-modal-x" id="mkModalX" title="Закрыть (Esc)">✕</button>
+        <div id="mkDetail"></div>
+      </div>
+    </div>
     <div class="home-cols mk-cols">
       ${col("САМЫЕ ПРОДАВАЕМЫЕ", "ПРОДАЖ В ЧАС", liquid)}
       ${col("САМЫЕ ДОРОГИЕ", "МИН. ВЫКУП", expensive)}
@@ -1099,13 +1095,30 @@ function renderMarket(ov) {
     }, 250);
   });
   wireMkRows(page);
+  $("mkModalX").addEventListener("click", mkModalClose);
+  $("mkModal").addEventListener("click", (e) => {
+    if (e.target.id === "mkModal") mkModalClose();   // клик по подложке
+  });
 }
+
+function mkModalClose() {
+  const m = $("mkModal");
+  if (m) m.classList.add("hidden");
+  document.body.classList.remove("modal-open");
+  marketState.itemId = null;
+}
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") mkModalClose();
+});
 
 function wireMkRows(root) {
   root.querySelectorAll(".mk-row").forEach((r) => r.addEventListener("click", () => {
     marketState.itemId = r.dataset.id;
-    $("mkResults").innerHTML = "";
-    $("mkInput").value = "";
+    const res = $("mkResults");
+    if (res) res.innerHTML = "";
+    const inp = $("mkInput");
+    if (inp) inp.value = "";
     loadMarketItem(r.dataset.id);
   }));
 }
@@ -1120,6 +1133,12 @@ const fmtLotTime = (iso) => {
 async function loadMarketItem(id) {
   const box = $("mkDetail");
   if (!box) return;
+  const modal = $("mkModal");   // карточка с графиком и ценами — в модале
+  if (modal) {
+    modal.classList.remove("hidden");
+    modal.querySelector(".mk-modal-box").scrollTop = 0;
+    document.body.classList.add("modal-open");
+  }
   box.innerHTML = `<div class="spinner">// ЗАПРАШИВАЮ ЛОТЫ</div>`;
   let d;
   try {
@@ -1169,7 +1188,6 @@ async function loadMarketItem(id) {
     </div>
   </div>`;
   initSalesChart(id);
-  window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
 // ---------- график продаж предмета: масштабируемый, данные копятся до года ----------

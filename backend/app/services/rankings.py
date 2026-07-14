@@ -4,7 +4,9 @@
 поэтому пересчёт дешёвый; результат кэшируется на RANKINGS_TTL секунд.
 
 - популярные: по счётчику открытий карточек (data/popularity.json);
-- выгодные:   максимальный % (цена продажи на ауке − стоимость крафта) / стоимость крафта;
+- выгодные:   максимальная ДЕЛЬТА в рублях (продажа-нетто − стоимость крафта),
+              % оставляем справочно (решение юзера 14 июля 2026: важна
+              абсолютная прибыль за цикл крафта, а не относительная);
 - профитные:  то же, но только предметы с частотой продаж ≥ LIQUID_MIN_SALES_PER_HOUR.
 """
 import json
@@ -77,7 +79,9 @@ class Rankings:
             sell = craft.sell_price(rid)
             base = sell if sell is not None else buy
             net = base * (1 - config.AUCTION_FEE) if base else None
-            pct = round((net - cc) / cc * 100) if (cc and net and cc > 0) else None
+            ok = cc and net and cc > 0
+            pct = round((net - cc) / cc * 100) if ok else None
+            diff = round(net - cc) if ok else None
             rows[rid] = {
                 "id": rid,
                 "name": it.get("name", rid),
@@ -87,15 +91,16 @@ class Rankings:
                 "buy_price": buy,
                 "sell_price": sell,
                 "pct": pct,
+                "diff": diff,
                 "sales_per_hour": hist.get("sales_per_hour"),
                 "opens": self.opens.get(rid, 0),
             }
 
-        priced = [r for r in rows.values() if r["pct"] is not None]
-        profitable = sorted(priced, key=lambda r: -r["pct"])[:TOP_N]
+        priced = [r for r in rows.values() if r["diff"] is not None]
+        profitable = sorted(priced, key=lambda r: -r["diff"])[:TOP_N]
         liquid = sorted(
             [r for r in priced if (r["sales_per_hour"] or 0) >= LIQUID_MIN_SALES_PER_HOUR],
-            key=lambda r: -r["pct"])[:TOP_N]
+            key=lambda r: -r["diff"])[:TOP_N]
         popular = sorted(
             [r for r in rows.values() if r["opens"] > 0],
             key=lambda r: -r["opens"])[:TOP_N]

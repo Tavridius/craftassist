@@ -1053,6 +1053,32 @@ a.auth-user:hover { color: var(--green); border-color: var(--green-border); text
 .obm-plan { margin-bottom: 14px; }
 .obm-plan .reqs-lbl { margin-bottom: 6px; }
 
+/* ---------- модалка карточки аукциона ---------- */
+body.modal-open { overflow: hidden; }
+.mk-modal {
+  position: fixed; inset: 0; z-index: 300;
+  background: rgba(3, 8, 5, 0.8); backdrop-filter: blur(2px);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: 4vh 16px;
+}
+.mk-modal.hidden { display: none; }
+.mk-modal-box {
+  position: relative; width: min(980px, 100%); max-height: 90vh; overflow-y: auto;
+  background: var(--panel-deep); border: 1px solid var(--green-border);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.75); padding: 14px 18px 18px;
+  scrollbar-width: thin; scrollbar-color: var(--green-border) var(--panel-deep);
+}
+.mk-modal-x {
+  position: sticky; top: 0; float: right; z-index: 5;
+  background: var(--panel); border: 1px solid var(--border); color: var(--dim);
+  font: inherit; font-size: 13px; line-height: 1; padding: 6px 9px; cursor: pointer;
+}
+.mk-modal-x:hover { border-color: var(--red); color: var(--red); }
+@media (max-width: 900px) {
+  .mk-modal { padding: 0; }
+  .mk-modal-box { max-height: 100vh; width: 100%; }
+}
+
 /* ---------- патчноуты ---------- */
 .patch-list { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
 .patch-row {
