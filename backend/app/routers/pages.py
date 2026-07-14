@@ -96,7 +96,10 @@ def render_index(request: Request, path: str, *, title: str | None = None,
         block = json.dumps(jsonld, ensure_ascii=False).replace("</", "<\\/")
         s = s.replace("</head>",
                       f'  <script type="application/ld+json">{block}</script>\n</head>', 1)
-    return HTMLResponse(s)
+    # HTML — точка входа, ссылается на app.js?v=<mtime>: сам НЕ кэшируем, иначе
+    # браузер держит старый HTML со старой версией и до нового app.js не доходит
+    # (эвристическое кэширование ответов без Cache-Control). no-cache = ревалидация.
+    return HTMLResponse(s, headers={"Cache-Control": "no-cache, must-revalidate"})
 
 
 def _product_jsonld(request: Request, it: dict, url: str, desc: str) -> dict | None:
