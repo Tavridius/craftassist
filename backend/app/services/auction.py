@@ -145,9 +145,15 @@ async def fetch_history_page(client: httpx.AsyncClient, item_id: str,
 
 
 async def fetch_history(client: httpx.AsyncClient, item_id: str) -> dict:
-    """Недавняя история продаж: {available, sales_per_hour, sold_count, avg_unit_price}."""
+    """Недавняя история продаж: {available, sales_per_hour, sold_count, avg_unit_price}.
+
+    additional=true (стоимость запроса та же) — чтобы ОТСЕЯТЬ заточенные (ptn)
+    и качественные (qlt) экземпляры из ценовых агрегатов: продажи +10/+15 оружия
+    стоят миллионы и завышали «цену продажи» базового предмета в разы (всплыло
+    на бартер-оружии). Темп продаж считаем по всем записям — спрос есть спрос.
+    """
     url = f"{config.API_BASE}/{config.REGION}/auction/{item_id}/history"
-    params = {"limit": 100}
+    params = {"limit": 100, "additional": "true"}
 
     resp = None
     for attempt in range(config.AUCTION_MAX_RETRIES + 1):
@@ -180,8 +186,10 @@ async def fetch_history(client: httpx.AsyncClient, item_id: str) -> dict:
                 times.append(t)
             except ValueError:
                 pass
+        add = e.get("additional") or {}
+        plain = not add.get("ptn") and not add.get("qlt")  # базовый экземпляр
         price, amount = e.get("price"), e.get("amount") or 1
-        if price:
+        if price and plain:
             unit = price / amount  # цена продажи за 1 штуку
             units.append(unit)
             if t:
