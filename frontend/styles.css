@@ -1001,8 +1001,8 @@ a.auth-user:hover { color: var(--green); border-color: var(--green-border); text
 }
 .bt-table th.r, .bt-table td.r { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .bt-table td { padding: 7px 10px; border-bottom: 1px solid var(--border-deep); }
-.bt-row { cursor: pointer; }
-.bt-row:hover { background: var(--row-hover); }
+.brt-row { cursor: pointer; }
+.brt-row:hover { background: var(--row-hover); }
 .bt-item { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .bt-item img { width: 28px; height: 28px; flex: none; object-fit: contain; }
 .bt-item .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }

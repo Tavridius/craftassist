@@ -1459,7 +1459,7 @@ function btRows(rows) {
       ? `<span class="bt-miss" title="${escapeHtml(r.missing.join(", "))}">+${r.missing.length} ФАРМ</span>` : "";
     const pct = r.pct == null ? "—"
       : `<span class="pct ${r.pct > 0 ? "up" : "down"}">${r.pct > 0 ? "+" : ""}${r.pct}%</span>`;
-    return `<tr class="bt-row" data-id="${r.id}">
+    return `<tr class="brt-row" data-id="${r.id}">
       <td><div class="bt-item"><img loading="lazy" src="${asset(r.icon)}" alt="">
         <span class="nm" style="color:${rank(r.color).color}">${escapeHtml(r.name)}</span>${missing}${cur}</div></td>
       <td class="bt-place">${escapeHtml(r.settlement_name)}${r.level ? ` <span class="lv">УР.${r.level}</span>` : ""}</td>
@@ -1525,7 +1525,7 @@ function renderBarter(d) {
 
 function wireBtRows(open) {
   // клик по строке раздела открывает модал СВОЕГО раздела (не карточку крафта)
-  page.querySelectorAll(".bt-row[data-id]").forEach((r) =>
+  page.querySelectorAll(".brt-row[data-id]").forEach((r) =>
     r.addEventListener("click", () => { open(r.dataset.id); }));
 }
 
@@ -1634,7 +1634,7 @@ function chainCompute() {
     }
   }
   const rows = Object.values(agg).sort((a, b) => (b.cost || 0) - (a.cost || 0)).map((r) =>
-    `<tr class="bt-row" data-id="${r.id}"><td><div class="bt-item">
+    `<tr class="brt-row" data-id="${r.id}"><td><div class="bt-item">
        <img loading="lazy" src="${asset(r.icon)}" alt=""><span class="nm" style="color:${rank(r.color).color}">${escapeHtml(r.name)}</span></div></td>
      <td class="r">${fmt(r.amount)}</td>
      <td class="r">${r.farm && !r.cost ? '<span class="bt-farm">ФАРМ</span>' : fmt(r.cost) + " ₽"}</td></tr>`).join("");
@@ -1646,7 +1646,7 @@ function chainCompute() {
       <tbody>${rows || `<tr><td colspan="3" class="empty-sm">ТОЛЬКО ТРЕЙД-ИН, ДОП. РЕСУРСОВ НЕТ.</td></tr>`}</tbody>
     </table></div>
     <div class="chain-total">ИТОГО ЗАКУПКА РЕСУРСОВ${money ? " + ДОПЛАТА" : ""}: <b>${fmt(cost + money)} ₽</b>${hasFarm ? ` <span class="bt-farm">+ ФАРМ-ВХОДЫ (НЕТ НА АУКЕ)</span>` : ""}</div>`;
-  out.querySelectorAll(".bt-row[data-id]").forEach((el) =>
+  out.querySelectorAll(".brt-row[data-id]").forEach((el) =>
     el.addEventListener("click", () => { openBarterModal(el.dataset.id); }));
 }
 
@@ -1915,7 +1915,7 @@ function obmenRow(r, extra = "") {
   const aucBasis = r.sell_basis === "sales" ? "по сделкам аука, минус комиссия"
                  : r.sell_basis === "buyout" ? "по мин. выкупу, минус комиссия" : "";
   const chip = r.basis ? `<span class="obm-basis ${r.basis}">${r.basis === "vendor" ? "СКУПЩИК" : "АУК"}</span>` : "";
-  return `<tr class="bt-row" data-id="${r.id}">
+  return `<tr class="brt-row" data-id="${r.id}">
     <td><div class="bt-item"><img loading="lazy" src="${asset(r.icon)}" alt="">
       <span class="nm" style="color:${rank(r.color).color}">${r.amount > 1 ? r.amount + "× " : ""}${escapeHtml(r.name)}</span>
       ${r.note ? `<span class="bt-cur">${escapeHtml(r.note)}</span>` : ""}</div></td>
