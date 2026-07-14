@@ -689,7 +689,8 @@ function dashCraftRow(e) {
 function dashArtRow(r) {
   return `<div class="dash-row" data-nav="/artefact/${r.id}">
     <img loading="lazy" src="${asset(r.icon)}" alt="">
-    <div class="nm">${escapeHtml(r.name)} <span class="dash-sub">${bucketBadge(r.qlt, r.ptn)}</span></div>
+    <div class="nm" style="color:${qltColor(r.qlt)}">${escapeHtml(r.name)}
+      <span class="dash-sub" style="color:${qltColor(r.qlt)}">${bucketBadge(r.qlt, r.ptn)}</span></div>
     <span class="pct ${r.pct > 0 ? "up" : "down"}">${r.pct > 0 ? "+" : ""}${r.pct}%</span>
   </div>`;
 }
@@ -1459,8 +1460,8 @@ function btRows(rows) {
     const pct = r.pct == null ? "—"
       : `<span class="pct ${r.pct > 0 ? "up" : "down"}">${r.pct > 0 ? "+" : ""}${r.pct}%</span>`;
     return `<tr class="bt-row" data-id="${r.id}">
-      <td class="bt-item"><img loading="lazy" src="${asset(r.icon)}" alt="">
-        <span class="nm" style="color:${rank(r.color).color}">${escapeHtml(r.name)}</span>${missing}${cur}</td>
+      <td><div class="bt-item"><img loading="lazy" src="${asset(r.icon)}" alt="">
+        <span class="nm" style="color:${rank(r.color).color}">${escapeHtml(r.name)}</span>${missing}${cur}</div></td>
       <td class="bt-place">${escapeHtml(r.settlement_name)}${r.level ? ` <span class="lv">УР.${r.level}</span>` : ""}</td>
       <td class="r">${cost}</td>
       <td class="r">${r.sell_net != null ? fmt(r.sell_net) + " ₽" : "—"}</td>
@@ -1480,16 +1481,19 @@ function renderBarter(d) {
   const opts = (list, cur, all) => `<option value="">${all}</option>` +
     list.map((s) => `<option value="${s.v}" ${cur === s.v ? "selected" : ""}>${escapeHtml(s.t)}</option>`).join("");
   const setl = (d.settlements || []).map((s) => ({ v: s.key, t: s.name }));
-  const cats = (d.categories || []).map((c) => ({ v: c, t: catName(c) }));
   const lvls = [1, 2, 3, 4, 5, 6, 7].map((v) => ({ v: String(v), t: `БАЗА ДО УР.${v}` }));
+  // разделы по категориям результата — табами, как вкладки внутри раздела
+  const cats = ["", ...(d.categories || [])];
+  const catTabs = cats.map((c) => `<button class="bt-cat ${btState.cat === c ? "on" : ""}"
+      data-cat="${c}">${c ? catName(c) : "ВСЕ"}</button>`).join("");
   page.innerHTML = `<div class="btmod">
     <div class="section-head">
       <div class="section-title">▸ БАРТЕР · ОБМЕНЫ У ТОРГОВЦЕВ</div>
       <div class="section-note" id="btCount">${d.total} ОБМЕНОВ · КОМИССИЯ АУКА ${d.fee_pct}% УЧТЕНА</div>
     </div>
+    <div class="bt-cats">${catTabs}</div>
     <div class="bt-filters">
       <select id="btSettle">${opts(setl, btState.settlement, "ВСЕ ПОСЕЛЕНИЯ")}</select>
-      <select id="btCat">${opts(cats, btState.cat, "ВСЕ КАТЕГОРИИ")}</select>
       <select id="btLevel">${opts(lvls, btState.maxLevel ? String(btState.maxLevel) : "", "ЛЮБОЙ УРОВЕНЬ")}</select>
       <label class="bt-pure"><input type="checkbox" id="btPure" ${btState.pure ? "checked" : ""}> БЕЗ ФАРМА</label>
       <div class="search-box bt-search"><div class="search-prompt">&gt;_</div>
@@ -1503,8 +1507,12 @@ function renderBarter(d) {
     </table></div>
     <button id="btMore" class="bt-more hidden">ПОКАЗАТЬ ЕЩЁ</button>
   </div>`;
+  page.querySelectorAll(".bt-cat").forEach((b) => b.addEventListener("click", () => {
+    btState.cat = b.dataset.cat; btState.shown = 60;
+    page.querySelectorAll(".bt-cat").forEach((x) => x.classList.toggle("on", x === b));
+    refreshBarter();
+  }));
   $("btSettle").addEventListener("change", (e) => { btState.settlement = e.target.value; btState.shown = 60; refreshBarter(); });
-  $("btCat").addEventListener("change", (e) => { btState.cat = e.target.value; btState.shown = 60; refreshBarter(); });
   $("btLevel").addEventListener("change", (e) => { btState.maxLevel = +e.target.value || 0; btState.shown = 60; refreshBarter(); });
   $("btPure").addEventListener("change", (e) => { btState.pure = e.target.checked; btState.shown = 60; refreshBarter(); });
   $("btQ").addEventListener("input", (e) => {
@@ -1550,6 +1558,17 @@ async function openBarterModal(id) {
       <div class="use-list">${d.used_in.map((u) => `<div class="use-row" data-id="${u.id}">
         <img loading="lazy" src="${asset(u.icon)}" alt=""><span class="nm">${escapeHtml(u.name)}</span></div>`).join("")}</div>
     </div>` : "";
+  // цепочка трейд-инов: что сдаётся В этот бартер ← этот предмет → куда сдаётся он сам
+  const chainChip = (u) => `<span class="chain-chip" data-id="${u.id}">
+    <img loading="lazy" src="${asset(u.icon)}" alt="">${escapeHtml(u.name)}</span>`;
+  const prev = d.chain_prev || [], next = d.used_in || [];
+  const chain = (prev.length || next.length) ? `<div class="gm-chain">
+      <div class="reqs-lbl">ЦЕПОЧКА ОБМЕНОВ</div>
+      <div class="gm-chain-row">
+        ${prev.length ? prev.map(chainChip).join("") + `<span class="chain-arr">→</span>` : ""}
+        <span class="chain-chip this">${escapeHtml(it.name)}</span>
+        ${next.length ? `<span class="chain-arr">→</span>` + next.map(chainChip).join("") : ""}
+      </div></div>` : "";
   $("gModalBody").innerHTML = `
     <div class="gm-head">
       <img src="${asset(it.icon)}" alt="">
@@ -1557,11 +1576,12 @@ async function openBarterModal(id) {
       <a class="mk-card" href="/item/${it.id}">ПОЛНАЯ КАРТОЧКА ▸</a>
     </div>
     ${stats.length ? `<div class="gm-stats">${stats.join(" · ")}</div>` : ""}
-    ${ways ? `<div class="reqs-lbl">ГДЕ МЕНЯЕТСЯ · ${d.ways.length}</div>${ways}`
+    ${chain}
+    ${ways ? `<div class="reqs-lbl">ГДЕ МЕНЯЕТСЯ · ${d.ways.length} · НУЖНЫЕ РЕСУРСЫ И ЦЕНЫ</div>${ways}`
            : `<div class="empty-sm">ПРЯМЫХ БАРТЕРОВ НА ЭТОТ ПРЕДМЕТ НЕТ.</div>`}
     ${used}`;
   // клики внутри — остаёмся в бартер-контексте
-  $("gModalBody").querySelectorAll(".ilink[data-id], .use-row[data-id]").forEach((el) =>
+  $("gModalBody").querySelectorAll(".ilink[data-id], .use-row[data-id], .chain-chip[data-id]").forEach((el) =>
     el.addEventListener("click", () => { openBarterModal(el.dataset.id); }));
 }
 
@@ -1831,9 +1851,9 @@ function obmenRow(r, extra = "") {
                  : r.sell_basis === "buyout" ? "по мин. выкупу, минус комиссия" : "";
   const chip = r.basis ? `<span class="obm-basis ${r.basis}">${r.basis === "vendor" ? "СКУПЩИК" : "АУК"}</span>` : "";
   return `<tr class="bt-row" data-id="${r.id}">
-    <td class="bt-item"><img loading="lazy" src="${asset(r.icon)}" alt="">
+    <td><div class="bt-item"><img loading="lazy" src="${asset(r.icon)}" alt="">
       <span class="nm" style="color:${rank(r.color).color}">${r.amount > 1 ? r.amount + "× " : ""}${escapeHtml(r.name)}</span>
-      ${r.note ? `<span class="bt-cur">${escapeHtml(r.note)}</span>` : ""}</td>
+      ${r.note ? `<span class="bt-cur">${escapeHtml(r.note)}</span>` : ""}</div></td>
     <td class="r">${fmt(r.coins)}</td>
     <td class="r" title="${aucBasis}">${r.value_auction != null ? fmt(r.value_auction) + " ₽" : "—"}</td>
     <td class="r" title="мгновенная продажа NPC, без комиссии">${r.value_vendor != null ? fmt(r.value_vendor) + " ₽" : "—"}</td>
@@ -1925,8 +1945,9 @@ async function loadObmenPlan() {
 // ---------- биржа артефактов: топ роста цен по корзинам качество×заточка ----------
 const QLT_RU = { 0: "ОБЫЧНЫЙ", 1: "НЕОБЫЧНЫЙ", 2: "ОСОБЫЙ",
                  3: "РЕДКИЙ", 4: "ИСКЛЮЧИТЕЛЬНЫЙ", 5: "ЛЕГЕНДАРНЫЙ" };
-const qltLabel = (q) => `Q${q}` + (QLT_RU[q] ? ` · ${QLT_RU[q]}` : "");
-const bucketBadge = (qlt, ptn) => `Q${qlt} +${ptn}`;
+// человеческие имена качества вместо «Q3» (решение юзера), цвет — qltColor
+const qltLabel = (q) => QLT_RU[q] || `Q${q}`;
+const bucketBadge = (qlt, ptn) => `${QLT_RU[qlt] || "Q" + qlt} +${ptn}`;
 const PTN_LEVELS = [0, 5, 10, 15];  // уровни заточки в UI (решение: только эти)
 
 let artFilters = { window: "7d", qlt: -1, ptn: -1 };
@@ -1951,7 +1972,8 @@ function artRow(e) {
   return `<div class="side-row" data-id="${e.id}" data-qlt="${e.qlt}" data-ptn="${e.ptn}">
     <img loading="lazy" src="${asset(e.icon)}" alt="">
     <div class="info">
-      <div class="nm">${escapeHtml(e.name)} <span class="bucket">${bucketBadge(e.qlt, e.ptn)}</span></div>
+      <div class="nm" style="color:${qltColor(e.qlt)}">${escapeHtml(e.name)}
+        <span class="bucket" style="border-color:${qltColor(e.qlt)};color:${qltColor(e.qlt)}">${bucketBadge(e.qlt, e.ptn)}</span></div>
       <div class="meta">СР. ${fmt(e.avg)} ₽ · БЫЛО ${fmt(e.prev_avg)} ₽ · ${e.n} ПРОД</div>
     </div>
     <span class="pct ${e.pct > 0 ? "up" : "down"}">${e.pct > 0 ? "+" : ""}${e.pct}%</span>
@@ -2071,7 +2093,7 @@ function renderArtCard(d) {
     <div class="bucket-row">${bs.map((b) => `
       <button class="bucket-chip ${b === sel ? "on" : ""} ${PTN_LEVELS.includes(b.ptn) ? "" : "offlevel"}"
               data-q="${b.qlt}" data-p="${b.ptn}" title="${qltLabel(b.qlt)}, заточка +${b.ptn}">
-        <span class="bb">${bucketBadge(b.qlt, b.ptn)}</span>
+        <span class="bb" style="color:${qltColor(b.qlt)}">${bucketBadge(b.qlt, b.ptn)}</span>
         <span class="bp">${b.avg7d != null ? fmt(b.avg7d) + " ₽"
           : b.price ? fmt(b.price.price) + " ₽ · ЛОТЫ" : "мало данных"}</span>
         <span class="bn">${b.n7} ПРОД/7Д</span>

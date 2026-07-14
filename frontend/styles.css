@@ -965,6 +965,13 @@ a.auth-user:hover { color: var(--green); border-color: var(--green-border); text
 .isel-opt.on { background: rgba(124, 230, 142, 0.08); color: var(--green); }
 
 /* ---------- бартер ---------- */
+.bt-cats { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 0; }
+.bt-cat {
+  background: var(--panel-deep); border: 1px solid var(--border-dim); color: var(--dim);
+  padding: 6px 12px; font: inherit; font-size: 10px; letter-spacing: 0.1em; cursor: pointer;
+}
+.bt-cat:hover { border-color: var(--border); color: var(--text); }
+.bt-cat.on { border-color: var(--green-border); color: var(--green); background: rgba(124, 230, 142, 0.06); }
 .bt-filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 10px 0; }
 .bt-filters select {
   background: var(--panel); border: 1px solid var(--border); color: var(--text);
@@ -1069,6 +1076,17 @@ a.auth-user:hover { color: var(--green); border-color: var(--green-border); text
 .gm-offer { border: 1px solid var(--border-deep); margin-bottom: 12px; }
 #gModalBody .reqs-lbl { margin: 12px 0 6px; }
 #gModalBody .bt-way { margin-bottom: 8px; }
+.gm-chain-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.chain-chip {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 260px;
+  border: 1px solid var(--border); background: var(--panel); color: var(--text);
+  padding: 4px 8px; font-size: 11px; cursor: pointer; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.chain-chip img { width: 20px; height: 20px; flex: none; object-fit: contain; }
+.chain-chip:hover { border-color: var(--green-border); color: var(--green); }
+.chain-chip.this { border-color: var(--green-border); color: var(--green); cursor: default; }
+.chain-arr { color: var(--dimmer); font-size: 13px; }
 .obm-plan { margin-bottom: 14px; }
 .obm-plan .reqs-lbl { margin-bottom: 6px; }
 

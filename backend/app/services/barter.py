@@ -206,11 +206,16 @@ def analyze(iid: str) -> dict:
             for i in o["inputs"]:
                 seen.add(i["id"])
     store.request(seen | {iid})  # непосчитанное — воркеру вне очереди
+    # цепочка трейд-инов «до»: входы, которые сами получаются бартером
+    # (типичная лестница брони/оружия: тир N сдаётся в тир N+1)
+    prev_ids = {i for i in seen if i in db.barter_by_result}
+    name_of = lambda i: (db.items.get(i) or {}).get("name", i)  # noqa: E731
     p = store.get(iid)
     return {
         "item": _brief(iid),
         "buy_price": craft.unit_buy_price(iid) if p["available"] else None,
         **_sell_side(iid),
         "ways": ways,
+        "chain_prev": [_brief(i) for i in sorted(prev_ids, key=name_of)],
         "used_in": [_brief(rid) for rid in db.barter_used_in.get(iid, [])],
     }
