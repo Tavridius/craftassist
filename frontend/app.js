@@ -1104,12 +1104,40 @@ function renderMarket(ov) {
 function mkModalClose() {
   const m = $("mkModal");
   if (m) m.classList.add("hidden");
-  document.body.classList.remove("modal-open");
   marketState.itemId = null;
+  syncModalScroll();
 }
 
+// ---------- общий модал разделов (бартер, обменки) ----------
+function gModalOpen(html) {
+  $("gModalBody").innerHTML = html;
+  const m = $("gModal");
+  m.classList.remove("hidden");
+  m.querySelector(".mk-modal-box").scrollTop = 0;
+  document.body.classList.add("modal-open");
+}
+
+function gModalClose() {
+  $("gModal").classList.add("hidden");
+  syncModalScroll();
+}
+
+function syncModalScroll() {
+  const anyOpen = ["gModal", "mkModal"].some((id) => {
+    const m = $(id);
+    return m && !m.classList.contains("hidden");
+  });
+  document.body.classList.toggle("modal-open", anyOpen);
+}
+
+(function wireGModal() {
+  const m = $("gModal");
+  $("gModalX").addEventListener("click", gModalClose);
+  m.addEventListener("click", (e) => { if (e.target === m) gModalClose(); });
+})();
+
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") mkModalClose();
+  if (e.key === "Escape") { mkModalClose(); gModalClose(); }
 });
 
 function wireMkRows(root) {
@@ -1416,7 +1444,7 @@ async function refreshBarter(full = false) {
   if (full) renderBarter(d);
   $("btBody").innerHTML = btRows(d.rows);
   $("btCount").textContent = `${d.total} ОБМЕНОВ · КОМИССИЯ АУКА ${d.fee_pct}% УЧТЕНА`;
-  wireBtRows();
+  wireBtRows(openBarterModal);
   btMore(d.rows);
 }
 
@@ -1468,7 +1496,7 @@ function renderBarter(d) {
         <input id="btQ" type="search" autocomplete="off" placeholder="ФИЛЬТР ПО НАЗВАНИЮ…" value="${escapeHtml(btState.q)}"></div>
     </div>
     <div class="bt-note">СТОИМОСТЬ = ДЕНЬГИ ТОРГОВЦУ + ЗАКУПКА ВХОДОВ НА АУКЕ (ТРЕЙД-ИН РАСКРЫВАЕТСЯ РЕКУРСИВНО).
-      «ФАРМ» — ВХОДЫ, КОТОРЫХ НЕТ НА АУКЕ (КВЕСТОВЫЕ/ЖЕТОНЫ). КЛИК ПО СТРОКЕ — КАРТОЧКА ПРЕДМЕТА.</div>
+      «ФАРМ» — ВХОДЫ, КОТОРЫХ НЕТ НА АУКЕ (КВЕСТОВЫЕ/ЖЕТОНЫ). КЛИК ПО СТРОКЕ — ДЕТАЛИ ОБМЕНА.</div>
     <div class="bt-wrap"><table class="bt-table">
       <thead><tr><th>ПРЕДМЕТ</th><th>ГДЕ</th><th class="r">СТОИМОСТЬ</th><th class="r">ПРОДАЖА~</th><th class="r">ВЫГОДА</th></tr></thead>
       <tbody id="btBody"></tbody>
@@ -1485,9 +1513,94 @@ function renderBarter(d) {
   });
 }
 
-function wireBtRows() {
+function wireBtRows(open) {
+  // клик по строке раздела открывает модал СВОЕГО раздела (не карточку крафта)
   page.querySelectorAll(".bt-row[data-id]").forEach((r) =>
-    r.addEventListener("click", () => { navigate(`/item/${r.dataset.id}`); }));
+    r.addEventListener("click", () => { open(r.dataset.id); }));
+}
+
+// ---------- модал бартера: все способы обмена предмета ----------
+async function openBarterModal(id) {
+  gModalOpen(`<div class="spinner">// БАРТЕР-ДОСЬЕ</div>`);
+  let d;
+  try {
+    d = await fetch(api(`/barter/item/${id}`)).then((r) => r.json());
+  } catch (e) {
+    $("gModalBody").innerHTML = `<div class="empty">[!] ОШИБКА СЕТИ</div>`;
+    return;
+  }
+  const it = d.item;
+  const best = d.ways[0] && d.ways[0].offers[0];
+  const stats = [];
+  if (d.buy_price != null) stats.push(`КУПИТЬ НА АУКЕ: <b>${fmt(d.buy_price)} ₽</b>`);
+  if (d.sell_net != null)
+    stats.push(`ПРОДАЖА~ (НЕТТО): <b>${fmt(d.sell_net)} ₽</b>${d.sell_basis === "buyout" ? " <span class='unit'>ПО ВЫКУПУ</span>" : ""}`);
+  if (best && best.cost != null) {
+    stats.push(`ЛУЧШИЙ БАРТЕР: <b>${fmt(best.cost)} ₽</b>`);
+    if (d.buy_price != null)
+      stats.push(best.cost < d.buy_price
+        ? `<span class="pct up">БАРТЕР ВЫГОДНЕЕ АУКА НА ${fmt(d.buy_price - best.cost)} ₽</span>`
+        : `<span class="pct down">АУК ДЕШЕВЛЕ НА ${fmt(best.cost - d.buy_price)} ₽</span>`);
+  }
+  const ways = d.ways.map((w) => `<div class="bt-way">
+    <div class="bt-way-head">${escapeHtml(w.settlement_name)}${w.level ? ` <span class="lv">УР.${w.level}</span>` : ""}</div>
+    ${w.offers.map((o) => btOfferHtml(o)).join("")}</div>`).join("");
+  const used = (d.used_in || []).length ? `<div class="reqs-sec">
+      <div class="reqs-lbl">СДАЁТСЯ В БАРТЕР ДЛЯ · ${d.used_in.length}</div>
+      <div class="use-list">${d.used_in.map((u) => `<div class="use-row" data-id="${u.id}">
+        <img loading="lazy" src="${asset(u.icon)}" alt=""><span class="nm">${escapeHtml(u.name)}</span></div>`).join("")}</div>
+    </div>` : "";
+  $("gModalBody").innerHTML = `
+    <div class="gm-head">
+      <img src="${asset(it.icon)}" alt="">
+      <div class="gm-title" style="color:${rank(it.color).color}">${escapeHtml(it.name)}</div>
+      <a class="mk-card" href="/item/${it.id}">ПОЛНАЯ КАРТОЧКА ▸</a>
+    </div>
+    ${stats.length ? `<div class="gm-stats">${stats.join(" · ")}</div>` : ""}
+    ${ways ? `<div class="reqs-lbl">ГДЕ МЕНЯЕТСЯ · ${d.ways.length}</div>${ways}`
+           : `<div class="empty-sm">ПРЯМЫХ БАРТЕРОВ НА ЭТОТ ПРЕДМЕТ НЕТ.</div>`}
+    ${used}`;
+  // клики внутри — остаёмся в бартер-контексте
+  $("gModalBody").querySelectorAll(".ilink[data-id], .use-row[data-id]").forEach((el) =>
+    el.addEventListener("click", () => { openBarterModal(el.dataset.id); }));
+}
+
+// ---------- модал обменки: позиция Перекупщика ----------
+function openObmenModal(id) {
+  const r = (obmenData && obmenData.positions || []).find((p) => p.id === id);
+  if (!r) return;
+  const chan = [];
+  chan.push(`<div class="bt-ing"><span>ЦЕНА У ПЕРЕКУПЩИКА</span>
+    <span class="bt-ing-price"><b>${fmt(r.coins)}</b> МОНЕТ${r.amount > 1 ? ` ЗА ${r.amount} ШТ` : ""}</span></div>`);
+  if (r.limit) chan.push(`<div class="bt-ing"><span>ЛИМИТ ПОКУПОК</span><span class="bt-ing-price">${fmt(r.limit)}</span></div>`);
+  chan.push(`<div class="bt-ing"><span>СБЫТ НА АУКЕ (−${obmenData.fee_pct}%)</span>
+    <span class="bt-ing-price">${r.value_auction != null
+      ? `${fmt(r.value_auction)} ₽ <span class="unit">${r.sell_basis === "sales" ? "ПО СДЕЛКАМ" : "ПО ВЫКУПУ"}</span>`
+      : "ЦЕНА ГРЕЕТСЯ…"}</span></div>`);
+  chan.push(`<div class="bt-ing"><span>СБЫТ СКУПЩИКУ (МГНОВЕННО)</span>
+    <span class="bt-ing-price">${r.value_vendor != null ? fmt(r.value_vendor) + " ₽" : "—"}</span></div>`);
+  const rateLine = r.rate != null
+    ? `<div class="bt-ing bt-total"><span>КУРС (ЛУЧШИЙ КАНАЛ — ${r.basis === "vendor" ? "СКУПЩИК" : "АУКЦИОН"})</span>
+        <span class="bt-ing-price"><span class="pct ${r.rate >= 1 ? "up" : "down"}">${r.rate.toLocaleString("ru-RU")} ₽/МОНЕТА</span></span></div>` : "";
+  gModalOpen(`
+    <div class="gm-head">
+      <img src="${asset(r.icon)}" alt="">
+      <div class="gm-title" style="color:${rank(r.color).color}">${escapeHtml(r.name)}</div>
+      <a class="mk-card" href="/item/${r.id}">ПОЛНАЯ КАРТОЧКА ▸</a>
+    </div>
+    <div class="bt-offer gm-offer">${chan.join("")}${rateLine}</div>
+    <div id="gmBarterUse"></div>`);
+  // связка с бартером: где этот ресурс сдаётся (подгружаем тихо)
+  fetch(api(`/barter/item/${id}`)).then((x) => x.json()).then((d) => {
+    const box = $("gmBarterUse");
+    if (!box || !(d.used_in || []).length) return;
+    box.innerHTML = `<div class="reqs-sec">
+      <div class="reqs-lbl">НУЖЕН ДЛЯ БАРТЕРОВ · ${d.used_in.length}</div>
+      <div class="use-list">${d.used_in.map((u) => `<div class="use-row" data-id="${u.id}">
+        <img loading="lazy" src="${asset(u.icon)}" alt=""><span class="nm">${escapeHtml(u.name)}</span></div>`).join("")}</div></div>`;
+    box.querySelectorAll(".use-row[data-id]").forEach((el) =>
+      el.addEventListener("click", () => { openBarterModal(el.dataset.id); }));
+  }).catch(() => {});
 }
 
 // ---------- бартер в карточке предмета ----------
@@ -1692,6 +1805,7 @@ async function renderComments(pageKey) {
 
 // ---------- обменки: монеты Перекупщика ----------
 let obmenCoins = +(localStorage.getItem("sz_coins") || 0) || "";
+let obmenData = null;   // снапшот /api/exchange — данные для модалов позиций
 
 async function openObmen() {
   home.classList.add("hidden");
@@ -1708,6 +1822,7 @@ async function openObmen() {
     return;
   }
   if (location.pathname !== "/obmen") return;
+  obmenData = d;
   renderObmen(d);
 }
 
@@ -1753,7 +1868,7 @@ function renderObmen(d) {
   const rows = d.positions.map((r) => obmenRow(r)).join("");
   const topVen = (d.top_vendor || []).length
     ? `<div class="bt-note">ТОП ДЛЯ МГНОВЕННОЙ СДАЧИ СКУПЩИКУ: ${d.top_vendor.map((t) =>
-        `<a href="/item/${t.id}">${escapeHtml(t.name)}</a> (${t.rate.toLocaleString("ru-RU")} ₽/МОН)`).join(" · ")}</div>` : "";
+        `<span class="obm-link" data-id="${t.id}">${escapeHtml(t.name)}</span> (${t.rate.toLocaleString("ru-RU")} ₽/МОН)`).join(" · ")}</div>` : "";
   page.innerHTML = `<div class="btmod">
     <div class="section-head">
       <div class="section-title">▸ ОБМЕНКИ · МОНЕТЫ ПЕРЕКУПЩИКА</div>
@@ -1773,13 +1888,15 @@ function renderObmen(d) {
       <tbody>${rows}</tbody>
     </table></div>
     <div class="bt-note" style="margin-top:8px">АУК~ — ОЖИДАЕМАЯ ВЫРУЧКА НА АУКЦИОНЕ ПОСЛЕ КОМИССИИ (ПО РЕАЛЬНЫМ СДЕЛКАМ);
-      СКУПЩИК — ГАРАНТИРОВАННАЯ МГНОВЕННАЯ ПРОДАЖА NPC. КЛИК ПО СТРОКЕ — КАРТОЧКА ПРЕДМЕТА.</div>
+      СКУПЩИК — ГАРАНТИРОВАННАЯ МГНОВЕННАЯ ПРОДАЖА NPC. КЛИК ПО СТРОКЕ — ДЕТАЛИ ПОЗИЦИИ.</div>
   </div>`;
   const inp = $("obmCoins");
   wireBudget && wireBudget(inp, (v) => { obmenCoins = v; localStorage.setItem("sz_coins", String(v || 0)); });
   $("obmPlan").addEventListener("click", loadObmenPlan);
   inp.addEventListener("keydown", (e) => { if (e.key === "Enter") loadObmenPlan(); });
-  wireBtRows();
+  page.querySelectorAll(".obm-link[data-id]").forEach((el) =>
+    el.addEventListener("click", () => { openObmenModal(el.dataset.id); }));
+  wireBtRows(openObmenModal);
 }
 
 async function loadObmenPlan() {
@@ -1802,7 +1919,7 @@ async function loadObmenPlan() {
       <tbody>${rows}</tbody>
     </table></div></div>`
     : `<div class="empty-sm">НЕ ИЗ ЧЕГО СОБРАТЬ КОРЗИНУ (НЕТ ПОЗИЦИЙ С ИЗВЕСТНОЙ ЦЕНОЙ).</div>`;
-  wireBtRows();
+  wireBtRows(openObmenModal);
 }
 
 // ---------- биржа артефактов: топ роста цен по корзинам качество×заточка ----------
@@ -2805,6 +2922,7 @@ function migrateLegacyHash() {
 
 function route() {
   renderOnboard();  // подсказка прячется на профиле, заглушках и в других разделах
+  gModalClose();    // навигация закрывает модалы разделов
   const path = location.pathname;
   const strip = document.querySelector(".search-strip");
   let mm;

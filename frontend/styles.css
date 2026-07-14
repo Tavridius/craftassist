@@ -982,7 +982,9 @@ a.auth-user:hover { color: var(--green); border-color: var(--green-border); text
 .bt-search { flex: 1; min-width: 200px; max-width: 380px; }
 .bt-note { font-size: 10px; color: var(--dimmer); letter-spacing: 0.05em; margin: 0 0 10px; line-height: 1.6; }
 .bt-wrap { overflow-x: auto; border: 1px solid var(--border); }
-.bt-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+/* min-width: узкий экран скроллит таблицу внутри рамки, а не ломает колонки */
+.bt-table { width: 100%; min-width: 680px; border-collapse: collapse; font-size: 12px; }
+.bt-table td { vertical-align: middle; }
 .bt-table th {
   text-align: left; font-size: 10px; letter-spacing: 0.1em; color: var(--dim);
   padding: 8px 10px; border-bottom: 1px solid var(--border); background: var(--panel-deep);
@@ -992,9 +994,9 @@ a.auth-user:hover { color: var(--green); border-color: var(--green-border); text
 .bt-table td { padding: 7px 10px; border-bottom: 1px solid var(--border-deep); }
 .bt-row { cursor: pointer; }
 .bt-row:hover { background: var(--row-hover); }
-.bt-item { display: flex; align-items: center; gap: 8px; min-width: 220px; }
+.bt-item { display: flex; align-items: center; gap: 8px; min-width: 220px; max-width: 420px; }
 .bt-item img { width: 28px; height: 28px; flex: none; object-fit: contain; }
-.bt-item .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bt-item .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .bt-place { color: var(--dim); font-size: 11px; white-space: nowrap; }
 .bt-place .lv, .bt-way-head .lv {
   font-size: 9px; letter-spacing: 0.08em; border: 1px solid var(--border);
@@ -1049,7 +1051,24 @@ a.auth-user:hover { color: var(--green); border-color: var(--green-border); text
   color: var(--dimmer); padding: 0 4px; vertical-align: 1px;
 }
 .obm-basis.vendor { border-color: var(--amber-border); color: var(--amber); }
-.bt-note a { color: var(--green); }
+.bt-note a, .obm-link { color: var(--green); cursor: pointer; }
+.obm-link:hover { text-shadow: var(--glow); }
+
+/* ---------- модалы разделов (бартер / обменки) ---------- */
+.gm-head {
+  display: flex; align-items: center; gap: 12px;
+  padding-bottom: 10px; border-bottom: 1px solid var(--border); margin-bottom: 10px;
+}
+.gm-head img { width: 44px; height: 44px; object-fit: contain; flex: none; }
+.gm-title { font-size: 16px; font-weight: 800; letter-spacing: 0.05em; flex: 1; min-width: 0; }
+.gm-stats {
+  font-size: 11px; color: var(--dim); letter-spacing: 0.05em; line-height: 1.8;
+  margin-bottom: 12px;
+}
+.gm-stats b { color: var(--bright); font-variant-numeric: tabular-nums; }
+.gm-offer { border: 1px solid var(--border-deep); margin-bottom: 12px; }
+#gModalBody .reqs-lbl { margin: 12px 0 6px; }
+#gModalBody .bt-way { margin-bottom: 8px; }
 .obm-plan { margin-bottom: 14px; }
 .obm-plan .reqs-lbl { margin-bottom: 6px; }
 
