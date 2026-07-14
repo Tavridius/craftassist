@@ -31,6 +31,11 @@ CREATE TABLE IF NOT EXISTS patches (
 );
 CREATE INDEX IF NOT EXISTS idx_patches_created ON patches(created_at DESC);
 
+CREATE TABLE IF NOT EXISTS meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS comments (
     id       INTEGER PRIMARY KEY AUTOINCREMENT,
     page_key TEXT NOT NULL,
@@ -54,6 +59,19 @@ def init() -> None:
     logger.info("news: db ready (%d patches, %d comments)",
                 _conn.execute("SELECT COUNT(*) FROM patches").fetchone()[0],
                 _conn.execute("SELECT COUNT(*) FROM comments").fetchone()[0])
+
+
+def get_meta(key: str) -> str | None:
+    with _lock:
+        r = _conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+    return r["value"] if r else None
+
+
+def set_meta(key: str, value: str) -> None:
+    with _lock:
+        _conn.execute("INSERT INTO meta(key, value) VALUES(?,?) "
+                      "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
+        _conn.commit()
 
 
 # ---------- патчи ----------

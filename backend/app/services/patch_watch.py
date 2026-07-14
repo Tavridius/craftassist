@@ -218,8 +218,10 @@ class PatchWatch:
 
     async def loop(self) -> None:
         async with httpx.AsyncClient(trust_env=False) as client:
-            # бэкфилл всего тега при (почти) пустой базе — разово, постранично
-            if news.patch_count() < 5:
+            # бэкфилл всего тега — разово; маркер в news.meta переживает рестарты
+            # (прерванный рестартом бэкфилл продолжится: известные темы скипаются
+            # по lastPostedAt дёшево, без перекачки картинок)
+            if not news.get_meta("backfill_done"):
                 logger.info("patch_watch: backfill start")
                 offset = 0
                 while True:
@@ -228,6 +230,7 @@ class PatchWatch:
                     if not more or n == 0 or offset >= config.PATCH_BACKFILL_MAX:
                         break
                     await asyncio.sleep(1.5)
+                news.set_meta("backfill_done", "1")
                 logger.info("patch_watch: backfill done (%d patches)", news.patch_count())
             while True:
                 try:
