@@ -989,9 +989,11 @@ a.auth-user:hover { color: var(--green); border-color: var(--green-border); text
 .bt-search { flex: 1; min-width: 200px; max-width: 380px; }
 .bt-note { font-size: 10px; color: var(--dimmer); letter-spacing: 0.05em; margin: 0 0 10px; line-height: 1.6; }
 .bt-wrap { overflow-x: auto; border: 1px solid var(--border); }
-/* min-width: узкий экран скроллит таблицу внутри рамки, а не ломает колонки */
-.bt-table { width: 100%; min-width: 680px; border-collapse: collapse; font-size: 12px; }
-.bt-table td { vertical-align: middle; }
+/* table-layout: fixed — ширины колонок из заголовка (иначе auto-раскладка
+   растягивала первую колонку и заголовок «съезжал» относительно данных);
+   min-width — узкий экран скроллит таблицу внутри рамки, а не ломает её */
+.bt-table { width: 100%; min-width: 620px; border-collapse: collapse; font-size: 12px; table-layout: fixed; }
+.bt-table td { vertical-align: middle; overflow: hidden; text-overflow: ellipsis; }
 .bt-table th {
   text-align: left; font-size: 10px; letter-spacing: 0.1em; color: var(--dim);
   padding: 8px 10px; border-bottom: 1px solid var(--border); background: var(--panel-deep);
@@ -1001,10 +1003,10 @@ a.auth-user:hover { color: var(--green); border-color: var(--green-border); text
 .bt-table td { padding: 7px 10px; border-bottom: 1px solid var(--border-deep); }
 .bt-row { cursor: pointer; }
 .bt-row:hover { background: var(--row-hover); }
-.bt-item { display: flex; align-items: center; gap: 8px; min-width: 220px; max-width: 420px; }
+.bt-item { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .bt-item img { width: 28px; height: 28px; flex: none; object-fit: contain; }
 .bt-item .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.bt-place { color: var(--dim); font-size: 11px; white-space: nowrap; }
+.bt-place { color: var(--dim); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .bt-place .lv, .bt-way-head .lv {
   font-size: 9px; letter-spacing: 0.08em; border: 1px solid var(--border);
   color: var(--dimmer); padding: 0 4px; margin-left: 4px; white-space: nowrap;
@@ -1085,8 +1087,27 @@ a.auth-user:hover { color: var(--green); border-color: var(--green-border); text
 }
 .chain-chip img { width: 20px; height: 20px; flex: none; object-fit: contain; }
 .chain-chip:hover { border-color: var(--green-border); color: var(--green); }
-.chain-chip.this { border-color: var(--green-border); color: var(--green); cursor: default; }
+.chain-chip.this { border-color: var(--green-border); color: var(--green); }
 .chain-arr { color: var(--dimmer); font-size: 13px; }
+.chain-calc { margin-top: 12px; border-top: 1px dashed var(--border); padding-top: 10px; }
+.chain-calc-ctl {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+  font-size: 11px; letter-spacing: 0.06em; color: var(--dim); margin-bottom: 8px;
+}
+.chain-calc-ctl select {
+  background: var(--panel); border: 1px solid var(--border); color: var(--text);
+  height: 30px; padding: 0 6px; font: inherit; font-size: 11px; max-width: 240px;
+  appearance: none; cursor: pointer;
+}
+.chain-calc-ctl select:hover { border-color: var(--green-border); }
+.chain-sum { font-size: 11px; color: var(--dim); line-height: 1.6; margin-bottom: 8px; }
+.chain-sum b { color: var(--bright); }
+.chain-tbl { min-width: 380px; }
+.chain-total {
+  margin-top: 8px; font-size: 12px; letter-spacing: 0.05em; color: var(--text);
+  text-align: right;
+}
+.chain-total b { color: var(--green); font-size: 14px; }
 .obm-plan { margin-bottom: 14px; }
 .obm-plan .reqs-lbl { margin-bottom: 6px; }
 

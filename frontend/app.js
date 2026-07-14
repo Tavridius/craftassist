@@ -1502,7 +1502,9 @@ function renderBarter(d) {
     <div class="bt-note">СТОИМОСТЬ = ДЕНЬГИ ТОРГОВЦУ + ЗАКУПКА ВХОДОВ НА АУКЕ (ТРЕЙД-ИН РАСКРЫВАЕТСЯ РЕКУРСИВНО).
       «ФАРМ» — ВХОДЫ, КОТОРЫХ НЕТ НА АУКЕ (КВЕСТОВЫЕ/ЖЕТОНЫ). КЛИК ПО СТРОКЕ — ДЕТАЛИ ОБМЕНА.</div>
     <div class="bt-wrap"><table class="bt-table">
-      <thead><tr><th>ПРЕДМЕТ</th><th>ГДЕ</th><th class="r">СТОИМОСТЬ</th><th class="r">ПРОДАЖА~</th><th class="r">ВЫГОДА</th></tr></thead>
+      <thead><tr><th style="width:34%">ПРЕДМЕТ</th><th style="width:24%">ГДЕ</th>
+        <th class="r" style="width:14%">СТОИМОСТЬ</th><th class="r" style="width:14%">ПРОДАЖА~</th>
+        <th class="r" style="width:14%">ВЫГОДА</th></tr></thead>
       <tbody id="btBody"></tbody>
     </table></div>
     <button id="btMore" class="bt-more hidden">ПОКАЗАТЬ ЕЩЁ</button>
@@ -1558,17 +1560,9 @@ async function openBarterModal(id) {
       <div class="use-list">${d.used_in.map((u) => `<div class="use-row" data-id="${u.id}">
         <img loading="lazy" src="${asset(u.icon)}" alt=""><span class="nm">${escapeHtml(u.name)}</span></div>`).join("")}</div>
     </div>` : "";
-  // цепочка трейд-инов: что сдаётся В этот бартер ← этот предмет → куда сдаётся он сам
-  const chainChip = (u) => `<span class="chain-chip" data-id="${u.id}">
-    <img loading="lazy" src="${asset(u.icon)}" alt="">${escapeHtml(u.name)}</span>`;
-  const prev = d.chain_prev || [], next = d.used_in || [];
-  const chain = (prev.length || next.length) ? `<div class="gm-chain">
-      <div class="reqs-lbl">ЦЕПОЧКА ОБМЕНОВ</div>
-      <div class="gm-chain-row">
-        ${prev.length ? prev.map(chainChip).join("") + `<span class="chain-arr">→</span>` : ""}
-        <span class="chain-chip this">${escapeHtml(it.name)}</span>
-        ${next.length ? `<span class="chain-arr">→</span>` + next.map(chainChip).join("") : ""}
-      </div></div>` : "";
+  // полная лестница тиров + калькулятор ресурсов между звеньями
+  btChain = { nodes: d.chain || [], idx: d.chain_idx || 0,
+              from: 0, to: d.chain_idx || 0 };
   $("gModalBody").innerHTML = `
     <div class="gm-head">
       <img src="${asset(it.icon)}" alt="">
@@ -1576,12 +1570,83 @@ async function openBarterModal(id) {
       <a class="mk-card" href="/item/${it.id}">ПОЛНАЯ КАРТОЧКА ▸</a>
     </div>
     ${stats.length ? `<div class="gm-stats">${stats.join(" · ")}</div>` : ""}
-    ${chain}
+    ${chainBlock(it.id)}
     ${ways ? `<div class="reqs-lbl">ГДЕ МЕНЯЕТСЯ · ${d.ways.length} · НУЖНЫЕ РЕСУРСЫ И ЦЕНЫ</div>${ways}`
            : `<div class="empty-sm">ПРЯМЫХ БАРТЕРОВ НА ЭТОТ ПРЕДМЕТ НЕТ.</div>`}
     ${used}`;
+  wireChain();
   // клики внутри — остаёмся в бартер-контексте
-  $("gModalBody").querySelectorAll(".ilink[data-id], .use-row[data-id], .chain-chip[data-id]").forEach((el) =>
+  $("gModalBody").querySelectorAll(".ilink[data-id], .use-row[data-id]").forEach((el) =>
+    el.addEventListener("click", () => { openBarterModal(el.dataset.id); }));
+}
+
+// ---------- лестница тиров + калькулятор ресурсов между звеньями ----------
+let btChain = { nodes: [], idx: 0, from: 0, to: 0 };
+
+function chainBlock(currentId) {
+  const n = btChain.nodes;
+  if (n.length < 2) return "";  // одиночный предмет — лестницы нет
+  const chips = n.map((node, i) =>
+    `${i ? '<span class="chain-arr">→</span>' : ""}<span class="chain-chip${node.id === currentId ? " this" : ""}" data-id="${node.id}">
+      <img loading="lazy" src="${asset(node.icon)}" alt="">${escapeHtml(node.name)}</span>`).join("");
+  const opts = (sel) => n.map((node, i) =>
+    `<option value="${i}" ${i === sel ? "selected" : ""}>${i + 1}. ${escapeHtml(node.name)}</option>`).join("");
+  return `<div class="gm-chain">
+    <div class="reqs-lbl">ЦЕПОЧКА ОБМЕНОВ · ${n.length} ${n.length < 5 ? "ТИРА" : "ТИРОВ"} (СДАЁШЬ ЛЕВЫЙ → ПОЛУЧАЕШЬ ПРАВЫЙ)</div>
+    <div class="gm-chain-row">${chips}</div>
+    <div class="chain-calc">
+      <div class="chain-calc-ctl">СКОЛЬКО РЕСУРСОВ ОТ
+        <select id="chFrom">${opts(btChain.from)}</select> ДО
+        <select id="chTo">${opts(btChain.to)}</select></div>
+      <div id="chainCalcOut"></div>
+    </div></div>`;
+}
+
+function wireChain() {
+  const f = $("chFrom"), t = $("chTo");
+  if (!f || !t) return;
+  const upd = () => { btChain.from = +f.value; btChain.to = +t.value; chainCompute(); };
+  f.addEventListener("change", upd);
+  t.addEventListener("change", upd);
+  $("gModalBody").querySelectorAll(".chain-chip[data-id]").forEach((el) =>
+    el.addEventListener("click", () => { openBarterModal(el.dataset.id); }));
+  chainCompute();
+}
+
+function chainCompute() {
+  const out = $("chainCalcOut");
+  if (!out) return;
+  const n = btChain.nodes, from = btChain.from, to = btChain.to;
+  if (from >= to) {
+    out.innerHTML = `<div class="empty-sm">ВЫБЕРИ ЗВЕНО «ОТ» ЛЕВЕЕ, ЧЕМ «ДО» — СЧИТАЕМ ПУТЬ СНИЗУ ВВЕРХ.</div>`;
+    return;
+  }
+  const agg = {}; let money = 0, cost = 0, hasFarm = false;
+  for (let i = from + 1; i <= to; i++) {
+    const st = n[i].step;
+    if (!st) continue;
+    money += st.money || 0;
+    for (const r of st.resources) {
+      const a = agg[r.id] || (agg[r.id] = { ...r, amount: 0, cost: 0, farm: false });
+      a.amount += r.amount;
+      if (r.line_cost != null) { a.cost += r.line_cost; cost += r.line_cost; }
+      if (r.source === "farm" || r.line_cost == null) { a.farm = true; hasFarm = true; }
+    }
+  }
+  const rows = Object.values(agg).sort((a, b) => (b.cost || 0) - (a.cost || 0)).map((r) =>
+    `<tr class="bt-row" data-id="${r.id}"><td><div class="bt-item">
+       <img loading="lazy" src="${asset(r.icon)}" alt=""><span class="nm" style="color:${rank(r.color).color}">${escapeHtml(r.name)}</span></div></td>
+     <td class="r">${fmt(r.amount)}</td>
+     <td class="r">${r.farm && !r.cost ? '<span class="bt-farm">ФАРМ</span>' : fmt(r.cost) + " ₽"}</td></tr>`).join("");
+  out.innerHTML = `
+    <div class="chain-sum">ОТ <b>${escapeHtml(n[from].name)}</b> ДО <b>${escapeHtml(n[to].name)}</b>:
+      нужен <b>1× ${escapeHtml(n[from].name)}</b> (стартовый) + ресурсы ниже${money ? ` + доплата <b>${fmt(money)} ₽</b>` : ""}</div>
+    <div class="bt-wrap"><table class="bt-table chain-tbl">
+      <thead><tr><th style="width:60%">РЕСУРС · ВСЕГО ПО ПУТИ</th><th class="r" style="width:20%">КОЛ-ВО</th><th class="r" style="width:20%">ЦЕНА</th></tr></thead>
+      <tbody>${rows || `<tr><td colspan="3" class="empty-sm">ТОЛЬКО ТРЕЙД-ИН, ДОП. РЕСУРСОВ НЕТ.</td></tr>`}</tbody>
+    </table></div>
+    <div class="chain-total">ИТОГО ЗАКУПКА РЕСУРСОВ${money ? " + ДОПЛАТА" : ""}: <b>${fmt(cost + money)} ₽</b>${hasFarm ? ` <span class="bt-farm">+ ФАРМ-ВХОДЫ (НЕТ НА АУКЕ)</span>` : ""}</div>`;
+  out.querySelectorAll(".bt-row[data-id]").forEach((el) =>
     el.addEventListener("click", () => { openBarterModal(el.dataset.id); }));
 }
 
@@ -1862,8 +1927,13 @@ function obmenRow(r, extra = "") {
   </tr>`;
 }
 
-const OBM_HEAD = `<tr><th>ПРЕДМЕТ</th><th class="r">МОНЕТ</th><th class="r">АУК~</th>
-  <th class="r">СКУПЩИК</th><th class="r">₽/МОНЕТА</th></tr>`;
+const OBM_HEAD = `<tr><th style="width:38%">ПРЕДМЕТ</th><th class="r" style="width:13%">МОНЕТ</th>
+  <th class="r" style="width:16%">АУК~</th><th class="r" style="width:16%">СКУПЩИК</th>
+  <th class="r" style="width:17%">₽/МОНЕТА</th></tr>`;
+const OBM_PLAN_HEAD = `<tr><th style="width:30%">ПРЕДМЕТ</th><th class="r" style="width:10%">МОНЕТ</th>
+  <th class="r" style="width:12%">АУК~</th><th class="r" style="width:12%">СКУПЩИК</th>
+  <th class="r" style="width:12%">₽/МОН</th><th class="r" style="width:10%">ПОКУПОК</th>
+  <th class="r" style="width:14%">ИТОГО</th></tr>`;
 
 function renderObmen(d) {
   if (d.empty) {
@@ -1935,7 +2005,7 @@ async function loadObmenPlan() {
   box.innerHTML = d.basket && d.basket.length ? `<div class="obm-plan">
     <div class="reqs-lbl">КОРЗИНА НА ${fmt(d.coins)} МОНЕТ → ~${fmt(d.value)} ₽${d.left ? ` · ОСТАНЕТСЯ ${fmt(d.left)}` : ""}</div>
     <div class="bt-wrap"><table class="bt-table">
-      <thead>${OBM_HEAD.replace("</tr>", '<th class="r">ПОКУПОК</th><th class="r">ИТОГО</th></tr>')}</thead>
+      <thead>${OBM_PLAN_HEAD}</thead>
       <tbody>${rows}</tbody>
     </table></div></div>`
     : `<div class="empty-sm">НЕ ИЗ ЧЕГО СОБРАТЬ КОРЗИНУ (НЕТ ПОЗИЦИЙ С ИЗВЕСТНОЙ ЦЕНОЙ).</div>`;

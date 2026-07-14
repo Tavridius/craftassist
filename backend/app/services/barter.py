@@ -186,6 +186,86 @@ def _expand_offer(off: dict, path: tuple, memo: dict, depth: int = 0) -> dict:
             "missing": [_brief(m) for m in cost["missing"]], "inputs": inputs}
 
 
+def _same_cat_prev(iid: str):
+    """Предыдущий тир: вход-бартер той же категории (трейд-ин прошлого уровня).
+    -> (prev_id, поселение, оффер) или (None, None, None)."""
+    cat = _category(iid)
+    for b in db.barter_by_result.get(iid, []):
+        for off in b["offers"]:
+            for ing in off["inputs"]:
+                if ing["item"] in db.barter_by_result and _category(ing["item"]) == cat:
+                    return ing["item"], b, off
+    return None, None, None
+
+
+def _same_cat_next(iid: str, seen: set):
+    """Следующий тир: бартер той же категории, куда этот предмет идёт трейд-ином."""
+    cat = _category(iid)
+    for res_id in db.barter_used_in.get(iid, []):
+        if res_id in seen or _category(res_id) != cat:
+            continue
+        for b in db.barter_by_result.get(res_id, []):
+            for off in b["offers"]:
+                if any(ing["item"] == iid for ing in off["inputs"]):
+                    return res_id, b, off
+    return None, None, None
+
+
+def _step_dict(prev_id: str, b: dict, off: dict, result_id: str) -> dict:
+    """Шаг цепочки: что нужно, чтобы из prev_id получить result_id (кроме самого
+    prev_id — он трейд-ин). resources — покупаемые/фарм-входы с ценами."""
+    memo: dict = {}
+    res, prev_amount = [], 1
+    for ing in off["inputs"]:
+        if ing["item"] == prev_id:
+            prev_amount = ing["amount"]
+            continue
+        got = _obtain(ing["item"], (result_id,), memo, ing["amount"])
+        unit = got["cost"]
+        res.append({**_brief(ing["item"]), "amount": ing["amount"], "unit_price": unit,
+                    "line_cost": round(unit * ing["amount"]) if unit is not None else None,
+                    "source": got["source"] or "farm"})
+    return {"settlement_name": b["settlement_name"], "level": b["level"],
+            "prev": prev_id, "prev_amount": prev_amount, "money": off["cost"],
+            "currency": off["currency"], "resources": res}
+
+
+def _chain(iid: str) -> tuple[list, int]:
+    """Полная лестница тиров: база … [открытый предмет] … верх (той же категории).
+    У каждого узла (кроме базы своей ветки) step — как получить его из предыдущего.
+    -> (nodes, index открытого предмета)."""
+    seen = {iid}
+    up = []      # (prev, result, поселение, оффер) — вверх к базе
+    cur = iid
+    while True:
+        prev, b, off = _same_cat_prev(cur)
+        if not prev or prev in seen:
+            break
+        up.append((prev, cur, b, off))
+        seen.add(prev)
+        cur = prev
+    down = []    # вниз к верхним тирам
+    cur = iid
+    while True:
+        nxt, b, off = _same_cat_next(cur, seen)
+        if not nxt:
+            break
+        down.append((cur, nxt, b, off))
+        seen.add(nxt)
+        cur = nxt
+    order = [t[0] for t in reversed(up)] + [iid] + [t[1] for t in down]
+    steps = {}
+    for prev, res_id, b, off in up + down:
+        steps[res_id] = _step_dict(prev, b, off, res_id)
+    nodes = []
+    for it in order:
+        n = _brief(it)
+        n["buy_price"] = craft.unit_buy_price(it) if store.get(it)["available"] else None
+        n["step"] = steps.get(it)
+        nodes.append(n)
+    return nodes, len(up)
+
+
 def analyze(iid: str) -> dict:
     """Все способы получить предмет бартером + где он сдаётся (для карточки)."""
     memo: dict = {}
@@ -206,16 +286,14 @@ def analyze(iid: str) -> dict:
             for i in o["inputs"]:
                 seen.add(i["id"])
     store.request(seen | {iid})  # непосчитанное — воркеру вне очереди
-    # цепочка трейд-инов «до»: входы, которые сами получаются бартером
-    # (типичная лестница брони/оружия: тир N сдаётся в тир N+1)
-    prev_ids = {i for i in seen if i in db.barter_by_result}
-    name_of = lambda i: (db.items.get(i) or {}).get("name", i)  # noqa: E731
+    chain, chain_idx = _chain(iid)  # полная лестница тиров (та же категория)
     p = store.get(iid)
     return {
         "item": _brief(iid),
         "buy_price": craft.unit_buy_price(iid) if p["available"] else None,
         **_sell_side(iid),
         "ways": ways,
-        "chain_prev": [_brief(i) for i in sorted(prev_ids, key=name_of)],
+        "chain": chain,
+        "chain_idx": chain_idx,
         "used_in": [_brief(rid) for rid in db.barter_used_in.get(iid, [])],
     }
