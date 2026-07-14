@@ -1,5 +1,29 @@
 {
-  "updated_at": "2026-07-14T00:00:00+03:00",
-  "comment": "Ассортимент Перекупщика за обменные монеты. Заполняется вручную (в API/базе/клиенте его нет). item — id предмета из базы, amount — сколько штук даёт одна покупка, coins — цена в обменных монетах, limit — лимит покупок (null = без лимита).",
-  "positions": []
+  "updated_at": "2026-07-14T16:00:00+03:00",
+  "comment": "Ассортимент Перекупщика за обменные монеты. Заполняется вручную (в API/базе/клиенте его нет). item — id предмета из базы, amount — сколько штук даёт одна покупка, coins — цена в обменных монетах, vendor — за сколько скупщик берёт ШТУКУ (₽, мгновенная продажа без комиссии), limit — лимит покупок (null = без лимита).",
+  "positions": [
+    { "item": "77ov6", "amount": 1, "coins": 42,  "vendor": 450,  "limit": null },
+    { "item": "9d1qy", "amount": 1, "coins": 500, "vendor": 2000, "limit": null },
+    { "item": "9dknl", "amount": 1, "coins": 2,   "vendor": 12,   "limit": null },
+    { "item": "191kg", "amount": 1, "coins": 1,   "vendor": 6,    "limit": null },
+    { "item": "w30g2", "amount": 1, "coins": 3,   "vendor": 16,   "limit": null },
+    { "item": "j0z30", "amount": 1, "coins": 4,   "vendor": 24,   "limit": null },
+    { "item": "rj6gv", "amount": 1, "coins": 4,   "vendor": 20,   "limit": null },
+    { "item": "pj52w", "amount": 1, "coins": 4,   "vendor": 22,   "limit": null },
+    { "item": "vn0yr", "amount": 1, "coins": 4,   "vendor": 25,   "limit": null },
+    { "item": "gn9l6", "amount": 1, "coins": 6,   "vendor": 32,   "limit": null },
+    { "item": "556z1", "amount": 1, "coins": 21,  "vendor": 80,   "limit": null },
+    { "item": "olzr6", "amount": 1, "coins": 40,  "vendor": 90,   "limit": null },
+    { "item": "77o96", "amount": 1, "coins": 8,   "vendor": 40,   "limit": null },
+    { "item": "6ol3p", "amount": 1, "coins": 5,   "vendor": 32,   "limit": null },
+    { "item": "9dkgl", "amount": 1, "coins": 7,   "vendor": 36,   "limit": null },
+    { "item": "191ng", "amount": 1, "coins": 66,  "vendor": 100,  "limit": null },
+    { "item": "vn0wr", "amount": 1, "coins": 8,   "vendor": 48,   "limit": null },
+    { "item": "dr6nj", "amount": 1, "coins": 10,  "vendor": 60,   "limit": null },
+    { "item": "21gkl", "amount": 1, "coins": 7,   "vendor": 42,   "limit": null },
+    { "item": "21365", "amount": 1, "coins": 20,  "vendor": 50,   "limit": null },
+    { "item": "34305", "amount": 1, "coins": 15,  "vendor": 50,   "limit": null },
+    { "item": "6o7m0", "amount": 1, "coins": 100, "vendor": 100,  "limit": null },
+    { "item": "19402", "amount": 1, "coins": 800, "vendor": 3000, "limit": null }
+  ]
 }

@@ -6,8 +6,11 @@
 DATA_DIR; файл в volume можно править прямо на сервере (hot-reload по mtime),
 при деплое побеждает тот, чей updated_at новее.
 
-Курс позиции: rate = продажа(предмет)×кол-во×(1−комиссия) / цена в монетах —
-сколько рублей приносит одна обменная монета. Цены — тёплый кэш PriceStore.
+Курс позиции — рублей за 1 монету, по двум каналам сбыта:
+  аук:      rate_auction = продажа(предмет)×кол-во×(1−комиссия) / монеты
+  скупщик:  rate_vendor  = vendor×кол-во / монеты  (мгновенно, без комиссии)
+Основной rate = лучший из известных. Цены аука — тёплый кэш PriceStore,
+vendor — ручное поле позиции (цена скупщика фиксирована игрой).
 """
 import json
 import logging
@@ -86,12 +89,22 @@ def snapshot() -> dict:
         iid = p.get("item")
         coins = p.get("coins") or 0
         amount = p.get("amount") or 1
+        vendor = p.get("vendor")
         it = db.item(iid) or {}
         sp = craft.sell_price(iid)
         buyout = (store.prices.get(iid) or {}).get("min_buyout")
         base = sp if sp is not None else buyout
-        value = round(base * amount * (1 - config.AUCTION_FEE)) if base else None
-        rate = round(value / coins, 2) if value and coins else None
+        value_auc = round(base * amount * (1 - config.AUCTION_FEE)) if base else None
+        value_ven = round(vendor * amount) if vendor else None
+        rate_auc = round(value_auc / coins, 2) if value_auc and coins else None
+        rate_ven = round(value_ven / coins, 2) if value_ven and coins else None
+        # основной курс — лучший канал сбыта (аук обычно выше, скупщик мгновенный)
+        if rate_auc is not None and (rate_ven is None or rate_auc >= rate_ven):
+            rate, basis = rate_auc, "auction"
+        elif rate_ven is not None:
+            rate, basis = rate_ven, "vendor"
+        else:
+            rate, basis = None, None
         rows.append({
             "id": iid, "name": it.get("name", iid), "icon": it.get("icon", ""),
             "color": it.get("color", "DEFAULT"),
@@ -99,13 +112,23 @@ def snapshot() -> dict:
             "note": p.get("note"),
             "sell_price": sp, "min_buyout": buyout,
             "sell_basis": "sales" if sp is not None else ("buyout" if buyout else None),
-            "value": value,       # рублей за одну покупку (нетто, после комиссии)
-            "rate": rate,         # рублей за 1 монету
+            "vendor": vendor,
+            "value_auction": value_auc,   # ₽ за покупку через аук (нетто)
+            "value_vendor": value_ven,    # ₽ за покупку через скупщика (мгновенно)
+            "rate_auction": rate_auc,
+            "rate_vendor": rate_ven,
+            "value": (value_auc if basis == "auction" else value_ven),
+            "rate": rate,                 # ₽ за 1 монету, лучший канал
+            "basis": basis,               # auction | vendor
         })
     rows.sort(key=lambda r: (r["rate"] is None, -(r["rate"] or 0)))
+    top_vendor = sorted((r for r in rows if r["rate_vendor"]),
+                        key=lambda r: -r["rate_vendor"])[:3]
     return {
         "updated_at": _doc.get("updated_at"),
         "positions": rows,
+        "top_vendor": [{"id": r["id"], "name": r["name"], "rate": r["rate_vendor"]}
+                       for r in top_vendor],
         "fee_pct": round(config.AUCTION_FEE * 100),
         "empty": not rows,
     }

@@ -1694,18 +1694,23 @@ async function openObmen() {
 }
 
 function obmenRow(r, extra = "") {
-  const basis = r.sell_basis === "sales" ? "ПО СДЕЛКАМ" : r.sell_basis === "buyout" ? "ПО ВЫКУПУ" : "";
+  const aucBasis = r.sell_basis === "sales" ? "по сделкам аука, минус комиссия"
+                 : r.sell_basis === "buyout" ? "по мин. выкупу, минус комиссия" : "";
+  const chip = r.basis ? `<span class="obm-basis ${r.basis}">${r.basis === "vendor" ? "СКУПЩИК" : "АУК"}</span>` : "";
   return `<tr class="bt-row" data-id="${r.id}">
     <td class="bt-item"><img loading="lazy" src="${asset(r.icon)}" alt="">
-      <span class="nm" style="color:${rank(r.color).color}">${escapeHtml(r.name)}</span>
+      <span class="nm" style="color:${rank(r.color).color}">${r.amount > 1 ? r.amount + "× " : ""}${escapeHtml(r.name)}</span>
       ${r.note ? `<span class="bt-cur">${escapeHtml(r.note)}</span>` : ""}</td>
-    <td class="r">${r.amount} ШТ</td>
     <td class="r">${fmt(r.coins)}</td>
-    <td class="r" title="${basis}">${r.value != null ? fmt(r.value) + " ₽" : "—"}</td>
-    <td class="r">${r.rate != null ? `<span class="pct ${r.rate >= 1 ? "up" : "down"}">${r.rate.toLocaleString("ru-RU")}</span>` : "—"}</td>
+    <td class="r" title="${aucBasis}">${r.value_auction != null ? fmt(r.value_auction) + " ₽" : "—"}</td>
+    <td class="r" title="мгновенная продажа NPC, без комиссии">${r.value_vendor != null ? fmt(r.value_vendor) + " ₽" : "—"}</td>
+    <td class="r">${r.rate != null ? `<span class="pct ${r.rate >= 1 ? "up" : "down"}">${r.rate.toLocaleString("ru-RU")}</span> ${chip}` : "—"}</td>
     ${extra}
   </tr>`;
 }
+
+const OBM_HEAD = `<tr><th>ПРЕДМЕТ</th><th class="r">МОНЕТ</th><th class="r">АУК~</th>
+  <th class="r">СКУПЩИК</th><th class="r">₽/МОНЕТА</th></tr>`;
 
 function renderObmen(d) {
   if (d.empty) {
@@ -1728,10 +1733,13 @@ function renderObmen(d) {
     return;
   }
   const rows = d.positions.map((r) => obmenRow(r)).join("");
+  const topVen = (d.top_vendor || []).length
+    ? `<div class="bt-note">ТОП ДЛЯ МГНОВЕННОЙ СДАЧИ СКУПЩИКУ: ${d.top_vendor.map((t) =>
+        `<a href="/item/${t.id}">${escapeHtml(t.name)}</a> (${t.rate.toLocaleString("ru-RU")} ₽/МОН)`).join(" · ")}</div>` : "";
   page.innerHTML = `<div class="btmod">
     <div class="section-head">
       <div class="section-title">▸ ОБМЕНКИ · МОНЕТЫ ПЕРЕКУПЩИКА</div>
-      <div class="section-note">КУРС = ПРОДАЖА НА АУКЕ (−${d.fee_pct}%) / ЦЕНА В МОНЕТАХ${
+      <div class="section-note">КУРС = ЛУЧШИЙ СБЫТ: АУК (−${d.fee_pct}%) ИЛИ СКУПЩИК${
         d.updated_at ? ` · АССОРТИМЕНТ ОТ ${new Date(d.updated_at).toLocaleDateString("ru-RU")}` : ""}</div>
     </div>
     <div class="bt-filters">
@@ -1740,12 +1748,14 @@ function renderObmen(d) {
                placeholder="СКОЛЬКО У ТЕБЯ МОНЕТ…" value="${obmenCoins ? fmt(obmenCoins) : ""}"></div>
       <button id="obmPlan" class="bt-more" style="margin:0">СОБРАТЬ КОРЗИНУ</button>
     </div>
+    ${topVen}
     <div id="obmPlanBox"></div>
     <div class="bt-wrap"><table class="bt-table">
-      <thead><tr><th>ПРЕДМЕТ</th><th class="r">ДАЁТ</th><th class="r">МОНЕТ</th>
-        <th class="r">ЦЕННОСТЬ</th><th class="r">₽/МОНЕТА</th></tr></thead>
+      <thead>${OBM_HEAD}</thead>
       <tbody>${rows}</tbody>
     </table></div>
+    <div class="bt-note" style="margin-top:8px">АУК~ — ОЖИДАЕМАЯ ВЫРУЧКА НА АУКЦИОНЕ ПОСЛЕ КОМИССИИ (ПО РЕАЛЬНЫМ СДЕЛКАМ);
+      СКУПЩИК — ГАРАНТИРОВАННАЯ МГНОВЕННАЯ ПРОДАЖА NPC. КЛИК ПО СТРОКЕ — КАРТОЧКА ПРЕДМЕТА.</div>
   </div>`;
   const inp = $("obmCoins");
   wireBudget && wireBudget(inp, (v) => { obmenCoins = v; localStorage.setItem("sz_coins", String(v || 0)); });
@@ -1770,8 +1780,7 @@ async function loadObmenPlan() {
   box.innerHTML = d.basket && d.basket.length ? `<div class="obm-plan">
     <div class="reqs-lbl">КОРЗИНА НА ${fmt(d.coins)} МОНЕТ → ~${fmt(d.value)} ₽${d.left ? ` · ОСТАНЕТСЯ ${fmt(d.left)}` : ""}</div>
     <div class="bt-wrap"><table class="bt-table">
-      <thead><tr><th>ПРЕДМЕТ</th><th class="r">ДАЁТ</th><th class="r">МОНЕТ</th>
-        <th class="r">ЦЕННОСТЬ</th><th class="r">₽/МОНЕТА</th><th class="r">ПОКУПОК</th><th class="r">ИТОГО</th></tr></thead>
+      <thead>${OBM_HEAD.replace("</tr>", '<th class="r">ПОКУПОК</th><th class="r">ИТОГО</th></tr>')}</thead>
       <tbody>${rows}</tbody>
     </table></div></div>`
     : `<div class="empty-sm">НЕ ИЗ ЧЕГО СОБРАТЬ КОРЗИНУ (НЕТ ПОЗИЦИЙ С ИЗВЕСТНОЙ ЦЕНОЙ).</div>`;

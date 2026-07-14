@@ -1044,6 +1044,12 @@ a.auth-user:hover { color: var(--green); border-color: var(--green-border); text
 .obm-about p:last-child { margin-bottom: 0; }
 .obm-about a { color: var(--green); }
 .obm-coins { max-width: 280px; }
+.obm-basis {
+  font-size: 8px; letter-spacing: 0.08em; border: 1px solid var(--border);
+  color: var(--dimmer); padding: 0 4px; vertical-align: 1px;
+}
+.obm-basis.vendor { border-color: var(--amber-border); color: var(--amber); }
+.bt-note a { color: var(--green); }
 .obm-plan { margin-bottom: 14px; }
 .obm-plan .reqs-lbl { margin-bottom: 6px; }
 
