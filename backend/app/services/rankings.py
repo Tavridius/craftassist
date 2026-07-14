@@ -97,10 +97,12 @@ class Rankings:
             }
 
         priced = [r for r in rows.values() if r["diff"] is not None]
-        profitable = sorted(priced, key=lambda r: -r["diff"])[:TOP_N]
-        liquid = sorted(
-            [r for r in priced if (r["sales_per_hour"] or 0) >= LIQUID_MIN_SALES_PER_HOUR],
-            key=lambda r: -r["diff"])[:TOP_N]
+        # обе подборки — только ликвидные (продажи ≥ порога): ВЫГОДНЫЕ ранжируем
+        # по абсолютной дельте ₽, ПРОФИТНЫЕ — по % маржи (решение юзера 15.07)
+        liquid_pool = [r for r in priced
+                       if (r["sales_per_hour"] or 0) >= LIQUID_MIN_SALES_PER_HOUR]
+        profitable = sorted(liquid_pool, key=lambda r: -r["diff"])[:TOP_N]
+        liquid = sorted(liquid_pool, key=lambda r: -(r["pct"] or 0))[:TOP_N]
         popular = sorted(
             [r for r in rows.values() if r["opens"] > 0],
             key=lambda r: -r["opens"])[:TOP_N]

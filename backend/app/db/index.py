@@ -21,6 +21,13 @@ def _id_from_path(p: str) -> str:
     return Path(p).stem
 
 
+def _is_weapon_part(name: str) -> bool:
+    """Оружейная «часть»: «Часть … #N» или «Часть схемы: …» (решение юзера —
+    такие бартеры (сборка оружия из частей) в разделе не нужны)."""
+    nm = (name or "").strip()
+    return nm.startswith("Часть схемы") or (nm.startswith("Часть ") and "#" in nm)
+
+
 class GameDB:
     def __init__(self) -> None:
         self.items: dict[str, dict] = {}          # id -> инфо о предмете
@@ -33,6 +40,7 @@ class GameDB:
         self.barter_by_result: dict[str, list] = {}  # id результата -> [бартеры поселений]
         self.barter_used_in: dict[str, list[str]] = {}  # id входа -> [id результатов бартера]
         self.barter_settlements: dict[str, str] = {}    # ключ поселения -> имя (ru)
+        self.disassembly: dict[str, dict] = {}    # id входа -> {parent, count}: разбор родителя с аука
         self.artefacts: dict[str, dict] = {}      # id -> {class, weight, stats{key: {name,min,max,harmful}}}
         self.artefact_stat_names: dict[str, dict] = {}  # stat_key -> {name, harmful} (справочник)
         self.containers: dict[str, dict] = {}     # id -> {name, icon, color, rank, slots, efficiency, protection, weight}
@@ -48,13 +56,16 @@ class GameDB:
         self._load_items()
         self._load_hideout_recipes()
         self._load_barter_recipes()
+        self._load_disassembly()
         self._build_used_in()
         self._load_equipment()
         logger.info(
             "GameDB loaded: %d items, %d craft results, %d barter results, "
-            "%d used-in entries, %d artefacts with stats, %d containers, %d armor",
+            "%d used-in entries, %d artefacts with stats, %d containers, %d armor, "
+            "%d disassembly maps",
             len(self.items), len(self.recipe_by_result), len(self.barter_by_result),
             len(self.used_in), len(self.artefacts), len(self.containers), len(self.armor),
+            len(self.disassembly),
         )
 
     def _read(self, name: str):
@@ -133,6 +144,10 @@ class GameDB:
         except FileNotFoundError:
             logger.warning("barter_recipes.json missing — barter disabled until re-download")
             return
+        # оружейные «части» (сборка оружия из частей) — убираем целиком: и как
+        # результат бартера, и офферы, которые их требуют трейд-ином
+        excluded = {iid for iid, it in self.items.items()
+                    if _is_weapon_part(it.get("name", ""))}
         merged: dict[tuple[str, str], dict] = {}   # (поселение, результат) -> бартер
         for block in doc:
             key = ((block.get("settlementTitle") or {}).get("key") or "")
@@ -141,7 +156,7 @@ class GameDB:
             self.barter_settlements.setdefault(key, name)
             for rc in block.get("recipes", []):
                 iid = rc.get("item")
-                if not iid:
+                if not iid or iid in excluded:
                     continue
                 b = merged.setdefault((key, iid), {
                     "settlement": key, "settlement_name": name,
@@ -154,6 +169,8 @@ class GameDB:
                 for off in rc.get("offers", []):
                     inputs = [{"item": ri["item"], "amount": ri.get("amount", 1)}
                               for ri in off.get("requiredItems", [])]
+                    if any(i["item"] in excluded for i in inputs):
+                        continue
                     sig = (off.get("currency"), off.get("cost"),
                            tuple(sorted((i["item"], i["amount"]) for i in inputs)))
                     if sig in b["_sigs"]:
@@ -164,6 +181,8 @@ class GameDB:
         rev: dict[str, set[str]] = {}
         for (_, iid), b in merged.items():
             del b["_sigs"]
+            if not b["offers"]:            # все офферы отфильтрованы (были с частями)
+                continue
             self.barter_by_result.setdefault(iid, []).append(b)
             for off in b["offers"]:
                 for ing in off["inputs"]:
@@ -171,10 +190,30 @@ class GameDB:
         name_of = lambda i: (self.items.get(i) or {}).get("name", i)  # noqa: E731
         self.barter_used_in = {iid: sorted(rids, key=name_of) for iid, rids in rev.items()}
 
+    def _load_disassembly(self) -> None:
+        """Ручная таблица: вход бартера, которого нет на ауке, добывается разбором
+        родителя (который на ауке есть). {child: {parent, count}} из seed-файла;
+        цена входа = цена родителя на ауке / count (см. services/barter._obtain)."""
+        seed = config.BACKEND_DIR / "seed" / "barter_disassembly.json"
+        if not seed.exists():
+            return
+        try:
+            doc = json.loads(seed.read_text(encoding="utf-8"))
+        except Exception:
+            logger.exception("failed to read barter_disassembly.json")
+            return
+        for child, rec in doc.items():
+            if child.startswith("_") or not isinstance(rec, dict):
+                continue
+            parent, count = rec.get("parent"), rec.get("count")
+            if parent and count and child in self.items and parent in self.items:
+                self.disassembly[child] = {"parent": parent, "count": int(count)}
+
     def barter_item_ids(self) -> set[str]:
-        """Все предметы бартер-графа (результаты + входы) — для обновления цен."""
+        """Все предметы бартер-графа (результаты + входы + родители разбора) — для цен."""
         ids: set[str] = set(self.barter_by_result)
         ids.update(self.barter_used_in)
+        ids.update(d["parent"] for d in self.disassembly.values())
         return ids
 
     # ---------- статы артефактов и контейнеры (для калькулятора сборок) ----------

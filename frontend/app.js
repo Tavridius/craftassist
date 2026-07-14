@@ -674,10 +674,12 @@ function startEmTick() {
   emTick = setInterval(upd, 1000);
 }
 
-function dashCraftRow(e) {
-  // выгода — дельта в рублях за цикл крафта (решение юзера), % в тултипе
+function dashCraftRow(e, pctBadge) {
+  // бейдж — дельта ₽ за цикл (ВЫГОДНЫЕ) или % маржи (ПРОФИТНЫЕ), вторая метрика в тултипе
   const badge = e.diff != null
-    ? `<span class="pct ${e.diff > 0 ? "up" : "down"}" title="${e.pct != null ? (e.pct > 0 ? "+" : "") + e.pct + "%" : ""}">${e.diff > 0 ? "+" : ""}${fmt(e.diff)} ₽</span>`
+    ? (pctBadge
+        ? `<span class="pct ${e.pct > 0 ? "up" : "down"}" title="${e.diff > 0 ? "+" : ""}${fmt(e.diff)} ₽">${e.pct > 0 ? "+" : ""}${e.pct}%</span>`
+        : `<span class="pct ${e.diff > 0 ? "up" : "down"}" title="${e.pct != null ? (e.pct > 0 ? "+" : "") + e.pct + "%" : ""}">${e.diff > 0 ? "+" : ""}${fmt(e.diff)} ₽</span>`)
     : (e.sell_price ?? e.buy_price) != null ? `<span class="dash-p">${fmt(e.sell_price ?? e.buy_price)} ₽</span>` : "";
   return `<div class="dash-row" data-nav="/item/${e.id}">
     <img loading="lazy" src="${asset(e.icon)}" alt="">
@@ -744,10 +746,10 @@ function renderDashboard(top, art, watch, em, sales, fuelTop, patches) {
   // крафты: по 2-3 из каждой подборки
   let crafts = "";
   if (top) {
-    const grp = (t, list) => (list && list.length)
-      ? `<div class="dash-grp">${t}</div>` + list.slice(0, 3).map(dashCraftRow).join("") : "";
-    crafts = grp("ВЫГОДНЫЕ", top.profitable) + grp("ПРОФИТНЫЕ", top.liquid)
-           + grp("ПОПУЛЯРНЫЕ", top.popular);
+    const grp = (t, list, pctBadge) => (list && list.length)
+      ? `<div class="dash-grp">${t}</div>` + list.slice(0, 3).map((e) => dashCraftRow(e, pctBadge)).join("") : "";
+    crafts = grp("ВЫГОДНЫЕ", top.profitable, false) + grp("ПРОФИТНЫЕ", top.liquid, true)
+           + grp("ПОПУЛЯРНЫЕ", top.popular, false);
   }
   if (!crafts) crafts = `<div class="empty-sm">ЦЕНЫ СЧИТАЮТСЯ В ФОНЕ — ЗАГЛЯНИ ПОЗЖЕ.</div>`;
 
@@ -874,16 +876,19 @@ function watchBlock(w) {
   </section>`;
 }
 
-function sideRow(e, extra) {
-  // выгода — дельта в рублях за цикл (решение юзера 14.07), % — в мете справочно
+function sideRow(e, extra, pctBadge) {
+  // бейдж — либо дельта ₽ (ВЫГОДНЫЕ), либо % маржи (ПРОФИТНЫЕ); вторую метрику в мету
   const badge = e.diff == null
     ? `<span class="pct dim">—</span>`
-    : `<span class="pct ${e.diff > 0 ? "up" : "down"}">${e.diff > 0 ? "+" : ""}${fmt(e.diff)} ₽</span>`;
+    : pctBadge
+      ? `<span class="pct ${e.pct > 0 ? "up" : "down"}" title="${e.diff > 0 ? "+" : ""}${fmt(e.diff)} ₽ ЗА ЦИКЛ">${e.pct > 0 ? "+" : ""}${e.pct}%</span>`
+      : `<span class="pct ${e.diff > 0 ? "up" : "down"}">${e.diff > 0 ? "+" : ""}${fmt(e.diff)} ₽</span>`;
   const meta = [];
   if (e.craft_cost != null) meta.push(`КРАФТ ${fmt(e.craft_cost)}`);
   if (e.sell_price != null) meta.push(`ПРОДАЖА ~${fmt(e.sell_price)}`);
   else if (e.buy_price != null) meta.push(`АУК ${fmt(e.buy_price)}`);
-  if (e.pct != null) meta.push(`${e.pct > 0 ? "+" : ""}${e.pct}%`);
+  if (pctBadge) { if (e.diff != null) meta.push(`${e.diff > 0 ? "+" : ""}${fmt(e.diff)} ₽`); }
+  else if (e.pct != null) meta.push(`${e.pct > 0 ? "+" : ""}${e.pct}%`);
   if (extra === "sales" && e.sales_per_hour != null) meta.push(`${fmtSales(e.sales_per_hour)} ПРОД/Ч`);
   if (extra === "opens" && e.opens) meta.push(`${e.opens} ОТКР`);
   return `<div class="side-row" data-id="${e.id}" style="border-left-color:transparent">
@@ -896,14 +901,14 @@ function sideRow(e, extra) {
 }
 
 function renderHome(d, w) {
-  const sec = (title, note, list, extra, empty) => `
+  const sec = (title, note, list, extra, empty, pctBadge) => `
     <section>
       <div class="side-head">
         <div class="side-title">▸ ${title}</div>
         <div class="side-note">${note}</div>
       </div>
       ${list && list.length
-        ? `<div class="side-list">${list.map((e) => sideRow(e, extra)).join("")}</div>`
+        ? `<div class="side-list">${list.map((e) => sideRow(e, extra, pctBadge)).join("")}</div>`
         : `<div class="empty-sm">${empty}</div>`}
     </section>`;
 
@@ -921,10 +926,11 @@ function renderHome(d, w) {
   const availEmpty = d.available_only
     ? "ПО ТВОЕЙ ПРОКАЧКЕ НИЧЕГО НЕ ПРОШЛО — ПРОВЕРЬ ПРОФИЛЬ ИЛИ ПЕРЕКЛЮЧИ НА «ВСЕ»." : null;
   const availNote = d.available_only ? " · ДОСТУПНЫЕ" : "";
-  h += sec("ВЫГОДНЫЕ КРАФТЫ", "ДЕЛЬТА ₽ ЗА ЦИКЛ" + availNote, d.profitable, null,
-           availEmpty || "ЦЕНЫ СЧИТАЮТСЯ В ФОНЕ — ЗАГЛЯНИ ЧЕРЕЗ ПАРУ МИНУТ.");
-  h += sec("ПРОФИТНЫЕ", `ПРОДАЖИ ${d.liquid_threshold || 10}+/Ч${availNote}`, d.liquid, "sales",
-           availEmpty || "НЕТ ПРЕДМЕТОВ С ТАКОЙ ЧАСТОТОЙ ПРОДАЖ (ИЛИ ЦЕНЫ ЕЩЁ СЧИТАЮТСЯ).");
+  h += sec("ВЫГОДНЫЕ КРАФТЫ", `ДЕЛЬТА ₽ ЗА ЦИКЛ · ПРОДАЖИ ${d.liquid_threshold || 10}+/Ч${availNote}`,
+           d.profitable, "sales",
+           availEmpty || "НЕТ ЛИКВИДНЫХ КРАФТОВ (ИЛИ ЦЕНЫ ЕЩЁ СЧИТАЮТСЯ) — ЗАГЛЯНИ ПОЗЖЕ.");
+  h += sec("ПРОФИТНЫЕ", `МАРЖА % · ПРОДАЖИ ${d.liquid_threshold || 10}+/Ч${availNote}`, d.liquid, "sales",
+           availEmpty || "НЕТ ПРЕДМЕТОВ С ТАКОЙ ЧАСТОТОЙ ПРОДАЖ (ИЛИ ЦЕНЫ ЕЩЁ СЧИТАЮТСЯ).", true);
   h += sec("ПОПУЛЯРНЫЕ", "ОТКРЫТИЯ КАРТОЧЕК" + availNote, d.popular, "opens",
            availEmpty || "ПОКА НЕТ СТАТИСТИКИ — ОТКРЫВАЙ КАРТОЧКИ ПРЕДМЕТОВ.");
   h += `</div>`;
@@ -1692,11 +1698,12 @@ function openObmenModal(id) {
 function btOfferHtml(o, level) {
   const inputs = o.inputs.map((i) => {
     const via = i.via ? ` <span class="bt-via">← бартер: ${escapeHtml(i.via.settlement_name)}${i.via.level ? ` ур.${i.via.level}` : ""} за ${fmt(i.via.cost)} ₽</span>` : "";
+    const disasm = i.disasm ? ` <span class="bt-via">← разбор: ${i.disasm.count}× из «${escapeHtml(i.disasm.parent_name)}» (${fmt(i.disasm.parent_unit)} ₽ на ауке)</span>` : "";
     const price = i.source === "farm" ? `<span class="bt-farm">ФАРМ</span>`
       : `${fmt(i.line_cost)} ₽${i.amount > 1 ? ` <span class="unit">(${fmt(i.unit_price)}/ШТ)</span>` : ""}`;
     return `<div class="bt-ing"><span class="ilink" data-id="${i.id}">
       <img loading="lazy" src="${asset(i.icon)}" alt="">${i.amount}× ${escapeHtml(i.name)}</span>
-      <span class="bt-ing-price">${price}${via}</span></div>`;
+      <span class="bt-ing-price">${price}${via}${disasm}</span></div>`;
   }).join("");
   const money = o.money ? `<div class="bt-ing"><span>ДОПЛАТА ТОРГОВЦУ</span>
     <span class="bt-ing-price">${fmt(o.money)} ${CUR_RU[o.currency] || o.currency.toUpperCase()}</span></div>` : "";

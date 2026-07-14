@@ -11,6 +11,7 @@
 деньги» не попадает. Выгода — как в крафте: реальная цена продажи (медиана
 свежих сделок, fallback мин. выкуп) минус комиссия аука против стоимости.
 """
+import math
 import os
 import time
 
@@ -34,23 +35,36 @@ def _category(iid: str) -> str:
 
 
 def _obtain(iid: str, path: tuple, memo: dict, needed: int = 1) -> dict:
-    """Мин. цена получения 1 шт: аук или бартер-цепочка (без фарм-входов).
+    """Мин. цена получения 1 шт: аук, разбор родителя с аука или бартер-цепочка.
 
-    -> {"cost": int|None, "source": "market"|"barter"|None}
+    -> {"cost": int|None, "source": "market"|"disassembly"|"barter"|None,
+        "disasm": {"parent", "count", "parent_unit"}|None}
     """
     key = (iid, needed)
     if key in memo:
         return memo[key]
     market = craft.unit_buy_price(iid, needed) if store.get(iid)["available"] else None
-    best, source = market, ("market" if market is not None else None)
+    best, source, disasm = market, ("market" if market is not None else None), None
+    # разбор родителя с аука (напр. блок данных «Гамма» -> 20 фрагментов):
+    # цена входа = цена родителя на ауке / count
+    dz = db.disassembly.get(iid)
+    if dz and store.get(dz["parent"])["available"]:
+        blocks = max(1, math.ceil(needed / dz["count"]))
+        parent_unit = craft.unit_buy_price(dz["parent"], blocks)
+        if parent_unit is not None:
+            unit = parent_unit / dz["count"]
+            if best is None or unit < best:
+                best, source = unit, "disassembly"
+                disasm = {"parent": dz["parent"], "count": dz["count"],
+                          "parent_unit": round(parent_unit)}
     if iid not in path and len(path) < BARTER_MAX_DEPTH:
         for b in db.barter_by_result.get(iid, []):
             for off in b["offers"]:
                 cost = _offer_cost(off, path + (iid,), memo)
                 if cost["total"] is not None and not cost["missing"] and \
                         (best is None or cost["total"] < best):
-                    best, source = cost["total"], "barter"
-    res = {"cost": best, "source": source}
+                    best, source, disasm = cost["total"], "barter", None
+    res = {"cost": best, "source": source, "disasm": disasm}
     memo[key] = res
     return res
 
@@ -79,7 +93,7 @@ def _offer_cost(off: dict, path: tuple, memo: dict) -> dict:
         else:
             lines.append({"item": ing["item"], "amount": ing["amount"],
                           "unit": unit, "line": round(unit * ing["amount"]),
-                          "source": got["source"]})
+                          "source": got["source"], "disasm": got.get("disasm")})
             total += unit * ing["amount"]
     # total при missing/чужой валюте — стоимость ПОКУПАЕМОЙ части, не полная
     return {"total": round(total) if not missing and not foreign else None,
@@ -166,6 +180,9 @@ def _expand_offer(off: dict, path: tuple, memo: dict, depth: int = 0) -> dict:
         node = {**_brief(line["item"]), "amount": line["amount"],
                 "unit_price": line["unit"], "line_cost": line["line"],
                 "source": line["source"] or "farm"}
+        if line.get("disasm"):
+            node["disasm"] = {**line["disasm"],
+                              "parent_name": _brief(line["disasm"]["parent"])["name"]}
         if line["source"] == "barter" and depth < 2:
             sub_ways = db.barter_by_result.get(line["item"], [])
             best = None

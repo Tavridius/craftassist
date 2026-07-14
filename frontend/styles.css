@@ -27,12 +27,12 @@
 
   --glow: 0 0 12px rgba(124, 230, 142, 0.35);
 
-  /* редкости (ранги STALZONE) */
-  --r-newbie: #b9c9b9;
-  --r-stalker: #5fd67a;
-  --r-veteran: #5fa8ff;
-  --r-master: #b48cff;
-  --r-legend: #ffb84d;
+  /* редкости (ранги STALZONE): цвет = ранг в игре (Мастер — красный) */
+  --r-newbie: #5fd67a;   /* Новичок  — зелёный */
+  --r-stalker: #5fa8ff;  /* Сталкер  — синий */
+  --r-veteran: #b48cff;  /* Ветеран  — фиолетовый */
+  --r-master: #ff5f66;   /* Мастер   — красный */
+  --r-legend: #ffb84d;   /* Легенда  — оранжевый */
   --r-quest: #e8d44d;
   --r-default: #6b8a6b;
 }
