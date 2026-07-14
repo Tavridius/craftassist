@@ -30,6 +30,9 @@ class GameDB:
         self.hideout_features: list[str] = []     # все станки/фичи из requirements рецептов
         self.hideout_feature_icons: dict[str, str] = {}  # фича -> игровая иконка станка
         self.hideout_feature_bench: dict[str, str] = {}  # фича -> стол (workbench/laboratory_table/kitchen_table)
+        self.barter_by_result: dict[str, list] = {}  # id результата -> [бартеры поселений]
+        self.barter_used_in: dict[str, list[str]] = {}  # id входа -> [id результатов бартера]
+        self.barter_settlements: dict[str, str] = {}    # ключ поселения -> имя (ru)
         self.artefacts: dict[str, dict] = {}      # id -> {class, weight, stats{key: {name,min,max,harmful}}}
         self.artefact_stat_names: dict[str, dict] = {}  # stat_key -> {name, harmful} (справочник)
         self.containers: dict[str, dict] = {}     # id -> {name, icon, color, rank, slots, efficiency, protection, weight}
@@ -44,13 +47,14 @@ class GameDB:
     def load(self) -> None:
         self._load_items()
         self._load_hideout_recipes()
+        self._load_barter_recipes()
         self._build_used_in()
         self._load_equipment()
         logger.info(
-            "GameDB loaded: %d items, %d craft results, %d used-in entries, "
-            "%d artefacts with stats, %d containers, %d armor",
-            len(self.items), len(self.recipe_by_result), len(self.used_in),
-            len(self.artefacts), len(self.containers), len(self.armor),
+            "GameDB loaded: %d items, %d craft results, %d barter results, "
+            "%d used-in entries, %d artefacts with stats, %d containers, %d armor",
+            len(self.items), len(self.recipe_by_result), len(self.barter_by_result),
+            len(self.used_in), len(self.artefacts), len(self.containers), len(self.armor),
         )
 
     def _read(self, name: str):
@@ -115,6 +119,63 @@ class GameDB:
         self.hideout_feature_icons = {
             f: f"hideout/{f}.png" for f in self.hideout_features
             if (hdir / f"{f}.png").exists()}
+
+    def _load_barter_recipes(self) -> None:
+        """Бартеры торговцев поселений (barter_recipes.json).
+
+        В файле 14 блоков на 12 уникальных поселений: «Бар» и «Фракции Севера»
+        встречаются дважды (зеркала с другим трейд-ин вариантом брони) — мержим
+        по ключу поселения, офферы дедупим по содержимому. Нормализованный бартер:
+        {settlement, settlement_name, level, item, offers:[{currency, cost, inputs}]}.
+        """
+        try:
+            doc = self._read("barter_recipes.json")
+        except FileNotFoundError:
+            logger.warning("barter_recipes.json missing — barter disabled until re-download")
+            return
+        merged: dict[tuple[str, str], dict] = {}   # (поселение, результат) -> бартер
+        for block in doc:
+            key = ((block.get("settlementTitle") or {}).get("key") or "")
+            key = key.removeprefix("settlement.id.").removesuffix(".title") or "unknown"
+            name = _tr(block.get("settlementTitle")) or key
+            self.barter_settlements.setdefault(key, name)
+            for rc in block.get("recipes", []):
+                iid = rc.get("item")
+                if not iid:
+                    continue
+                b = merged.setdefault((key, iid), {
+                    "settlement": key, "settlement_name": name,
+                    "level": rc.get("settlementRequiredLevel"),
+                    "item": iid, "offers": [], "_sigs": set(),
+                })
+                lv = rc.get("settlementRequiredLevel")
+                if lv is not None and (b["level"] is None or lv < b["level"]):
+                    b["level"] = lv
+                for off in rc.get("offers", []):
+                    inputs = [{"item": ri["item"], "amount": ri.get("amount", 1)}
+                              for ri in off.get("requiredItems", [])]
+                    sig = (off.get("currency"), off.get("cost"),
+                           tuple(sorted((i["item"], i["amount"]) for i in inputs)))
+                    if sig in b["_sigs"]:
+                        continue
+                    b["_sigs"].add(sig)
+                    b["offers"].append({"currency": off.get("currency") or "money",
+                                        "cost": off.get("cost") or 0, "inputs": inputs})
+        rev: dict[str, set[str]] = {}
+        for (_, iid), b in merged.items():
+            del b["_sigs"]
+            self.barter_by_result.setdefault(iid, []).append(b)
+            for off in b["offers"]:
+                for ing in off["inputs"]:
+                    rev.setdefault(ing["item"], set()).add(iid)
+        name_of = lambda i: (self.items.get(i) or {}).get("name", i)  # noqa: E731
+        self.barter_used_in = {iid: sorted(rids, key=name_of) for iid, rids in rev.items()}
+
+    def barter_item_ids(self) -> set[str]:
+        """Все предметы бартер-графа (результаты + входы) — для обновления цен."""
+        ids: set[str] = set(self.barter_by_result)
+        ids.update(self.barter_used_in)
+        return ids
 
     # ---------- статы артефактов и контейнеры (для калькулятора сборок) ----------
     def _item_json(self, item_id: str) -> dict | None:

@@ -124,6 +124,18 @@ MARKET_CACHE_SEC = int(os.getenv("MARKET_CACHE_SEC", "90"))
 ITEM_SALES_HOURLY_DAYS = int(os.getenv("ITEM_SALES_HOURLY_DAYS", "35"))
 ITEM_SALES_KEEP_DAYS = int(os.getenv("ITEM_SALES_KEEP_DAYS", "365"))
 
+# --- Патчноуты с форума EXBO (forum.exbo.net — Flarum с открытым JSON API) ---
+PATCH_WATCH_ENABLED = os.getenv("PATCH_WATCH_ENABLED", "1") not in ("0", "false", "False")
+FORUM_API = os.getenv("FORUM_API", "https://forum.exbo.net").rstrip("/")
+PATCH_TAG = os.getenv("PATCH_TAG", "news-updates")   # тег «Обновления» (патчноуты)
+PATCH_POLL_MIN = int(os.getenv("PATCH_POLL_MIN", "30"))
+PATCH_BACKFILL_MAX = int(os.getenv("PATCH_BACKFILL_MAX", "1000"))  # предохранитель бэкфилла
+NEWS_IMG_DIR = DATA_DIR / "news_img"                 # зеркало картинок патчноутов
+
+# --- Комментарии под статьями ---
+# EXBO user id админов через запятую — могут удалять чужие комментарии
+ADMIN_USER_IDS = {int(x) for x in os.getenv("ADMIN_USER_IDS", "").split(",") if x.strip().isdigit()}
+
 # --- Расчёт дерева крафта ---
 # На демо-API (лимит ~2 запроса/с) глубина×ветвление = долгий холодный запрос.
 # С prod-токеном лимиты выше — можно поднять глубину/варианты через env.

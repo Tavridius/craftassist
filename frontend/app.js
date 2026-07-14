@@ -253,6 +253,7 @@ async function openItem(id) {
   try {
     const r = await fetch(api(`/craft/${id}${fuelMode() ? "?fuel=1" : ""}`));
     renderDetail(await r.json());
+    loadBarterBlocks(id);   // асинхронно: «получается бартером» / «сдаётся в бартер»
   } catch (e) {
     detail.innerHTML = `<div class="empty">[!] ОШИБКА ЗАГРУЗКИ</div>`;
   }
@@ -563,6 +564,7 @@ function renderDetail(d) {
         ДЕМО-РЕЖИМ: ЦЕНЫ АУКЦИОНА ТЕСТОВЫЕ. ДЛЯ РЕАЛЬНЫХ КОТИРОВОК НУЖЕН PROD-ТОКЕН API.</div>`;
   }
 
+  html += `<div id="barterBlocks"></div>`;  // заполняется loadBarterBlocks
   html += `</div>`;                      // /card-main
   html += asideBlock(chosen, d.used_in, d.req_check, d);
   html += `</div>`;                      // /card-cols
@@ -610,7 +612,7 @@ async function loadDashboard() {
       && home.dataset.ts && Date.now() - +home.dataset.ts < 60000) return;
   home.innerHTML = `<div class="spinner">// ЗАГРУЗКА ГЛАВНОЙ</div>`;
   try {
-    const [top, art, watch, em, sales, box, fuelTop] = await Promise.all([
+    const [top, art, watch, em, sales, box, fuelTop, patches] = await Promise.all([
       fetch(api(`/top${availParam("?")}`)).then((r) => r.json()).catch(() => null),
       fetch(api("/artmarket/top?window=7d")).then((r) => r.json()).catch(() => null),
       fetch(api("/watch")).then((r) => r.json()).catch(() => null),
@@ -618,10 +620,11 @@ async function loadDashboard() {
       fetch(api("/sales/top?n=5")).then((r) => r.json()).catch(() => null),
       fetch(api("/box")).then((r) => r.json()).catch(() => null),
       fetch(api("/fuel/top?n=20")).then((r) => r.json()).catch(() => null),
+      fetch(api("/patches?limit=3")).then((r) => r.json()).catch(() => null),
     ]);
     home.dataset.ts = Date.now();
     home.dataset.view = "dash";
-    renderDashboard(top, art, watch, em, sales, box, fuelTop);
+    renderDashboard(top, art, watch, em, sales, box, fuelTop, patches);
   } catch (e) {
     home.innerHTML = `<div class="empty">[!] НЕ УДАЛОСЬ ЗАГРУЗИТЬ ГЛАВНУЮ</div>`;
   }
@@ -735,7 +738,7 @@ function boxBody(b) {
     ${b.sales_per_hour != null ? `<div class="em-sub">${fmtSales(b.sales_per_hour)} ПРОД/Ч</div>` : ""}`;
 }
 
-function renderDashboard(top, art, watch, em, sales, box, fuelTop) {
+function renderDashboard(top, art, watch, em, sales, box, fuelTop, patches) {
   const card = (title, note, body, link, linkText) => `<section class="dash-card">
     <div class="side-head">
       <div class="side-title">▸ ${title}</div>
@@ -788,6 +791,17 @@ function renderDashboard(top, art, watch, em, sales, box, fuelTop) {
       ? ` · ПОСЛЕДНИЙ ${fmtSlot(watch.last_slot)}` : ""} · ДЕЛЬТА — К ПРОШЛОМУ ЗАМЕРУ</div>`;
   } else charts = `<div class="empty-sm">ЖДЁМ ПЕРВЫЕ ЗАМЕРЫ БИРЖИ.</div>`;
 
+  // последние патчи игры
+  let patchBody = "";
+  if (patches && patches.items && patches.items.length) {
+    patchBody = patches.items.map((p) => `
+      <div class="dash-patch" data-nav="/patches/${p.id}">
+        <div class="dp-t">${escapeHtml(p.title)}</div>
+        <div class="dp-d">${fmtPatchDate(p.created_at)}</div>
+        <div class="dp-a">${escapeHtml(p.anons || "")}</div>
+      </div>`).join("");
+  } else patchBody = `<div class="empty-sm">СИНХРОНИЗАЦИЯ С ФОРУМОМ EXBO…</div>`;
+
   home.innerHTML = `<div class="dash">
     <div class="dash-hero">
       <div class="dash-hero-t">ТЕРМИНАЛ STALZONE HELPER</div>
@@ -799,6 +813,7 @@ function renderDashboard(top, art, watch, em, sales, box, fuelTop) {
       ${card("ТРЕНДЫ БИРЖИ АРТЕФАКТОВ", "ЦЕНА ЗА 7 ДНЕЙ", trends, "/auction", "НА БИРЖУ")}
       ${card("ГРАФИКИ ИНГРЕДИЕНТОВ", "ВСЕ НАБЛЮДАЕМЫЕ · СР. ЦЕНА ПРОДАЖ", charts, "/craft", "В РАЗДЕЛ КРАФТА")}
       ${card("ЗАПРАВКА ГЕНЕРАТОРА", "ВСЕ ИСТОЧНИКИ · ₽ ЗА 1000 ЕД", fuelBody(fuelTop), "/profile", "ПРИСТРОЙКИ — В ПРОФИЛЕ")}
+      ${card("ПОСЛЕДНИЙ ПАТЧ", "ОБНОВЛЕНИЯ ИГРЫ", patchBody, "/patches", "ВСЕ ПАТЧИ")}
       ${card("ВЫБРОС", "ВРЕМЯ МСК · ЗАМЕР РАЗ В МИНУТУ", emissionBody(em))}
       ${card("СБОРКА ДНЯ", "СЛУЧАЙНАЯ ПОПУЛЯРНАЯ СБОРКА", stub("Случайная сборка артефактов из калькулятора — с ценой и статами."), "/builds", "К КАЛЬКУЛЯТОРУ")}
       ${card("АКТУАЛЬНЫЙ ЯЩИК", "ТАКТИЧЕСКИЙ РЕЗЕРВ", boxBody(box), "/market", "НА АУКЦИОН")}
@@ -1340,6 +1355,427 @@ function drawSalesChart() {
   svg.addEventListener("dblclick", () => {
     if (mkChart.custom) { mkChart.custom = null; loadSalesChart(); }
   });
+}
+
+// ---------- бартер: выгодные обмены у торговцев поселений ----------
+const CAT_RU = {
+  weapon: "ОРУЖИЕ", attachment: "ОБВЕСЫ", armor: "БРОНЯ", containers: "КОНТЕЙНЕРЫ",
+  backpacks: "РЮКЗАКИ", bullet: "БОЕПРИПАСЫ", misc: "РАЗНОЕ", other: "ПРОЧЕЕ",
+  device: "УСТРОЙСТВА", artefact: "АРТЕФАКТЫ", medicine: "МЕДИЦИНА", food: "ЕДА",
+  drink: "НАПИТКИ", grenade: "ГРАНАТЫ",
+};
+const catName = (c) => CAT_RU[c] || String(c || "").toUpperCase();
+const CUR_RU = { money: "₽", sleeves: "ГИЛЬЗ" };
+
+let btState = { settlement: "", cat: "", maxLevel: 0, pure: false, q: "", shown: 60 };
+let btTimer = null;
+
+async function openBarter() {
+  home.classList.add("hidden");
+  detail.classList.add("hidden");
+  results.innerHTML = "";
+  page.classList.remove("hidden");
+  page.innerHTML = `<div class="spinner">// ЗАГРУЗКА БАРТЕРОВ</div>`;
+  window.scrollTo(0, 0);
+  await refreshBarter(true);
+}
+
+async function refreshBarter(full = false) {
+  const p = new URLSearchParams();
+  if (btState.settlement) p.set("settlement", btState.settlement);
+  if (btState.cat) p.set("cat", btState.cat);
+  if (btState.maxLevel) p.set("max_level", btState.maxLevel);
+  if (btState.pure) p.set("pure", "1");
+  if (btState.q) p.set("q", btState.q);
+  let d;
+  try {
+    d = await fetch(api(`/barter/top?${p}`)).then((r) => r.json());
+  } catch (e) {
+    page.innerHTML = `<div class="empty">[!] ОШИБКА СЕТИ</div>`;
+    return;
+  }
+  if (location.pathname !== "/barter") return;
+  if (full) renderBarter(d);
+  $("btBody").innerHTML = btRows(d.rows);
+  $("btCount").textContent = `${d.total} ОБМЕНОВ · КОМИССИЯ АУКА ${d.fee_pct}% УЧТЕНА`;
+  wireBtRows();
+  btMore(d.rows);
+}
+
+function btRows(rows) {
+  return rows.slice(0, btState.shown).map((r) => {
+    const cost = r.cost != null ? `${fmt(r.cost)} ₽`
+      : (r.cost_partial ? `${fmt(r.cost_partial)} ₽ + ФАРМ` : "ФАРМ");
+    const cur = r.currency !== "money" && r.money
+      ? `<span class="bt-cur">${fmt(r.money)} ${CUR_RU[r.currency] || r.currency.toUpperCase()}</span>` : "";
+    const missing = r.missing.length
+      ? `<span class="bt-miss" title="${escapeHtml(r.missing.join(", "))}">+${r.missing.length} ФАРМ</span>` : "";
+    const pct = r.pct == null ? "—"
+      : `<span class="pct ${r.pct > 0 ? "up" : "down"}">${r.pct > 0 ? "+" : ""}${r.pct}%</span>`;
+    return `<tr class="bt-row" data-id="${r.id}">
+      <td class="bt-item"><img loading="lazy" src="${asset(r.icon)}" alt="">
+        <span class="nm" style="color:${rank(r.color).color}">${escapeHtml(r.name)}</span>${missing}${cur}</td>
+      <td class="bt-place">${escapeHtml(r.settlement_name)}${r.level ? ` <span class="lv">УР.${r.level}</span>` : ""}</td>
+      <td class="r">${cost}</td>
+      <td class="r">${r.sell_net != null ? fmt(r.sell_net) + " ₽" : "—"}</td>
+      <td class="r">${pct}</td>
+    </tr>`;
+  }).join("") || `<tr><td colspan="5" class="empty-sm">НИЧЕГО НЕ НАЙДЕНО ПО ФИЛЬТРАМ.</td></tr>`;
+}
+
+function btMore(rows) {
+  const more = $("btMore");
+  if (!more) return;
+  more.classList.toggle("hidden", rows.length <= btState.shown);
+  more.onclick = () => { btState.shown += 120; refreshBarter(); };
+}
+
+function renderBarter(d) {
+  const opts = (list, cur, all) => `<option value="">${all}</option>` +
+    list.map((s) => `<option value="${s.v}" ${cur === s.v ? "selected" : ""}>${escapeHtml(s.t)}</option>`).join("");
+  const setl = (d.settlements || []).map((s) => ({ v: s.key, t: s.name }));
+  const cats = (d.categories || []).map((c) => ({ v: c, t: catName(c) }));
+  const lvls = [1, 2, 3, 4, 5, 6, 7].map((v) => ({ v: String(v), t: `БАЗА ДО УР.${v}` }));
+  page.innerHTML = `<div class="btmod">
+    <div class="section-head">
+      <div class="section-title">▸ БАРТЕР · ОБМЕНЫ У ТОРГОВЦЕВ</div>
+      <div class="section-note" id="btCount">${d.total} ОБМЕНОВ · КОМИССИЯ АУКА ${d.fee_pct}% УЧТЕНА</div>
+    </div>
+    <div class="bt-filters">
+      <select id="btSettle">${opts(setl, btState.settlement, "ВСЕ ПОСЕЛЕНИЯ")}</select>
+      <select id="btCat">${opts(cats, btState.cat, "ВСЕ КАТЕГОРИИ")}</select>
+      <select id="btLevel">${opts(lvls, btState.maxLevel ? String(btState.maxLevel) : "", "ЛЮБОЙ УРОВЕНЬ")}</select>
+      <label class="bt-pure"><input type="checkbox" id="btPure" ${btState.pure ? "checked" : ""}> БЕЗ ФАРМА</label>
+      <div class="search-box bt-search"><div class="search-prompt">&gt;_</div>
+        <input id="btQ" type="search" autocomplete="off" placeholder="ФИЛЬТР ПО НАЗВАНИЮ…" value="${escapeHtml(btState.q)}"></div>
+    </div>
+    <div class="bt-note">СТОИМОСТЬ = ДЕНЬГИ ТОРГОВЦУ + ЗАКУПКА ВХОДОВ НА АУКЕ (ТРЕЙД-ИН РАСКРЫВАЕТСЯ РЕКУРСИВНО).
+      «ФАРМ» — ВХОДЫ, КОТОРЫХ НЕТ НА АУКЕ (КВЕСТОВЫЕ/ЖЕТОНЫ). КЛИК ПО СТРОКЕ — КАРТОЧКА ПРЕДМЕТА.</div>
+    <div class="bt-wrap"><table class="bt-table">
+      <thead><tr><th>ПРЕДМЕТ</th><th>ГДЕ</th><th class="r">СТОИМОСТЬ</th><th class="r">ПРОДАЖА~</th><th class="r">ВЫГОДА</th></tr></thead>
+      <tbody id="btBody"></tbody>
+    </table></div>
+    <button id="btMore" class="bt-more hidden">ПОКАЗАТЬ ЕЩЁ</button>
+  </div>`;
+  $("btSettle").addEventListener("change", (e) => { btState.settlement = e.target.value; btState.shown = 60; refreshBarter(); });
+  $("btCat").addEventListener("change", (e) => { btState.cat = e.target.value; btState.shown = 60; refreshBarter(); });
+  $("btLevel").addEventListener("change", (e) => { btState.maxLevel = +e.target.value || 0; btState.shown = 60; refreshBarter(); });
+  $("btPure").addEventListener("change", (e) => { btState.pure = e.target.checked; btState.shown = 60; refreshBarter(); });
+  $("btQ").addEventListener("input", (e) => {
+    clearTimeout(btTimer);
+    btTimer = setTimeout(() => { btState.q = e.target.value.trim(); btState.shown = 60; refreshBarter(); }, 250);
+  });
+}
+
+function wireBtRows() {
+  page.querySelectorAll(".bt-row[data-id]").forEach((r) =>
+    r.addEventListener("click", () => { navigate(`/item/${r.dataset.id}`); }));
+}
+
+// ---------- бартер в карточке предмета ----------
+function btOfferHtml(o, level) {
+  const inputs = o.inputs.map((i) => {
+    const via = i.via ? ` <span class="bt-via">← бартер: ${escapeHtml(i.via.settlement_name)}${i.via.level ? ` ур.${i.via.level}` : ""} за ${fmt(i.via.cost)} ₽</span>` : "";
+    const price = i.source === "farm" ? `<span class="bt-farm">ФАРМ</span>`
+      : `${fmt(i.line_cost)} ₽${i.amount > 1 ? ` <span class="unit">(${fmt(i.unit_price)}/ШТ)</span>` : ""}`;
+    return `<div class="bt-ing"><span class="ilink" data-id="${i.id}">
+      <img loading="lazy" src="${asset(i.icon)}" alt="">${i.amount}× ${escapeHtml(i.name)}</span>
+      <span class="bt-ing-price">${price}${via}</span></div>`;
+  }).join("");
+  const money = o.money ? `<div class="bt-ing"><span>ДОПЛАТА ТОРГОВЦУ</span>
+    <span class="bt-ing-price">${fmt(o.money)} ${CUR_RU[o.currency] || o.currency.toUpperCase()}</span></div>` : "";
+  const total = o.cost != null ? `${fmt(o.cost)} ₽`
+    : (o.cost_partial ? `${fmt(o.cost_partial)} ₽ + ФАРМ` : "ФАРМ");
+  return `<div class="bt-offer">${inputs}${money}
+    <div class="bt-ing bt-total"><span>ИТОГО</span><span class="bt-ing-price">${total}</span></div></div>`;
+}
+
+async function loadBarterBlocks(id) {
+  let d;
+  try {
+    d = await fetch(api(`/barter/item/${id}`)).then((r) => r.json());
+  } catch (e) { return; }
+  const box = $("barterBlocks");
+  if (!box || !d) return;
+  let html = "";
+  if (d.ways && d.ways.length) {
+    const ways = d.ways.map((w) => {
+      const offers = w.offers.map((o) => btOfferHtml(o, w.level)).join("");
+      return `<div class="bt-way">
+        <div class="bt-way-head">${escapeHtml(w.settlement_name)}${w.level ? ` <span class="lv">УР.${w.level}</span>` : ""}</div>
+        ${offers}</div>`;
+    }).join("");
+    const best = d.ways[0] && d.ways[0].offers[0];
+    const vs = best && best.cost != null && d.buy_price != null
+      ? (best.cost < d.buy_price
+         ? ` · БАРТЕР ДЕШЕВЛЕ АУКА НА ${fmt(d.buy_price - best.cost)} ₽`
+         : ` · НА АУКЕ ДЕШЕВЛЕ НА ${fmt(best.cost - d.buy_price)} ₽`) : "";
+    html += `<div class="reqs-sec bt-block">
+      <div class="reqs-lbl">ПОЛУЧАЕТСЯ БАРТЕРОМ · ${d.ways.length} ${d.ways.length === 1 ? "ПОСЕЛЕНИЕ" : "ПОСЕЛЕНИЙ"}${vs}</div>
+      ${ways}</div>`;
+  }
+  if (d.used_in && d.used_in.length) {
+    const rows = d.used_in.map((u) => `<div class="use-row" data-id="${u.id}">
+      <img loading="lazy" src="${asset(u.icon)}" alt=""><span class="nm">${escapeHtml(u.name)}</span></div>`).join("");
+    html += `<div class="reqs-sec bt-block">
+      <div class="reqs-lbl">СДАЁТСЯ В БАРТЕР ДЛЯ · ${d.used_in.length}</div>
+      <div class="use-list">${rows}</div></div>`;
+  }
+  if (!html) { box.remove(); return; }
+  box.innerHTML = html;
+  box.querySelectorAll(".ilink[data-id], .use-row[data-id]").forEach((el) =>
+    el.addEventListener("click", () => { navigate(`/item/${el.dataset.id}`); }));
+}
+
+// ---------- патчноуты игры ----------
+let patchOffset = 0;
+
+const fmtPatchDate = (iso) => {
+  const d = new Date(iso);
+  return isNaN(d) ? "" : d.toLocaleDateString("ru-RU",
+    { day: "2-digit", month: "long", year: "numeric" });
+};
+
+async function openPatches() {
+  home.classList.add("hidden");
+  detail.classList.add("hidden");
+  results.innerHTML = "";
+  page.classList.remove("hidden");
+  page.innerHTML = `<div class="spinner">// ЗАГРУЗКА ПАТЧНОУТОВ</div>`;
+  window.scrollTo(0, 0);
+  patchOffset = 0;
+  let d;
+  try {
+    d = await fetch(api("/patches?limit=20")).then((r) => r.json());
+  } catch (e) {
+    page.innerHTML = `<div class="empty">[!] ОШИБКА СЕТИ</div>`;
+    return;
+  }
+  if (location.pathname !== "/patches") return;
+  page.innerHTML = `<div class="btmod">
+    <div class="section-head">
+      <div class="section-title">▸ ПАТЧИ · ОБНОВЛЕНИЯ ИГРЫ</div>
+      <div class="section-note">${d.total ? `${d.total} ПАТЧНОУТОВ · ИСТОЧНИК — ФОРУМ EXBO` : "СИНХРОНИЗАЦИЯ С ФОРУМОМ EXBO…"}</div>
+    </div>
+    <div id="patchList" class="patch-list"></div>
+    <button id="patchMore" class="bt-more hidden">ПОКАЗАТЬ ЕЩЁ</button>
+  </div>`;
+  if (!d.total) {
+    $("patchList").innerHTML = `<div class="empty-sm">ПАТЧНОУТЫ ЕЩЁ СКАЧИВАЮТСЯ С ФОРУМА — ЗАГЛЯНИ ЧЕРЕЗ ПАРУ МИНУТ.</div>`;
+    return;
+  }
+  appendPatches(d);
+  $("patchMore").addEventListener("click", async () => {
+    const more = await fetch(api(`/patches?limit=20&offset=${patchOffset}`))
+      .then((r) => r.json()).catch(() => null);
+    if (more) appendPatches(more);
+  });
+}
+
+function appendPatches(d) {
+  const box = $("patchList");
+  if (!box) return;
+  box.insertAdjacentHTML("beforeend", d.items.map((p) => `
+    <a class="patch-row" href="/patches/${p.id}">
+      <div class="patch-row-t">${escapeHtml(p.title)}</div>
+      <div class="patch-row-d">${fmtPatchDate(p.created_at)}</div>
+      <div class="patch-row-a">${escapeHtml(p.anons || "")}</div>
+    </a>`).join(""));
+  patchOffset += d.items.length;
+  $("patchMore").classList.toggle("hidden", patchOffset >= d.total);
+}
+
+async function openPatch(pid) {
+  home.classList.add("hidden");
+  detail.classList.add("hidden");
+  results.innerHTML = "";
+  page.classList.remove("hidden");
+  page.innerHTML = `<div class="spinner">// ЗАГРУЗКА ПАТЧА</div>`;
+  window.scrollTo(0, 0);
+  let p;
+  try {
+    const r = await fetch(api(`/patches/${pid}`));
+    if (!r.ok) throw new Error();
+    p = await r.json();
+  } catch (e) {
+    page.innerHTML = `<div class="empty">[!] ПАТЧ НЕ НАЙДЕН</div>`;
+    return;
+  }
+  if (location.pathname !== `/patches/${pid}`) return;
+  page.innerHTML = `<div class="btmod">
+    <button class="back" id="patchBack">◂ ВСЕ ПАТЧИ</button>
+    <article class="patch-article">
+      <h1>${escapeHtml(p.title)}</h1>
+      <div class="patch-meta">${fmtPatchDate(p.created_at)} ·
+        <a href="${escapeHtml(p.source_url)}" target="_blank" rel="noopener">ОРИГИНАЛ НА ФОРУМЕ EXBO ↗</a></div>
+      <div class="patch-body">${p.html}</div>
+    </article>
+    <div id="comments"></div>
+  </div>`;
+  $("patchBack").addEventListener("click", () => { navigate("/patches"); });
+  renderComments(`patch:${pid}`);
+}
+
+// ---------- комментарии под статьями ----------
+async function renderComments(pageKey) {
+  const host = $("comments");
+  if (!host) return;
+  let d;
+  try {
+    d = await fetch(api(`/comments?page=${encodeURIComponent(pageKey)}`)).then((r) => r.json());
+  } catch (e) { return; }
+  const authed = ME && ME.authenticated;
+  const myLogin = authed ? (ME.user.display_login || ME.user.login) : null;
+  const rows = (d.comments || []).map((c) => `
+    <div class="cmt" data-id="${c.id}">
+      <div class="cmt-head"><span class="cmt-login">${escapeHtml(c.login)}</span>
+        <span class="cmt-ts">${new Date(c.ts * 1000).toLocaleString("ru-RU",
+          { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</span>
+        ${authed && c.login === myLogin ? `<button class="cmt-del" data-id="${c.id}" title="Удалить">✕</button>` : ""}
+      </div>
+      <div class="cmt-text">${escapeHtml(c.text)}</div>
+    </div>`).join("");
+  const form = authed
+    ? `<div class="cmt-form">
+        <textarea id="cmtText" rows="3" maxlength="2000" placeholder="НАПИСАТЬ КОММЕНТАРИЙ…"></textarea>
+        <button id="cmtSend" class="bt-more" style="margin:6px 0 0">ОТПРАВИТЬ</button>
+        <div id="cmtErr" class="cmt-err"></div></div>`
+    : (ME && ME.auth_enabled
+       ? `<div class="cmt-cta">ЧТОБЫ КОММЕНТИРОВАТЬ — <a href="${BASE}/auth/login">ВОЙДИ ЧЕРЕЗ EXBO</a>.</div>`
+       : "");
+  host.innerHTML = `<div class="cmt-box">
+    <div class="reqs-lbl">КОММЕНТАРИИ · ${(d.comments || []).length}</div>
+    ${rows || `<div class="empty-sm">ПОКА ПУСТО — БУДЬ ПЕРВЫМ.</div>`}
+    ${form}</div>`;
+  const send = $("cmtSend");
+  if (send) send.addEventListener("click", async () => {
+    const text = $("cmtText").value.trim();
+    if (!text) return;
+    send.disabled = true;
+    try {
+      const r = await fetch(api("/comments"), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ page: pageKey, text }),
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        $("cmtErr").textContent = err.detail || "ОШИБКА ОТПРАВКИ";
+        return;
+      }
+      renderComments(pageKey);
+    } finally { send.disabled = false; }
+  });
+  host.querySelectorAll(".cmt-del").forEach((b) => b.addEventListener("click", async () => {
+    if (!confirm("Удалить комментарий?")) return;
+    await fetch(api(`/comments/${b.dataset.id}`), { method: "DELETE" }).catch(() => {});
+    renderComments(pageKey);
+  }));
+}
+
+// ---------- обменки: монеты Перекупщика ----------
+let obmenCoins = +(localStorage.getItem("sz_coins") || 0) || "";
+
+async function openObmen() {
+  home.classList.add("hidden");
+  detail.classList.add("hidden");
+  results.innerHTML = "";
+  page.classList.remove("hidden");
+  page.innerHTML = `<div class="spinner">// ЗАГРУЗКА ОБМЕНОК</div>`;
+  window.scrollTo(0, 0);
+  let d;
+  try {
+    d = await fetch(api("/exchange")).then((r) => r.json());
+  } catch (e) {
+    page.innerHTML = `<div class="empty">[!] ОШИБКА СЕТИ</div>`;
+    return;
+  }
+  if (location.pathname !== "/obmen") return;
+  renderObmen(d);
+}
+
+function obmenRow(r, extra = "") {
+  const basis = r.sell_basis === "sales" ? "ПО СДЕЛКАМ" : r.sell_basis === "buyout" ? "ПО ВЫКУПУ" : "";
+  return `<tr class="bt-row" data-id="${r.id}">
+    <td class="bt-item"><img loading="lazy" src="${asset(r.icon)}" alt="">
+      <span class="nm" style="color:${rank(r.color).color}">${escapeHtml(r.name)}</span>
+      ${r.note ? `<span class="bt-cur">${escapeHtml(r.note)}</span>` : ""}</td>
+    <td class="r">${r.amount} ШТ</td>
+    <td class="r">${fmt(r.coins)}</td>
+    <td class="r" title="${basis}">${r.value != null ? fmt(r.value) + " ₽" : "—"}</td>
+    <td class="r">${r.rate != null ? `<span class="pct ${r.rate >= 1 ? "up" : "down"}">${r.rate.toLocaleString("ru-RU")}</span>` : "—"}</td>
+    ${extra}
+  </tr>`;
+}
+
+function renderObmen(d) {
+  if (d.empty) {
+    page.innerHTML = `<div class="btmod">
+      <div class="section-head">
+        <div class="section-title">▸ ОБМЕНКИ · МОНЕТЫ ПЕРЕКУПЩИКА</div>
+        <div class="section-note">ДАННЫЕ ГОТОВЯТСЯ</div>
+      </div>
+      <div class="obm-about">
+        <p><strong>Обменные монеты</strong> — валюта из ивентов, акций и ежедневных наград.
+        Потратить их можно только у <strong>Перекупщика</strong> (Бар — Альбатрос, северные
+        базы фракций) на бартерные ресурсы и снаряжение.</p>
+        <p>Здесь появится курс «рублей за монету» по каждой позиции на живых ценах аукциона:
+        что взять за монеты и продать выгоднее всего, и оптимальная корзина под твой запас
+        монет. Ассортимент снимается из игры вручную — данные скоро подъедут.</p>
+        <p>А пока загляни в <a href="/barter">калькулятор бартера</a> — там 1400+ обменов
+        у торговцев поселений с расчётом выгоды.</p>
+      </div>
+    </div>`;
+    return;
+  }
+  const rows = d.positions.map((r) => obmenRow(r)).join("");
+  page.innerHTML = `<div class="btmod">
+    <div class="section-head">
+      <div class="section-title">▸ ОБМЕНКИ · МОНЕТЫ ПЕРЕКУПЩИКА</div>
+      <div class="section-note">КУРС = ПРОДАЖА НА АУКЕ (−${d.fee_pct}%) / ЦЕНА В МОНЕТАХ${
+        d.updated_at ? ` · АССОРТИМЕНТ ОТ ${new Date(d.updated_at).toLocaleDateString("ru-RU")}` : ""}</div>
+    </div>
+    <div class="bt-filters">
+      <div class="search-box bt-search obm-coins"><div class="search-prompt">◈</div>
+        <input id="obmCoins" type="text" inputmode="numeric" autocomplete="off"
+               placeholder="СКОЛЬКО У ТЕБЯ МОНЕТ…" value="${obmenCoins ? fmt(obmenCoins) : ""}"></div>
+      <button id="obmPlan" class="bt-more" style="margin:0">СОБРАТЬ КОРЗИНУ</button>
+    </div>
+    <div id="obmPlanBox"></div>
+    <div class="bt-wrap"><table class="bt-table">
+      <thead><tr><th>ПРЕДМЕТ</th><th class="r">ДАЁТ</th><th class="r">МОНЕТ</th>
+        <th class="r">ЦЕННОСТЬ</th><th class="r">₽/МОНЕТА</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>
+  </div>`;
+  const inp = $("obmCoins");
+  wireBudget && wireBudget(inp, (v) => { obmenCoins = v; localStorage.setItem("sz_coins", String(v || 0)); });
+  $("obmPlan").addEventListener("click", loadObmenPlan);
+  inp.addEventListener("keydown", (e) => { if (e.key === "Enter") loadObmenPlan(); });
+  wireBtRows();
+}
+
+async function loadObmenPlan() {
+  const coins = +String($("obmCoins").value).replace(/\D/g, "") || 0;
+  if (!coins) return;
+  obmenCoins = coins;
+  localStorage.setItem("sz_coins", String(coins));
+  const box = $("obmPlanBox");
+  box.innerHTML = `<div class="spinner">// СЧИТАЮ КОРЗИНУ</div>`;
+  let d;
+  try {
+    d = await fetch(api(`/exchange/plan?coins=${coins}`)).then((r) => r.json());
+  } catch (e) { box.innerHTML = ""; return; }
+  const rows = (d.basket || []).map((r) => obmenRow(r,
+    `<td class="r">${r.buys}×</td><td class="r">${fmt(r.total_value)} ₽</td>`)).join("");
+  box.innerHTML = d.basket && d.basket.length ? `<div class="obm-plan">
+    <div class="reqs-lbl">КОРЗИНА НА ${fmt(d.coins)} МОНЕТ → ~${fmt(d.value)} ₽${d.left ? ` · ОСТАНЕТСЯ ${fmt(d.left)}` : ""}</div>
+    <div class="bt-wrap"><table class="bt-table">
+      <thead><tr><th>ПРЕДМЕТ</th><th class="r">ДАЁТ</th><th class="r">МОНЕТ</th>
+        <th class="r">ЦЕННОСТЬ</th><th class="r">₽/МОНЕТА</th><th class="r">ПОКУПОК</th><th class="r">ИТОГО</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div></div>`
+    : `<div class="empty-sm">НЕ ИЗ ЧЕГО СОБРАТЬ КОРЗИНУ (НЕТ ПОЗИЦИЙ С ИЗВЕСТНОЙ ЦЕНОЙ).</div>`;
+  wireBtRows();
 }
 
 // ---------- биржа артефактов: топ роста цен по корзинам качество×заточка ----------
@@ -2358,6 +2794,22 @@ function route() {
   if (path === "/market") {
     strip.classList.add("hidden");
     setNav("market"); openMarket(); return;
+  }
+  if (path === "/barter") {
+    strip.classList.add("hidden"); detail.classList.add("hidden");
+    setNav("barter"); openBarter(); return;
+  }
+  if (path === "/obmen") {
+    strip.classList.add("hidden"); detail.classList.add("hidden");
+    setNav("obmen"); openObmen(); return;
+  }
+  if (path === "/patches") {
+    strip.classList.add("hidden"); detail.classList.add("hidden");
+    setNav("patches"); openPatches(); return;
+  }
+  if ((mm = path.match(/^\/patches\/(\d+)$/))) {
+    strip.classList.add("hidden"); detail.classList.add("hidden");
+    setNav("patches"); openPatch(mm[1]); return;
   }
   if (path === "/auction") {
     strip.classList.add("hidden"); page.classList.add("hidden");

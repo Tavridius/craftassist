@@ -13,12 +13,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app import config
-from app.db import chat, loader, market, users
+from app.db import chat, loader, market, news, users
 from app.db.index import db
 from app.routers.api import router as api_router
 from app.routers.auth import router as auth_router
 from app.routers.pages import router as pages_router
-from app.services import fuel, oauth
+from app.services import exchange, fuel, oauth
 from app.services.artefact_lots import artlots
 from app.services.artefact_watch import artwatch
 from app.services.ingredient_watch import watch
@@ -40,11 +40,14 @@ async def startup() -> None:
     users.init()
     chat.init()
     market.init()
+    news.init()
     db.load()
     store.load()
-    store.set_base(db.priceable_ids())
-    store.set_results(sorted(db.recipe_by_result))
+    # цены: крафт-граф + бартер-граф; история продаж — результаты обоих
+    store.set_base(sorted(set(db.priceable_ids()) | db.barter_item_ids()))
+    store.set_results(sorted(set(db.recipe_by_result) | set(db.barter_by_result)))
     fuel.warm()   # цены и история продаж топлива генератора — в ротацию воркера
+    exchange.load()  # обменки Перекупщика (ручной JSON) — предметы в ротацию цен
     rankings.load()
     watch.load()
     oauth.load()  # кэшированный app-токен (если работаем по клиентским кредам)
@@ -66,6 +69,9 @@ async def startup() -> None:
     if config.SALES_STATS_ENABLED:
         from app.services.sales_stats import sstats
         asyncio.create_task(sstats.loop())         # снапшоты продаж (топ за неделю)
+    if config.PATCH_WATCH_ENABLED:
+        from app.services.patch_watch import pwatch
+        asyncio.create_task(pwatch.loop())         # патчноуты с форума EXBO
 
 
 # API и SSR-страницы — ДО статики, чтобы не перекрылись catch-all маунтом.
@@ -83,5 +89,8 @@ app.include_router(pages_router)
 mimetypes.add_type("image/webp", ".webp")
 config.ICONS_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/icons", StaticFiles(directory=str(config.ICONS_DIR)), name="icons")
+# зеркало картинок патчноутов (заполняет patch_watch в volume)
+config.NEWS_IMG_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/news-img", StaticFiles(directory=str(config.NEWS_IMG_DIR)), name="news_img")
 if config.FRONTEND_DIR.exists():
     app.mount("/", StaticFiles(directory=str(config.FRONTEND_DIR), html=True), name="frontend")

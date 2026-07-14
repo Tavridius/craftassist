@@ -220,6 +220,26 @@ async def builds_page(request: Request):
              "живым ценам аукциона.")
 
 
+@router.get("/barter", response_class=HTMLResponse)
+async def barter_page(request: Request):
+    return render_index(
+        request, "/barter",
+        title="Калькулятор бартера STALZONE (Stalcraft) — что выгодно менять у торговцев",
+        desc="Все бартеры STALZONE (ранее Stalcraft — Сталкрафт): 1400+ обменов у торговцев "
+             "поселений с живыми ценами аукциона. Считаем стоимость входов и доплаты против "
+             "цены продажи результата — что выгодно менять прямо сейчас.")
+
+
+@router.get("/obmen", response_class=HTMLResponse)
+async def obmen_page(request: Request):
+    return render_index(
+        request, "/obmen",
+        title="Обменные монеты STALZONE (Stalcraft) — что выгодно брать у Перекупщика",
+        desc="Куда потратить обменные монеты в STALZONE (ранее Stalcraft — Сталкрафт): "
+             "курс «рублей за монету» по каждой позиции Перекупщика на живых ценах "
+             "аукциона. Что взять за монеты и продать выгоднее всего.")
+
+
 @router.get("/profile", response_class=HTMLResponse)
 async def profile_page(request: Request):
     return render_index(request, "/profile", title=f"Профиль убежища — {SITE}",
@@ -263,15 +283,57 @@ async def guides_page(request: Request):
                         title=f"Гайды по STALZONE (Stalcraft) — {SITE}")
 
 
+@router.get("/patches", response_class=HTMLResponse)
+async def patches_page(request: Request):
+    return render_index(
+        request, "/patches",
+        title="Патчноуты STALZONE (Stalcraft) — все обновления игры",
+        desc="Все патчноуты и хотфиксы STALZONE (ранее Stalcraft — Сталкрафт) в одном "
+             "месте: полный текст обновлений с картинками, свежие сверху. Архив "
+             "изменений игры с обсуждением.")
+
+
+@router.get("/patches/{pid}", response_class=HTMLResponse)
+async def patch_page(request: Request, pid: str):
+    from app.db import news
+    p = news.get_patch(int(pid)) if pid.isdigit() else None
+    if not p:
+        return render_index(request, f"/patches/{pid}",
+                            title=f"Патч не найден — {SITE}", noindex=True)
+    title = f"{p['title']} — патчноут STALZONE (Stalcraft)"
+    desc = p["anons"] or f"Обновление STALZONE (Stalcraft): {p['title']}."
+    jsonld = {
+        "@context": "https://schema.org",
+        "@type": "Article",
+        "headline": p["title"],
+        "datePublished": p["created_at"],
+        "inLanguage": "ru",
+        "publisher": {"@type": "Organization", "name": SITE},
+        "mainEntityOfPage": _base_url(request) + f"/patches/{pid}",
+    }
+    return render_index(request, f"/patches/{pid}", title=title, desc=desc,
+                        jsonld=jsonld)
+
+
 @router.get("/sitemap.xml")
 async def sitemap(request: Request):
     """Карта сайта: только осмысленные посадочные (без тысяч карточек — под спрос)."""
     base = _base_url(request)
-    paths = ["/", "/craft", "/vygodno-kraftit", "/auction", "/market", "/builds", "/map"]
+    paths = ["/", "/craft", "/vygodno-kraftit", "/auction", "/market", "/builds",
+             "/barter", "/obmen", "/patches", "/map"]
     urls = "".join(
         f"<url><loc>{_html.escape(base + p, quote=True)}</loc>"
-        f"<changefreq>{'daily' if p in ('/', '/craft', '/vygodno-kraftit', '/auction', '/market') else 'weekly'}</changefreq>"
+        f"<changefreq>{'daily' if p in ('/', '/craft', '/vygodno-kraftit', '/auction', '/market', '/barter', '/patches') else 'weekly'}</changefreq>"
         f"</url>" for p in paths)
+    # патчноуты — контентные страницы под подтверждённый спрос («сталкрафт патчноут»)
+    from app.db import news
+    try:
+        urls += "".join(
+            f"<url><loc>{_html.escape(base + f'/patches/{pid}', quote=True)}</loc>"
+            f"<lastmod>{_html.escape(created[:10], quote=True)}</lastmod></url>"
+            for pid, created in news.all_patch_ids() if created)
+    except Exception:
+        logger.exception("sitemap: patches skipped")
     xml = ('<?xml version="1.0" encoding="UTF-8"?>'
            '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
            f"{urls}</urlset>")

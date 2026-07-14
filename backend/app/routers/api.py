@@ -4,6 +4,7 @@
 (живые лоты полного аукциона): внешний запрос по требованию с коротким кэшем.
 """
 import asyncio
+import re
 import time
 from datetime import datetime, timedelta
 
@@ -11,10 +12,11 @@ import httpx
 from fastapi import APIRouter, Body, HTTPException, Query, Request
 
 from app import config
-from app.db import chat, market, users
+from app.db import chat, market, news, users
 from app.db.index import db
 from app.routers.auth import current_user
-from app.services import auction, builds, craft, hideout, oauth, sales_log
+from app.services import (auction, barter, builds, craft, exchange, hideout,
+                          oauth, sales_log)
 from app.services import fuel as fuel_svc
 from app.services.artefact_lots import artlots
 from app.services.artefact_watch import MSK
@@ -239,6 +241,132 @@ async def artmarket_item(item_id: str):
 async def emission():
     """Текущий/последние выбросы (история копится вотчером, API отдаёт только 2)."""
     return ewatch.snapshot()
+
+
+# ---------- бартер: рейтинг обменов и способы получения ----------
+
+@router.get("/barter/top")
+async def barter_top(settlement: str = "", cat: str = "", max_level: int = 0,
+                     pure: int = 0, q: str = ""):
+    """Рейтинг бартеров из тёплого кэша. Фильтры: поселение, категория,
+    уровень поселения ≤ max_level, pure=1 — только полностью покупаемые входы."""
+    data = barter.compute_top()
+    rows = data["rows"]
+    if settlement:
+        rows = [r for r in rows if r["settlement"] == settlement]
+    if cat:
+        rows = [r for r in rows if r["category"] == cat]
+    if max_level:
+        rows = [r for r in rows if (r["level"] or 0) <= max_level]
+    if pure:  # полностью покупаемые: без фарм-входов и не за спец-валюту
+        rows = [r for r in rows if not r["missing"] and r["cost"] is not None]
+    if q:
+        needle = q.strip().lower()
+        rows = [r for r in rows if needle in r["name"].lower()]
+    return {**data, "rows": rows, "total": len(rows)}
+
+
+@router.get("/barter/item/{item_id}")
+async def barter_item(item_id: str):
+    """Способы получить предмет бартером (с раскрытием входов) + где сдаётся."""
+    if not db.item(item_id):
+        raise HTTPException(404, "item not found")
+    return barter.analyze(item_id)
+
+
+# ---------- патчноуты игры ----------
+
+@router.get("/patches")
+async def patches_list(offset: int = Query(0, ge=0), limit: int = Query(20, ge=1, le=100)):
+    """Список патчей (заголовок, дата, анонс) — свежие сверху."""
+    items, total = news.list_patches(offset, limit)
+    return {"items": items, "total": total, "offset": offset}
+
+
+@router.get("/patches/{pid}")
+async def patch_get(pid: int):
+    """Полный патч: санитизированный HTML с локальными картинками."""
+    p = news.get_patch(pid)
+    if not p:
+        raise HTTPException(404, "patch not found")
+    p.pop("fetched_at", None)
+    return p
+
+
+# ---------- комментарии под статьями (патчи; page_key универсальный) ----------
+
+_comment_last_post: dict[int, float] = {}   # антифлуд, как в чате
+
+_PAGE_KEY_RE = re.compile(r"^(patch|guide|item):[\w.-]{1,64}$")
+
+
+def _valid_page(page: str) -> bool:
+    """Ключ страницы валиден и указывает на существующий объект."""
+    if not _PAGE_KEY_RE.match(page or ""):
+        return False
+    kind, _, ref = page.partition(":")
+    if kind == "patch":
+        return ref.isdigit() and news.patch_meta(int(ref)) is not None
+    if kind == "item":
+        return db.item(ref) is not None
+    return True
+
+
+@router.get("/comments")
+async def comments_list(page: str, after: int = 0):
+    """Комментарии страницы (читать может любой)."""
+    if not _PAGE_KEY_RE.match(page or ""):
+        raise HTTPException(422, "bad page key")
+    msgs = news.list_comments(page, after=after)
+    return {"comments": msgs, "last_id": msgs[-1]["id"] if msgs else after}
+
+
+@router.post("/comments")
+async def comments_post(request: Request, payload: dict = Body(...)):
+    """Оставить комментарий — только вошедшим через EXBO. Антифлуд 3с."""
+    user = current_user(request)
+    if not user:
+        raise HTTPException(401, "не авторизован")
+    page = str(payload.get("page") or "")
+    if not _valid_page(page):
+        raise HTTPException(422, "bad page key")
+    text = "\n".join(line.rstrip() for line in
+                     str(payload.get("text") or "").strip().splitlines())[:news.COMMENT_MAX_LEN]
+    if not text.strip():
+        raise HTTPException(422, "пустой комментарий")
+    now = time.time()
+    if now - _comment_last_post.get(user["id"], 0) < 3:
+        raise HTTPException(429, "слишком часто — подожди пару секунд")
+    _comment_last_post[user["id"]] = now
+    cid = news.add_comment(page, user["id"],
+                           user.get("display_login") or user["login"], text)
+    return {"ok": True, "id": cid}
+
+
+@router.delete("/comments/{cid}")
+async def comments_delete(cid: int, request: Request):
+    """Удалить комментарий: свой — всегда, чужой — только админ (ADMIN_USER_IDS)."""
+    user = current_user(request)
+    if not user:
+        raise HTTPException(401, "не авторизован")
+    ok = news.delete_comment(cid, user["id"], user["id"] in config.ADMIN_USER_IDS)
+    if not ok:
+        raise HTTPException(403, "нельзя удалить этот комментарий")
+    return {"ok": True}
+
+
+# ---------- обменки: монеты Перекупщика ----------
+
+@router.get("/exchange")
+async def exchange_snapshot():
+    """Позиции Перекупщика с курсом руб/монета (ручной JSON + живые цены)."""
+    return exchange.snapshot()
+
+
+@router.get("/exchange/plan")
+async def exchange_plan(coins: int = Query(..., ge=1, le=100_000_000)):
+    """Оптимальная корзина на N монет (жадно по курсу, с лимитами позиций)."""
+    return exchange.plan(coins)
 
 
 # ---------- чаты: общий и баги/предложения ----------

@@ -3,6 +3,7 @@
 Скачивает репо одним zip-архивом и раскладывает локально:
   data/listing.json          — индекс предметов
   data/hideout_recipes.json  — рецепты верстака
+  data/barter_recipes.json   — бартеры торговцев поселений
   data/items/**              — json-файлы предметов (описания, как в игре)
   data/icons/**              — PNG-иконки (зеркалим к себе)
 
@@ -20,7 +21,7 @@ from app import config
 
 logger = logging.getLogger(__name__)
 
-_JSON_FILES = ("listing.json", "hideout_recipes.json")
+_JSON_FILES = ("listing.json", "hideout_recipes.json", "barter_recipes.json")
 
 
 def is_present() -> bool:
