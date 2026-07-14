@@ -349,7 +349,7 @@ async def comments_delete(cid: int, request: Request):
     user = current_user(request)
     if not user:
         raise HTTPException(401, "не авторизован")
-    ok = news.delete_comment(cid, user["id"], user["id"] in config.ADMIN_USER_IDS)
+    ok = news.delete_comment(cid, user["id"], user["exbo_id"] in config.ADMIN_USER_IDS)
     if not ok:
         raise HTTPException(403, "нельзя удалить этот комментарий")
     return {"ok": True}

@@ -38,6 +38,11 @@ services:
       - ART_LOTS_MAX_PAGES=${ART_LOTS_MAX_PAGES:-2}
       - ART_LOTS_TOP=${ART_LOTS_TOP:-5}
       - BUILD_PRICE_SOURCE=${BUILD_PRICE_SOURCE:-auto}
+      # Патчноуты с форума EXBO + комментарии
+      - PATCH_WATCH_ENABLED=${PATCH_WATCH_ENABLED:-1}
+      - PATCH_POLL_MIN=${PATCH_POLL_MIN:-30}
+      # EXBO id админов через запятую — могут удалять чужие комментарии
+      - ADMIN_USER_IDS=${ADMIN_USER_IDS:-}
     volumes:
       # Кэш игровой БД + зеркало иконок (скачивается один раз при первом старте)
       - craft_data:/app/backend/data

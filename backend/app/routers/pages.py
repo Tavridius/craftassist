@@ -37,6 +37,18 @@ def _index_template() -> str:
     return (config.FRONTEND_DIR / "index.html").read_text(encoding="utf-8")
 
 
+def _asset_v(name: str) -> str:
+    """Версия статики = mtime файла: браузерный кэш сбрасывается сам при деплое
+    (без этого юзеры после обновления сидели на старом app.js — «кнопки не работают»)."""
+    try:
+        return str(int((config.FRONTEND_DIR / name).stat().st_mtime))
+    except OSError:
+        return "0"
+
+
+_V_JS, _V_CSS = _asset_v("app.js"), _asset_v("styles.css")
+
+
 def _base_url(request: Request) -> str:
     return config.PUBLIC_BASE_URL or str(request.base_url).rstrip("/")
 
@@ -58,6 +70,8 @@ def render_index(request: Request, path: str, *, title: str | None = None,
                _html.escape(url, quote=True))
 
     s = _index_template()
+    s = s.replace('src="app.js"', f'src="app.js?v={_V_JS}"', 1)
+    s = s.replace('href="styles.css"', f'href="styles.css?v={_V_CSS}"', 1)
     # _sub возвращает value через лямбду (без раскрытия \g<N>) — поэтому пишем полный тег
     s = _sub(r"<title>.*?</title>", f"<title>{t}</title>", s)
     s = _sub(r'<meta name="description" content="[^"]*">',
