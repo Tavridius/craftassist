@@ -724,6 +724,21 @@ a.auth-user:hover { color: var(--green); border-color: var(--green-border); text
 
 /* ---------- интерактивная карта мира (Leaflet) ---------- */
 .mapmod { margin-top: 4px; }
+
+/* скрываемая плашка «карта в разработке» над публичной картой */
+.map-wip {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 10px; padding: 9px 12px;
+  color: #ffb3ac; background: rgba(255, 107, 94, 0.1);
+  border: 1px solid var(--red-border); border-left: 3px solid var(--red);
+}
+.map-wip-i { color: var(--red); font-weight: 800; letter-spacing: 0.05em; }
+.map-wip-t { flex: 1; font-size: 12px; line-height: 1.5; }
+.map-wip-x {
+  flex: 0 0 auto; background: none; border: none; cursor: pointer;
+  color: var(--red); font-size: 14px; padding: 2px 4px; line-height: 1;
+}
+.map-wip-x:hover { color: var(--bright); text-shadow: 0 0 8px var(--red); }
 .map-view {
   width: 100%; height: min(74vh, 820px);
   background: #050805; border: 1px solid var(--border);
@@ -919,6 +934,51 @@ html.map-drawing .maped-wrap .leaflet-container { cursor: crosshair; }
   border: 1px dashed var(--border-dim); text-align: center; margin-top: 8px;
 }
 .dash-stub .stub-status { margin: 0; }
+
+/* сборка дня (модуль главной) */
+.db-hero {
+  display: flex; align-items: stretch; gap: 10px; margin: 8px 0 4px;
+  border: 1px solid var(--border-deep); background: var(--row-sub); padding: 8px 10px;
+}
+.db-hp { display: flex; flex-direction: column; justify-content: center; align-items: center;
+  padding-right: 10px; border-right: 1px solid var(--border-deep); min-width: 72px; }
+.db-hp-v { font-size: 24px; font-weight: 800; color: var(--green); line-height: 1;
+  text-shadow: var(--glow); }
+.db-hp-l { font-size: 8px; letter-spacing: 0.12em; color: var(--dimmer); margin-top: 3px; }
+.db-params { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 6px; }
+.db-budget { font-size: 11px; color: var(--dim); letter-spacing: 0.05em; }
+.db-budget b { color: var(--amber); font-weight: 700; }
+.db-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.db-chip { font-size: 9px; letter-spacing: 0.04em; padding: 2px 6px; color: var(--dim);
+  border: 1px solid var(--border-dim); border-radius: 2px; white-space: nowrap; }
+.db-chip.on { color: var(--green); border-color: var(--green-border); }
+.db-gear { display: flex; flex-direction: column; gap: 2px; margin: 4px 0; }
+.db-geo { display: flex; align-items: center; gap: 8px; padding: 3px 2px; }
+.db-geo img { width: 26px; height: 26px; object-fit: contain; flex: none; }
+.db-geo-i { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.db-geo-i .nm { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.db-geo-s { font-size: 9px; letter-spacing: 0.04em; color: var(--dimmer); }
+.db-arts { display: flex; flex-direction: column; margin: 4px 0 2px;
+  border-top: 1px dashed var(--border-deep); }
+.db-art { display: flex; align-items: center; gap: 6px; padding: 3px 2px; font-size: 11px; }
+.db-art img { width: 18px; height: 18px; object-fit: contain; flex: none; }
+.db-art .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.db-badge { font-size: 9px; letter-spacing: 0.03em; opacity: 0.85; white-space: nowrap; }
+.db-price { color: var(--dim); font-size: 10px; white-space: nowrap; min-width: 46px; text-align: right; }
+.db-tt { font-size: 9px; letter-spacing: 0.14em; color: var(--dimmer); margin: 8px 0 4px;
+  padding-top: 6px; border-top: 1px dashed var(--border-deep); }
+.db-tt.sub { border-top: none; padding-top: 0; margin: 6px 0 2px; }
+.db-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 1px 14px; }
+.db-stat { display: flex; align-items: baseline; justify-content: space-between; gap: 6px;
+  font-size: 11px; padding: 1px 0; min-width: 0; }
+.db-stat .sn { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.db-stat .sv { color: var(--green); font-weight: 600; white-space: nowrap; }
+.db-stat.bad .sv { color: var(--red); }
+.db-stat .lim { color: var(--dimmer); font-weight: 400; }
+.db-cost { font-size: 11px; color: var(--dim); letter-spacing: 0.05em; margin-top: 8px;
+  padding-top: 6px; border-top: 1px dashed var(--border-deep); }
+.db-cost b { color: var(--bright); font-weight: 700; }
+.db-of { color: var(--dimmer); font-size: 10px; }
 .dash-charts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
 .dash-chart { border: 1px solid var(--border-deep); padding: 8px; cursor: pointer; }
 .dash-chart:hover { background: var(--row-hover); }
@@ -1079,6 +1139,17 @@ html.map-drawing .maped-wrap .leaflet-container { cursor: crosshair; }
 .isel-opt img { width: 24px; height: 24px; object-fit: contain; flex: none; }
 .isel-opt:hover { background: var(--row-hover); color: var(--green); }
 .isel-opt.on { background: rgba(124, 230, 142, 0.08); color: var(--green); }
+.isel-search {
+  position: sticky; top: 0; z-index: 1; padding: 6px;
+  background: var(--panel-deep); border-bottom: 1px solid var(--border);
+}
+.isel-q {
+  width: 100%; box-sizing: border-box; font-family: inherit; font-size: 12px;
+  color: var(--text); background: rgba(7, 10, 7, 0.7);
+  border: 1px solid var(--border); padding: 6px 8px; letter-spacing: 0.03em;
+}
+.isel-q:focus { outline: none; border-color: var(--green-border); }
+.isel-q::placeholder { color: var(--dimmer); }
 
 /* ---------- бартер ---------- */
 .bt-cats { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 0; }
@@ -1127,6 +1198,7 @@ html.map-drawing .maped-wrap .leaflet-container { cursor: crosshair; }
   font-size: 9px; letter-spacing: 0.08em; border: 1px solid var(--border);
   color: var(--dimmer); padding: 0 4px; margin-left: 4px; white-space: nowrap;
 }
+.bt-more-place { font-size: 9px; letter-spacing: 0.06em; color: var(--dimmer); margin-left: 4px; }
 .bt-miss, .bt-farm {
   font-size: 9px; letter-spacing: 0.08em; border: 1px solid var(--amber-border);
   color: var(--amber); padding: 0 5px; white-space: nowrap; flex: none;

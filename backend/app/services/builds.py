@@ -23,6 +23,7 @@ M — множитель качества: тиры непрерывны по +0
 λ по (пулестойкость, живучесть), т.к. цель (100+пуле)×живучесть нелинейна.
 """
 import math
+import random
 import time
 from datetime import datetime, timedelta
 
@@ -62,6 +63,31 @@ ACCUM_KEYS = set(CONTAM_KEYS)  # accumulation-статы идут в блок з
 
 BUDGET_STEPS = 400   # дискретизация бюджета в DP
 ALTERNATIVES = 2     # запасных сборок
+
+# ---------- случайная «сборка дня» ----------
+# Модуль главной: раз в сутки крутим случайную сборку из топ-снаряжения.
+# Броня и контейнер — только красный (Мастер) / оранжевый (Легенда).
+TOP_COLORS = ("RANK_MASTER", "RANK_LEGEND")
+# Лестница бюджетов на артефакты (к=тыс, кк=млн, ккк=млрд).
+DAILY_BUDGETS = (100_000, 500_000, 1_000_000, 3_000_000, 5_000_000,
+                 10_000_000, 50_000_000, 100_000_000, 500_000_000, 1_000_000_000)
+DAILY_ARMOR_PTN = (0, 5, 10, 15)     # уровень заточки брони в сборке дня
+DAILY_ATTEMPTS = 8                   # детерминированных перекруток, если под ролл нет цен
+# Полезные статы для ролла. «Первичные» могут стоять первым параметром; «вторичные»
+# (восст. выносливости / регенерация / переносимый вес) — только вторым/третьим.
+_STAT_PRIMARY = (
+    "stalker.artefact_properties.factor.bullet_dmg_factor",   # Пулестойкость
+    "stalker.artefact_properties.factor.speed_modifier",      # Скорость передвижения
+    "stalker.artefact_properties.factor.health_bonus",        # Живучесть
+    "stalker.artefact_properties.factor.heal_efficiency",     # Эффективность лечения
+)
+_STAT_SECONDARY = (
+    "stalker.artefact_properties.factor.stamina_regeneration_bonus",  # Восст. выносливости
+    "stalker.artefact_properties.factor.regeneration_bonus",          # Регенерация здоровья
+    "stalker.artefact_properties.factor.max_weight_bonus",            # Переносимый вес
+)
+_DAILY_STAT_WEIGHTS = (100, 70, 50)  # вес стата по позиции (приоритет первого)
+
 DUAL_ITERS = 8       # шагов двойственного подъёма λ (цены эмиссии) на раунд
 BAN_ROUNDS = 3       # раундов «починки» баном худшего эмиттера (1-й — без бана)
 DUAL_STEP = 1.5      # стартовый шаг λ; при смене знака превышения — деление пополам
@@ -639,3 +665,95 @@ def auto_hp(budget: float, container_id: str, armor_id: str, armor_ptn: int) -> 
     }
     return {"container": cont, "builds": [res], "pool_size": len(pool),
             "warnings": _warnings([res])}
+
+
+# ---------- случайная «сборка дня» для главной ----------
+_daily_cache: dict = {"date": None, "payload": None}
+
+
+def _roll_daily_params(rnd: random.Random) -> dict | None:
+    """Детерминированный ролл параметров сборки дня из топ-снаряжения.
+    Броня/контейнер — Мастер/Легенда; бюджет — из лестницы; 1–3 полезных стата
+    (первый — из первичных, вторичные статы только со 2-й позиции)."""
+    armors = [a for a in db.armor.values() if a["color"] in TOP_COLORS]
+    conts = [c for c in db.containers.values() if c["color"] in TOP_COLORS]
+    if not armors or not conts:
+        return None
+    armor = rnd.choice(armors)
+    cont = rnd.choice(conts)
+    budget = rnd.choice(DAILY_BUDGETS)
+    armor_ptn = rnd.choice(DAILY_ARMOR_PTN)
+    n = rnd.randint(1, 3)
+    first = rnd.choice(list(_STAT_PRIMARY))
+    keys = [first]
+    rest = [k for k in (_STAT_PRIMARY + _STAT_SECONDARY) if k != first]
+    rnd.shuffle(rest)
+    keys += rest[:n - 1]
+    stats_req = [{"key": k, "weight": _DAILY_STAT_WEIGHTS[i]} for i, k in enumerate(keys)]
+    return {"armor": armor, "cont": cont, "budget": budget,
+            "armor_ptn": armor_ptn, "keys": keys, "stats_req": stats_req}
+
+
+def _armor_payload(armor: dict, ptn: int) -> dict:
+    ast = db.armor_stats(armor["id"], ptn)
+    return {"id": armor["id"], "name": armor["name"], "icon": armor["icon"],
+            "color": armor["color"], "class": armor.get("class", ""), "ptn": int(ptn),
+            "bullet": round(ast["bullet"], 1), "vitality": round(ast["vitality"], 1)}
+
+
+def _present_daily(today: str, p: dict, res: dict) -> dict:
+    """Готовый payload сборки дня: броня + контейнер + подобранные арты + сводное
+    приведённое ХП (броня + арты)."""
+    build = res["builds"][0]
+    armor = _armor_payload(p["armor"], p["armor_ptn"])
+    stats = build["totals"]["stats"]
+    art_bullet = stats.get(BULLET_KEY, {}).get("total", 0.0)
+    art_vit = stats.get(HEALTH_KEY, {}).get("total", 0.0)
+    total_bullet = armor["bullet"] + art_bullet
+    total_vit = armor["vitality"] + art_vit
+    return {
+        "date": today,
+        "budget": p["budget"],
+        "armor": armor,
+        "container": res["container"],
+        "stat_keys": p["keys"],
+        "stat_names": [db.artefact_stat_names[k]["name"] for k in p["keys"]],
+        "build": build,
+        "hp": {"armor_bullet": armor["bullet"], "armor_vitality": armor["vitality"],
+               "artefact_bullet": round(art_bullet, 1), "artefact_vitality": round(art_vit, 1),
+               "total_bullet": round(total_bullet, 1), "total_vitality": round(total_vit, 1),
+               "effective_hp": round(_eff_hp(total_bullet, total_vit))},
+        "warnings": res.get("warnings", []),
+    }
+
+
+def daily_build() -> dict:
+    """Случайная сборка дня для главной: параметры фиксированы сидом-датой (МСК),
+    сборка считается один раз в сутки и кэшируется. Если под ролл нет ценовых
+    корзин — берём следующую детерминированную перекрутку того же дня; если цен
+    нет вовсе (биржа не прогрелась) — вернём параметры без сборки и НЕ кэшируем."""
+    today = datetime.now(MSK).strftime("%Y-%m-%d")
+    if _daily_cache["date"] == today and _daily_cache["payload"]:
+        return _daily_cache["payload"]
+    first_params = None
+    for attempt in range(DAILY_ATTEMPTS):
+        rnd = random.Random(f"{today}#{attempt}")
+        p = _roll_daily_params(rnd)
+        if not p:
+            return {"date": today, "error": "no_equipment",
+                    "hint": "Нет данных брони/контейнеров топ-редкости."}
+        if first_params is None:
+            first_params = p
+        res = auto_build(float(p["budget"]), p["cont"]["id"], p["stats_req"])
+        if res.get("builds"):
+            payload = _present_daily(today, p, res)
+            _daily_cache["date"] = today
+            _daily_cache["payload"] = payload
+            return payload
+    # цен ещё нет — показываем параметры дня без сборки, без кэша (повторим позже)
+    p = first_params
+    return {"date": today, "budget": p["budget"], "armor": _armor_payload(p["armor"], p["armor_ptn"]),
+            "container": p["cont"], "stat_keys": p["keys"],
+            "stat_names": [db.artefact_stat_names[k]["name"] for k in p["keys"]],
+            "build": None,
+            "hint": "Биржа артефактов ещё копит цены — сборка дня появится после первых замеров."}

@@ -22,6 +22,10 @@ const RANKS = {
   DEFAULT:      { label: "СТАНДАРТ", color: "var(--r-default)" },
 };
 const rank = (c) => RANKS[c] || RANKS.DEFAULT;
+// вес редкости для сортировки списков «крутое сверху» (Легенда/Мастер выше)
+const RANK_WEIGHT = { RANK_LEGEND: 6, RANK_MASTER: 5, RANK_VETERAN: 4,
+                      RANK_STALKER: 3, RANK_NEWBIE: 2, QUEST_ITEM: 1, DEFAULT: 0 };
+const rankWeight = (c) => RANK_WEIGHT[c] ?? 0;
 
 // русские названия перков/станков убежища (ключи из hideout_recipes.json)
 const PERK_RU = {
@@ -617,7 +621,7 @@ async function loadDashboard() {
       && home.dataset.ts && Date.now() - +home.dataset.ts < 60000) return;
   home.innerHTML = `<div class="spinner">// ЗАГРУЗКА ГЛАВНОЙ</div>`;
   try {
-    const [top, art, watch, em, sales, fuelTop, patches] = await Promise.all([
+    const [top, art, watch, em, sales, fuelTop, patches, daily] = await Promise.all([
       fetch(api(`/top${availParam("?")}`)).then((r) => r.json()).catch(() => null),
       fetch(api("/artmarket/top?window=24h")).then((r) => r.json()).catch(() => null),
       fetch(api("/watch")).then((r) => r.json()).catch(() => null),
@@ -625,10 +629,11 @@ async function loadDashboard() {
       fetch(api("/sales/top?n=12")).then((r) => r.json()).catch(() => null),
       fetch(api("/fuel/top?n=20")).then((r) => r.json()).catch(() => null),
       fetch(api("/patches?limit=3")).then((r) => r.json()).catch(() => null),
+      fetch(api("/build/daily")).then((r) => r.json()).catch(() => null),
     ]);
     home.dataset.ts = Date.now();
     home.dataset.view = "dash";
-    renderDashboard(top, art, watch, em, sales, fuelTop, patches);
+    renderDashboard(top, art, watch, em, sales, fuelTop, patches, daily);
   } catch (e) {
     home.innerHTML = `<div class="empty">[!] НЕ УДАЛОСЬ ЗАГРУЗИТЬ ГЛАВНУЮ</div>`;
   }
@@ -736,7 +741,68 @@ function fuelBody(fu) {
     БАЗОВЫЙ ГЕНЕРАТОР ЖЖЁТ БЕНЗИН/ДИЗЕЛЬ, ГАЗ/БАТАРЕИ/АНОМАЛЬНОЕ — ПОСЛЕ ПРИСТРОЕК</div>`;
 }
 
-function renderDashboard(top, art, watch, em, sales, fuelTop, patches) {
+// компактный бюджет: 500000 -> «500 ТЫС», 5000000 -> «5 МЛН», 1e9 -> «1 МЛРД»
+function fmtBudgetShort(n) {
+  if (n == null) return "—";
+  if (n >= 1e9) return `${+(n / 1e9).toFixed(2)} МЛРД`;
+  if (n >= 1e6) return `${+(n / 1e6).toFixed(2)} МЛН`;
+  if (n >= 1e3) return `${+(n / 1e3).toFixed(0)} ТЫС`;
+  return String(n);
+}
+
+// «сборка дня»: броня + контейнер топ-редкости, подобранные под бюджет арты и
+// приведённое ХП. Ролл фиксирован датой на бэке — обновляется раз в сутки.
+function dailyBuildBody(d) {
+  if (!d || d.error) return `<div class="empty-sm">СБОРКА ДНЯ ВРЕМЕННО НЕДОСТУПНА.</div>`;
+  const arm = d.armor || {}, cont = d.container || {};
+  const chips = (d.stat_names || []).map((n, i) =>
+    `<span class="db-chip${i === 0 ? " on" : ""}">${escapeHtml(n)}</span>`).join("");
+  const head = `<div class="db-hero">
+      <div class="db-hp"><div class="db-hp-v">${fmt(d.hp ? d.hp.effective_hp : 0)}</div>
+        <div class="db-hp-l">ПРИВ. ХП</div></div>
+      <div class="db-params">
+        <div class="db-budget">БЮДЖЕТ <b>${fmtBudgetShort(d.budget)} ₽</b></div>
+        <div class="db-chips">${chips}</div>
+      </div>
+    </div>`;
+  const geo = (icon, color, name, sub) => `<div class="db-geo">
+      <img loading="lazy" src="${asset(icon)}" alt="">
+      <div class="db-geo-i">
+        <span class="nm" style="color:${rank(color).color}">${escapeHtml(name)}</span>
+        <span class="db-geo-s">${sub}</span>
+      </div></div>`;
+  const gear = `<div class="db-gear">
+      ${geo(arm.icon, arm.color, `${arm.name || "—"} +${arm.ptn || 0}`,
+            `ПУЛЕСТОЙ ${fmt(arm.bullet)}${arm.vitality ? ` · ЖИВУЧ +${arm.vitality}` : ""}`)}
+      ${geo(cont.icon, cont.color, cont.name || "—",
+            `${cont.slots || "—"} СЛОТ · ЭФФ ${cont.efficiency ?? "—"}% · ЗАЩ ${cont.protection ?? "—"}%`)}
+    </div>`;
+  if (!d.build) return head + gear + `<div class="dash-note">${escapeHtml(d.hint || "СБОРКА СЧИТАЕТСЯ…")}</div>`;
+  const b = d.build;
+  const arts = b.slots.map((s) => `<div class="db-art">
+      <img loading="lazy" src="${asset(s.icon)}" alt="">
+      <span class="nm" style="color:${qltColor(s.qlt)}">${escapeHtml(s.name)}</span>
+      <span class="db-badge" style="color:${qltColor(s.qlt)}">${bucketBadge(s.qlt, s.ptn)}</span>
+      <span class="db-price">${fmt(s.price)}</span>
+    </div>`).join("");
+  // итоговые характеристики сборки: сумма статов артов (× эффективность контейнера)
+  const statRow = (name, val, bad, extra = "") => `<div class="db-stat${bad ? " bad" : ""}" title="${escapeHtml(name)}">
+      <span class="sn">${escapeHtml(name)}</span><span class="sv">${fmtStat(val)}${extra}</span></div>`;
+  const totals = Object.values(b.totals.stats || {})
+    .sort((x, y) => x.harmful - y.harmful || x.name.localeCompare(y.name, "ru"))
+    .map((s) => statRow(s.name, s.total, s.harmful)).join("");
+  const contam = (b.totals.contamination || [])
+    .map((c) => statRow(c.name, c.net, c.over, c.limit != null ? `<span class="lim"> / ${c.limit}</span>` : ""))
+    .join("");
+  const totalsHtml = `<div class="db-tt">ПАРАМЕТРЫ СБОРКИ · ДАЮТ АРТЕФАКТЫ</div>
+    <div class="db-stats">${totals || `<div class="empty-sm">СТАТОВ НЕТ</div>`}</div>
+    ${contam ? `<div class="db-tt sub">ЗАРАЖЕНИЕ (ПОСЛЕ ЗАЩИТЫ КОНТЕЙНЕРА)</div>
+       <div class="db-stats">${contam}</div>` : ""}`;
+  return head + gear + `<div class="db-arts">${arts}</div>${totalsHtml}
+    <div class="db-cost">АРТЕФАКТЫ <b>${fmt(b.totals.cost)} ₽</b> <span class="db-of">/ ${fmtBudgetShort(d.budget)} БЮДЖЕТ</span></div>`;
+}
+
+function renderDashboard(top, art, watch, em, sales, fuelTop, patches, daily) {
   const card = (title, note, body, link, linkText) => `<section class="dash-card">
     <div class="side-head">
       <div class="side-title">▸ ${title}</div>
@@ -745,8 +811,6 @@ function renderDashboard(top, art, watch, em, sales, fuelTop, patches) {
     ${body}
     ${link ? `<a class="dash-more" href="${link}">${linkText || "ОТКРЫТЬ РАЗДЕЛ"} ▸</a>` : ""}
   </section>`;
-  const stub = (label) => `<div class="dash-stub"><span class="stub-code">[ МОДУЛЬ ]</span>
-    ${label}<div class="stub-status">СКОРО</div></div>`;
 
   // крафты: по 2-3 из каждой подборки
   let crafts = "";
@@ -812,7 +876,7 @@ function renderDashboard(top, art, watch, em, sales, fuelTop, patches) {
       ${card("ГРАФИКИ ИНГРЕДИЕНТОВ", "ВСЕ НАБЛЮДАЕМЫЕ · СР. ЦЕНА ПРОДАЖ", charts, "/craft", "В РАЗДЕЛ КРАФТА")}
       ${card("ЗАПРАВКА ГЕНЕРАТОРА", "ВСЕ ИСТОЧНИКИ · ₽ ЗА 1000 ЕД", fuelBody(fuelTop), "/profile", "ПРИСТРОЙКИ — В ПРОФИЛЕ")}
       ${card("ВЫБРОС", "ВРЕМЯ МСК · ЗАМЕР РАЗ В МИНУТУ", emissionBody(em))}
-      ${card("СБОРКА ДНЯ", "СЛУЧАЙНАЯ ПОПУЛЯРНАЯ СБОРКА", stub("Случайная сборка артефактов из калькулятора — с ценой и статами."), "/builds", "К КАЛЬКУЛЯТОРУ")}
+      ${card("СБОРКА ДНЯ", "БРОНЯ + КОНТЕЙНЕР + АРТЕФАКТЫ · РАЗ В СУТКИ", dailyBuildBody(daily), "/builds", "К КАЛЬКУЛЯТОРУ")}
       ${card("ПОСЛЕДНИЙ ПАТЧ", "ОБНОВЛЕНИЯ ИГРЫ", patchBody, "/patches", "ВСЕ ПАТЧИ")}
     </div>
   </div>`;
@@ -1468,17 +1532,15 @@ function btRows(rows) {
       ? `<span class="bt-cur">${fmt(r.money)} ${CUR_RU[r.currency] || r.currency.toUpperCase()}</span>` : "";
     const missing = r.missing.length
       ? `<span class="bt-miss" title="${escapeHtml(r.missing.join(", "))}">+${r.missing.length} ФАРМ</span>` : "";
-    const pct = r.pct == null ? "—"
-      : `<span class="pct ${r.pct > 0 ? "up" : "down"}">${r.pct > 0 ? "+" : ""}${r.pct}%</span>`;
+    const places = r.n_places > 1
+      ? ` <span class="bt-more-place" title="Доступно ещё в ${r.n_places - 1} — детали в обмене">+ ещё ${r.n_places - 1}</span>` : "";
     return `<tr class="brt-row" data-id="${r.id}">
       <td><div class="bt-item"><img loading="lazy" src="${asset(r.icon)}" alt="">
         <span class="nm" style="color:${rank(r.color).color}">${escapeHtml(r.name)}</span>${missing}${cur}</div></td>
-      <td class="bt-place">${escapeHtml(r.settlement_name)}${r.level ? ` <span class="lv">УР.${r.level}</span>` : ""}</td>
+      <td class="bt-place">${escapeHtml(r.settlement_name)}${r.level ? ` <span class="lv">УР.${r.level}</span>` : ""}${places}</td>
       <td class="r">${cost}</td>
-      <td class="r">${r.sell_net != null ? fmt(r.sell_net) + " ₽" : "—"}</td>
-      <td class="r">${pct}</td>
     </tr>`;
-  }).join("") || `<tr><td colspan="5" class="empty-sm">НИЧЕГО НЕ НАЙДЕНО ПО ФИЛЬТРАМ.</td></tr>`;
+  }).join("") || `<tr><td colspan="3" class="empty-sm">НИЧЕГО НЕ НАЙДЕНО ПО ФИЛЬТРАМ.</td></tr>`;
 }
 
 function btMore(rows) {
@@ -1513,9 +1575,8 @@ function renderBarter(d) {
     <div class="bt-note">СТОИМОСТЬ = ДЕНЬГИ ТОРГОВЦУ + ЗАКУПКА ВХОДОВ НА АУКЕ (ТРЕЙД-ИН РАСКРЫВАЕТСЯ РЕКУРСИВНО).
       «ФАРМ» — ВХОДЫ, КОТОРЫХ НЕТ НА АУКЕ (КВЕСТОВЫЕ/ЖЕТОНЫ). КЛИК ПО СТРОКЕ — ДЕТАЛИ ОБМЕНА.</div>
     <div class="bt-wrap"><table class="bt-table">
-      <thead><tr><th style="width:34%">ПРЕДМЕТ</th><th style="width:24%">ГДЕ</th>
-        <th class="r" style="width:14%">СТОИМОСТЬ</th><th class="r" style="width:14%">ПРОДАЖА~</th>
-        <th class="r" style="width:14%">ВЫГОДА</th></tr></thead>
+      <thead><tr><th style="width:48%">ПРЕДМЕТ</th><th style="width:32%">ГДЕ</th>
+        <th class="r" style="width:20%">СТОИМОСТЬ</th></tr></thead>
       <tbody id="btBody"></tbody>
     </table></div>
     <button id="btMore" class="bt-more hidden">ПОКАЗАТЬ ЕЩЁ</button>
@@ -1598,7 +1659,7 @@ function chainBlock(currentId) {
   const n = btChain.nodes;
   if (n.length < 2) return "";  // одиночный предмет — лестницы нет
   const chips = n.map((node, i) =>
-    `${i ? '<span class="chain-arr">→</span>' : ""}<span class="chain-chip${node.id === currentId ? " this" : ""}" data-id="${node.id}">
+    `${i ? '<span class="chain-arr">→</span>' : ""}<span class="chain-chip${node.id === currentId ? " this" : ""}" data-id="${node.id}" style="color:${rank(node.color).color}">
       <img loading="lazy" src="${asset(node.icon)}" alt="">${escapeHtml(node.name)}</span>`).join("");
   const opts = (sel) => n.map((node, i) =>
     `<option value="${i}" ${i === sel ? "selected" : ""}>${i + 1}. ${escapeHtml(node.name)}</option>`).join("");
@@ -2376,12 +2437,14 @@ function manualSlotCard(s, idx) {
     if (pickerSlot === idx) {
       const q = pickerQuery.toLowerCase();
       const found = BUILD_DICT.artefacts
-        .filter((a) => a.name.toLowerCase().includes(q)).slice(0, 8);
+        .filter((a) => a.name.toLowerCase().includes(q))
+        .sort((a, b) => rankWeight(b.color) - rankWeight(a.color))  // крутое сверху
+        .slice(0, 8);
       return `<div class="bslot picker">
         <input id="pickerInput" type="text" placeholder="НАЗВАНИЕ АРТЕФАКТА…" value="${escapeHtml(pickerQuery)}">
         <div class="pick-list">${found.map((a) =>
           `<div class="pick-row" data-pick="${a.id}">
-             <img loading="lazy" src="${asset(a.icon)}" alt=""><span>${escapeHtml(a.name)}</span>
+             <img loading="lazy" src="${asset(a.icon)}" alt=""><span style="color:${rank(a.color).color}">${escapeHtml(a.name)}</span>
              <span class="cls">${escapeHtml(a.class)}</span></div>`).join("") || `<div class="empty-sm">НЕ НАЙДЕНО</div>`}
         </div></div>`;
     }
@@ -2551,28 +2614,50 @@ function renderHPResult(r) {
   return h;
 }
 
-// кастомный выпадающий список с иконками (нативный <select> их не умеет);
-// стилизуется целиком: тёмный скролл, подсветка, иконки слева
+// кастомный выпадающий список с иконками (нативный <select> их не умеет):
+// сортировка по редкости (сверху крутое) + живой поиск по названию.
 function iconSelect(host, items, curId, onPick) {
+  items = items.map((it, i) => ({ ...it, _i: i }))
+    .sort((a, b) => (rankWeight(b.color) - rankWeight(a.color)) || (a._i - b._i));
   const cur = items.find((it) => it.id === curId) || items[0];
   if (!cur) { host.innerHTML = ""; return; }
   const lbl = (it) => it.labelHtml || escapeHtml(it.label);  // labelHtml — уже экранирован вызывающим
+  const searchOf = (it) => (it.search != null ? it.search
+    : String(it.labelHtml || it.label || "").replace(/<[^>]*>/g, "")).toLowerCase();
   host.innerHTML = `<button type="button" class="isel-btn">
       <img src="${asset(cur.icon)}" alt="">
       <span class="isel-lbl">${lbl(cur)}</span><span class="isel-arr">▾</span></button>
-    <div class="isel-list hidden">${items.map((it) => `
-      <div class="isel-opt${it.id === cur.id ? " on" : ""}" data-id="${it.id}">
-        <img loading="lazy" src="${asset(it.icon)}" alt=""><span>${lbl(it)}</span>
-      </div>`).join("")}</div>`;
+    <div class="isel-list hidden">
+      <div class="isel-search"><input type="text" class="isel-q" placeholder="Поиск…" autocomplete="off"></div>
+      <div class="isel-opts">${items.map((it) => `
+        <div class="isel-opt${it.id === cur.id ? " on" : ""}" data-id="${it.id}" data-s="${escapeHtml(searchOf(it))}">
+          <img loading="lazy" src="${asset(it.icon)}" alt=""><span>${lbl(it)}</span>
+        </div>`).join("")}</div>
+    </div>`;
   const list = host.querySelector(".isel-list");
+  const q = host.querySelector(".isel-q");
+  const opts = host.querySelector(".isel-opts");
+  const filter = () => {
+    const needle = q.value.trim().toLowerCase();
+    opts.querySelectorAll(".isel-opt").forEach((o) =>
+      o.classList.toggle("hidden", !!needle && !o.dataset.s.includes(needle)));
+  };
   host.querySelector(".isel-btn").addEventListener("click", (e) => {
     e.stopPropagation();
+    const willOpen = list.classList.contains("hidden");
     closeIconSelects(list);
     list.classList.toggle("hidden");
-    const on = list.querySelector(".on");
-    if (!list.classList.contains("hidden") && on) on.scrollIntoView({ block: "center" });
+    if (willOpen) {
+      q.value = ""; filter();
+      q.focus();
+      const on = opts.querySelector(".on");
+      if (on) on.scrollIntoView({ block: "center" });
+    }
   });
-  list.querySelectorAll(".isel-opt").forEach((o) => o.addEventListener("click", () => {
+  // клики/ввод внутри списка не должны закрывать его глобальным обработчиком
+  list.addEventListener("click", (e) => e.stopPropagation());
+  q.addEventListener("input", filter);
+  opts.querySelectorAll(".isel-opt").forEach((o) => o.addEventListener("click", () => {
     list.classList.add("hidden");
     if (o.dataset.id !== cur.id) onPick(o.dataset.id);
   }));
@@ -2599,7 +2684,8 @@ function wireBuilds(cont) {
     renderBuilds();
   }));
   iconSelect($("bContSel"),
-    BUILD_DICT.containers.map((c) => ({ id: c.id, icon: c.icon, labelHtml: contLabel(c) })),
+    BUILD_DICT.containers.map((c) => ({ id: c.id, icon: c.icon, color: c.color,
+                                        search: c.name, labelHtml: contLabel(c) })),
     buildState.container, (id) => {
       buildState.container = id;
       const c = buildContainer();
@@ -2646,7 +2732,7 @@ function wireBuilds(cont) {
     wireBudget($("hBudget"), (v) => { hpState.budget = v; });
     iconSelect($("hArmorSel"),
       (BUILD_DICT.armor || []).map((a) => ({
-        id: a.id, icon: a.icon,
+        id: a.id, icon: a.icon, color: a.color, search: a.name,
         labelHtml: `<span style="color:${rank(a.color).color}">${escapeHtml(a.name)}</span>` +
                    ` · ПУЛЕСТОЙ ${Math.round(a.bullet0)}`,
       })),
@@ -3006,9 +3092,30 @@ function loadViewerObjects(layer, map, px) {
   }).catch(() => {});
 }
 
+// Скрываемая плашка «карта ещё в разработке» над публичной картой (не в редакторе).
+// Закрытие запоминается в localStorage — больше не мозолит глаза.
+const MAP_WIP_KEY = "sz_map_wip";
+function mapWipBanner() {
+  if (localStorage.getItem(MAP_WIP_KEY) === "1") return "";
+  return `<div class="map-wip" id="mapWip">
+    <span class="map-wip-i">[!]</span>
+    <span class="map-wip-t">Интерактивная карта ещё в разработке — метки и области
+      появляются постепенно.</span>
+    <button class="map-wip-x" id="mapWipX" title="Скрыть">✕</button>
+  </div>`;
+}
+function wireMapWip() {
+  const x = $("mapWipX");
+  if (x) x.addEventListener("click", () => {
+    localStorage.setItem(MAP_WIP_KEY, "1");
+    const b = $("mapWip"); if (b) b.remove();
+  });
+}
+
 function renderWorldMap() {
   const g = mapMeta.global;
   page.innerHTML = `<div class="mapmod">
+    ${mapWipBanner()}
     <div class="section-head">
       <div class="section-title">▸ КАРТА МИРА · ГЛОБАЛЬНЫЙ ВИД</div>
       <div class="section-note">КЛИК ПО ТЕРРИТОРИИ — ПОДРОБНАЯ КАРТА</div>
@@ -3017,6 +3124,7 @@ function renderWorldMap() {
     <div class="map-legend">Карта из КПК STALZONE. Территории с меткой открываются в
       детальном виде; ✕ — сейчас закрыто в игре.</div>
   </div>`;
+  wireMapWip();
   const { map, px } = makeTileMap(g, [0, 0, g.w, g.h]);
   (mapMeta.territories || []).forEach((t) => {
     const openable = !!t.bbox;
@@ -3035,6 +3143,7 @@ function renderWorldMap() {
 function renderTerritory(terr) {
   const d = mapMeta.detail;
   page.innerHTML = `<div class="mapmod">
+    ${mapWipBanner()}
     <div class="section-head">
       <div class="section-title">▸ КАРТА · ${escapeHtml(terr.name.toUpperCase())}${terr.closed ? " · ЗАКРЫТО" : ""}</div>
       <div class="section-note"><a href="/map" class="map-back">◂ К ГЛОБАЛЬНОЙ КАРТЕ</a></div>
@@ -3043,6 +3152,7 @@ function renderTerritory(terr) {
     <div class="map-legend">Детальная карта из КПК STALZONE (облака — как в игре).
       Дальше — точки локаций и артефактов с привязкой к базе предметов.</div>
   </div>`;
+  wireMapWip();
   const { map, px } = makeTileMap(d, terr.bbox);
   loadViewerObjects("detail", map, px);
 }

@@ -263,7 +263,19 @@ async def barter_top(settlement: str = "", cat: str = "", max_level: int = 0,
     if q:
         needle = q.strip().lower()
         rows = [r for r in rows if needle in r["name"].lower()]
-    return {**data, "rows": rows, "total": len(rows)}
+    # объединяем одинаковые предметы, доступные в разных поселениях: одна строка
+    # на предмет (лучшая по выгоде — rows уже отсортированы), n_places — сколько мест
+    seen: dict = {}
+    deduped = []
+    for r in rows:
+        prev = seen.get(r["id"])
+        if prev is not None:
+            prev["n_places"] += 1
+            continue
+        r = {**r, "n_places": 1}
+        seen[r["id"]] = r
+        deduped.append(r)
+    return {**data, "rows": deduped, "total": len(deduped)}
 
 
 @router.get("/barter/item/{item_id}")
@@ -750,6 +762,13 @@ async def build_auto(payload: dict = Body(...)):
     if res.get("error") in ("container_not_found", "bad_request"):
         raise HTTPException(422, res["error"])
     return res  # включая error=no_priced_variants с подсказкой — фронт покажет
+
+
+@router.get("/build/daily")
+async def build_daily():
+    """Случайная «сборка дня» для главной: броня + контейнер топ-редкости, бюджет
+    и 1–3 стата — ролл фиксирован датой (МСК), сборка кэшируется раз в сутки."""
+    return builds.daily_build()
 
 
 @router.post("/build/hp")
