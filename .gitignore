@@ -13,3 +13,6 @@ backend/data/
 # Локальные конфиги ассистентов
 .claude/settings.local.json
 .qwen/
+
+# локальный клон игровой БД EXBO (569МБ, свой .git) — не трекаем
+stalzone-database/

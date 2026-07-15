@@ -758,6 +758,122 @@ a.auth-user:hover { color: var(--green); border-color: var(--green-border); text
 .map-terr.closed { color: var(--dim); border-color: var(--border-dim); }
 .map-terr.closed.openable:hover { border-color: var(--amber); color: var(--amber); box-shadow: none; }
 
+/* ---------- объекты карты: метки/области + всплывашки (вьюер и редактор) ---------- */
+.mo-marker {
+  width: 26px; height: 26px; display: grid; place-items: center;
+  border-radius: 50%; background: rgba(7, 10, 7, 0.85);
+  border: 2px solid var(--mo, #dff5df); box-shadow: 0 1px 4px #000;
+  font-size: 14px; line-height: 1; cursor: pointer;
+}
+.mo-marker.draft { opacity: 0.6; border-style: dashed; }
+.mo-marker.sel { box-shadow: 0 0 0 3px rgba(124, 230, 142, 0.5), 0 1px 4px #000; }
+.mo-vtx {
+  width: 12px; height: 12px; background: var(--amber);
+  border: 1px solid #000; box-shadow: 0 0 0 1px var(--amber);
+  cursor: move;
+}
+.mo-tooltip.leaflet-tooltip {
+  background: rgba(7, 10, 7, 0.95) !important; color: var(--text) !important;
+  border: 1px solid var(--green-border) !important; border-radius: 0 !important;
+  box-shadow: var(--glow) !important; font: inherit !important;
+  max-width: 260px; white-space: normal; padding: 7px 9px !important;
+}
+.mo-tooltip.leaflet-tooltip::before { display: none !important; }   /* убрать стрелку */
+.mo-tip-h { color: var(--bright); font-weight: 700; letter-spacing: 0.04em; }
+.mo-tip-cat { font-size: 11px; color: var(--dim); margin-top: 2px; }
+.mo-tip-desc { font-size: 11px; line-height: 1.5; color: var(--text); margin-top: 4px; }
+
+/* ---------- DEV-редактор карты ---------- */
+.nav-adm { color: var(--amber) !important; }
+.nav-adm.active { color: var(--amber) !important; border-bottom-color: var(--amber) !important; }
+.dev-subnav { display: flex; gap: 2px; margin: 6px 0 8px; }
+.dev-subnav a {
+  font-size: 11px; letter-spacing: 0.08em; padding: 5px 12px; cursor: pointer;
+  color: var(--dim); border: 1px solid var(--border);
+}
+.dev-subnav a.on { color: var(--amber); border-color: var(--amber-border); background: rgba(255, 184, 77, 0.06); }
+
+.maped-bar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px;
+  padding: 8px 10px; border: 1px solid var(--border); border-bottom: none;
+  background: var(--panel-side);
+}
+.mp-group { display: flex; align-items: center; gap: 4px; }
+.mp-lbl { font-size: 9px; color: var(--dimmer); letter-spacing: 0.1em; margin-right: 2px; }
+.mp-tool, .mp-layer {
+  font-family: inherit; font-size: 11px; letter-spacing: 0.06em;
+  padding: 5px 9px; cursor: pointer; color: var(--text);
+  background: rgba(7, 10, 7, 0.6); border: 1px solid var(--border);
+}
+.mp-tool:hover, .mp-layer:hover { color: var(--green); border-color: var(--green-border); }
+.mp-tool.on { color: var(--bg); background: var(--green); border-color: var(--green); }
+.mp-layer.on { color: var(--amber); border-color: var(--amber-border); background: rgba(255, 184, 77, 0.08); }
+.mp-cats { gap: 3px; }
+.mp-cats.off { opacity: 0.35; pointer-events: none; }
+.mp-cat {
+  width: 28px; height: 28px; display: grid; place-items: center; cursor: pointer;
+  font-size: 14px; background: rgba(7, 10, 7, 0.6);
+  border: 1px solid var(--border); border-bottom: 2px solid var(--mo, var(--border));
+}
+.mp-cat:hover { border-color: var(--mo); }
+.mp-cat.on { background: color-mix(in srgb, var(--mo) 22%, transparent); border-color: var(--mo); }
+.mp-terr {
+  font-family: inherit; font-size: 11px; color: var(--text);
+  background: rgba(7, 10, 7, 0.6); border: 1px solid var(--border); padding: 4px 6px;
+}
+
+.maped-wrap { position: relative; }
+html.map-drawing .maped-wrap .leaflet-container { cursor: crosshair; }
+.maped-hint {
+  position: absolute; left: 8px; top: 8px; z-index: 500;
+  display: flex; align-items: center; gap: 8px; max-width: calc(100% - 16px);
+  padding: 6px 10px; font-size: 11px; line-height: 1.4; color: var(--text);
+  background: rgba(7, 10, 7, 0.9); border: 1px solid var(--border);
+}
+.mh-btn {
+  font-family: inherit; font-size: 10px; letter-spacing: 0.06em; padding: 3px 8px;
+  cursor: pointer; color: var(--text); background: rgba(7, 10, 7, 0.6);
+  border: 1px solid var(--border); white-space: nowrap;
+}
+.mh-btn.ok { color: var(--bg); background: var(--green); border-color: var(--green); }
+
+.maped-panel {
+  position: absolute; right: 8px; top: 8px; z-index: 600; width: 250px;
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 12px; background: rgba(9, 13, 9, 0.96);
+  border: 1px solid var(--green-border); box-shadow: var(--glow);
+}
+.mp-p-head {
+  display: flex; align-items: center; justify-content: space-between;
+  font-size: 11px; letter-spacing: 0.08em; color: var(--amber);
+  border-bottom: 1px solid var(--border); padding-bottom: 6px;
+}
+.mp-x { background: none; border: none; color: var(--dim); cursor: pointer; font-size: 13px; }
+.mp-x:hover { color: var(--red); }
+.mp-f { display: flex; flex-direction: column; gap: 3px; font-size: 10px; color: var(--dim); }
+.mp-f span { letter-spacing: 0.06em; }
+.mp-f input, .mp-f textarea, .mp-f select {
+  font-family: inherit; font-size: 12px; color: var(--text);
+  background: rgba(7, 10, 7, 0.7); border: 1px solid var(--border); padding: 5px 7px;
+}
+.mp-f input[type="color"] { padding: 2px; height: 30px; cursor: pointer; }
+.mp-f textarea { resize: vertical; }
+.mp-chk { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text); cursor: pointer; }
+.mp-p-actions { display: flex; gap: 6px; margin-top: 2px; }
+.mp-save, .mp-del {
+  flex: 1; font-family: inherit; font-size: 11px; letter-spacing: 0.06em;
+  padding: 7px; cursor: pointer;
+}
+.mp-save { color: var(--bg); background: var(--green); border: 1px solid var(--green); }
+.mp-del { color: var(--red); background: none; border: 1px solid var(--red-border); flex: 0 0 auto; padding: 7px 10px; }
+.mp-del:hover { background: rgba(255, 107, 94, 0.1); }
+.mp-p-msg { font-size: 11px; min-height: 14px; }
+.mp-p-msg.ok { color: var(--green); }
+
+@media (max-width: 720px) {
+  .maped-panel { position: static; width: auto; margin-top: 8px; box-shadow: none; }
+}
+
 /* ---------- десктопный масштаб (на карте выключен: Leaflet + zoom = сдвиг координат) ---------- */
 @media (min-width: 1100px) {
   html:not(.on-map) body { zoom: 1.2; }

@@ -149,8 +149,13 @@ async function loadAuth() {
   renderModeToggle();
   renderOnboard();
   chatDockRender();   // форма чата зависит от авторизации
+  // DEV-вкладка (редактор карты) — только админам (ADMIN_USER_IDS)
+  document.querySelectorAll(".nav-adm").forEach((el) =>
+    el.classList.toggle("hidden", !(ME && ME.is_admin)));
+  // прямой заход на /dev* мог отрисовать «проверка доступа», пока /me не ответил
+  if (location.pathname.startsWith("/dev")) route();
   // стартовый рендер мог уйти без фильтра, пока /me не ответил — перерисовать
-  if (ME && ME.authenticated && availMode()) {
+  else if (ME && ME.authenticated && availMode()) {
     lastQuery = null; home.dataset.ts = "";
     route();
   }
@@ -2874,6 +2879,7 @@ let mapMeta = null;                                   // кэш /api/map/meta
 
 async function openMap(territoryId) {
   if (mapCleanup) { mapCleanup(); mapCleanup = null; }
+  mapEpoch++;
   home.classList.add("hidden");
   detail.classList.add("hidden");
   results.innerHTML = "";
@@ -2895,6 +2901,7 @@ async function openMap(territoryId) {
       page.innerHTML = `<div class="mapmod"><div class="empty">[!] КАРТА НЕДОСТУПНА</div></div>`;
     return;
   }
+  MAP_CATS = mapMeta.categories || [];
   if (location.pathname !== want) return;             // пользователь ушёл, пока грузилось
   const terr = territoryId
     && (mapMeta.territories || []).find((t) => t.id === territoryId && t.bbox);
@@ -2928,7 +2935,75 @@ function makeTileMap(layerMeta, viewBoundsPx) {
   map.setMaxZoom(layerMeta.max_zoom);
   map.fitBounds(bounds);
   mapCleanup = () => { map.remove(); };
-  return { map, px, bounds };
+  // обратная проекция: latlng → нативные px слоя (для расстановки/сохранения меток)
+  const toPx = (latlng) => {
+    const p = map.project(latlng, layerMeta.max_zoom);
+    return [Math.round(p.x * 100) / 100, Math.round(p.y * 100) / 100];
+  };
+  return { map, px, toPx, bounds, layerMeta };
+}
+
+// ---------- объекты карты (метки/области/линии): общий рендер вьюера и редактора ----------
+let MAP_CATS = [];                                   // категории меток из /map/meta
+let mapEpoch = 0;                                    // защита от гонок при навигации
+
+const catById = (id) =>
+  MAP_CATS.find((c) => c.id === id) ||
+  MAP_CATS.find((c) => c.id === "poi") ||
+  { id: "poi", name: "Точка", emoji: "📍", color: "#dff5df" };
+
+function markerDivIcon(o, selected) {
+  const c = catById(o.category);
+  const col = o.color || c.color;
+  return L.divIcon({
+    className: "",
+    html: `<div class="mo-marker${selected ? " sel" : ""}${o.published ? "" : " draft"}"
+              style="--mo:${col}"><span>${c.emoji}</span></div>`,
+    iconSize: [26, 26], iconAnchor: [13, 13],
+  });
+}
+
+function objTooltipHtml(o) {
+  const c = o.kind === "marker" ? catById(o.category) : null;
+  const title = escapeHtml(o.name || (c ? c.name : "Без названия"));
+  const badge = c ? `<div class="mo-tip-cat">${c.emoji} ${escapeHtml(c.name)}</div>` : "";
+  const desc = o.description
+    ? `<div class="mo-tip-desc">${escapeHtml(o.description)}</div>` : "";
+  return `<div class="mo-tip"><div class="mo-tip-h">${title}</div>${badge}${desc}</div>`;
+}
+
+// Нарисовать один объект на карте (ctx: {map, px, editable, selected}). Возвращает слой.
+function renderMapObject(o, ctx) {
+  const { map, px } = ctx;
+  let layer;
+  if (o.kind === "marker") {
+    layer = L.marker(px(o.geometry[0], o.geometry[1]), {
+      icon: markerDivIcon(o, ctx.selected),
+      draggable: !!ctx.editable, riseOnHover: true,
+    });
+  } else {
+    const pts = o.geometry.map((p) => px(p[0], p[1]));
+    const col = o.color || (o.kind === "area" ? "#7ce68e" : "#9ecbff");
+    const base = { color: col, weight: ctx.selected ? 4 : 2,
+                   opacity: o.published ? 0.95 : 0.5,
+                   dashArray: o.published ? null : "5,5" };
+    layer = o.kind === "area"
+      ? L.polygon(pts, { ...base, fillColor: col, fillOpacity: o.published ? 0.18 : 0.08 })
+      : L.polyline(pts, base);
+  }
+  layer.bindTooltip(objTooltipHtml(o),
+    { sticky: true, direction: "top", className: "mo-tooltip", opacity: 1 });
+  layer.addTo(map);
+  return layer;
+}
+
+// Публичный вьюер: подгрузить опубликованные объекты слоя и отрисовать с тултипами.
+function loadViewerObjects(layer, map, px) {
+  const ep = mapEpoch;
+  fetch(api(`/map/objects?layer=${layer}`)).then((r) => r.json()).then((d) => {
+    if (ep !== mapEpoch || !map._container) return;   // ушли с карты, пока грузилось
+    (d.objects || []).forEach((o) => renderMapObject(o, { map, px }));
+  }).catch(() => {});
 }
 
 function renderWorldMap() {
@@ -2954,6 +3029,7 @@ function renderWorldMap() {
     const m = L.marker(px(t.label[0], t.label[1]), { icon }).addTo(map);
     if (openable) m.on("click", () => { navigate(`/map/${t.id}`); });
   });
+  loadViewerObjects("global", map, px);
 }
 
 function renderTerritory(terr) {
@@ -2967,7 +3043,413 @@ function renderTerritory(terr) {
     <div class="map-legend">Детальная карта из КПК STALZONE (облака — как в игре).
       Дальше — точки локаций и артефактов с привязкой к базе предметов.</div>
   </div>`;
-  makeTileMap(d, terr.bbox);
+  const { map, px } = makeTileMap(d, terr.bbox);
+  loadViewerObjects("detail", map, px);
+}
+
+// ======================================================================
+//  DEV · РЕДАКТОР КАРТЫ (только админ) — расстановка меток, областей, линий
+// ======================================================================
+const KIND_LABEL = { marker: "МЕТКА", area: "ОБЛАСТЬ", line: "ЛИНИЯ" };
+
+const ed = {                 // состояние редактора (живёт, пока открыт /dev/map)
+  layer: "detail", mode: "view", cat: "poi",
+  map: null, px: null, toPx: null, layerMeta: null,
+  objects: [], layers: {}, selected: null,
+  draftPts: [], draftLine: null, draftDots: [], handles: [],
+  el: {},
+};
+
+async function apiJson(path, method, body) {
+  const r = await fetch(api(path), {
+    method,
+    headers: body ? { "Content-Type": "application/json" } : undefined,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!r.ok) throw new Error((await r.text().catch(() => "")) || String(r.status));
+  return r.status === 204 ? null : r.json();
+}
+
+async function openDevMap() {
+  if (mapCleanup) { mapCleanup(); mapCleanup = null; }
+  mapEpoch++;
+  home.classList.add("hidden"); detail.classList.add("hidden"); results.innerHTML = "";
+  page.classList.remove("hidden");
+  page.innerHTML = `<div class="mapmod"><div class="spinner">// ПРОВЕРКА ДОСТУПА</div></div>`;
+  window.scrollTo(0, 0);
+  if (!ME) return;                     // /me ещё не ответил — loadAuth перезапустит route()
+  if (!ME.is_admin) {
+    page.innerHTML = `<div class="stub"><div class="stub-code">[ 403 ]</div>
+      <div class="stub-title">▸ ДОСТУП ТОЛЬКО ДЛЯ АДМИНОВ</div>
+      <a class="stub-back" href="/">◂ НА ГЛАВНУЮ</a></div>`;
+    return;
+  }
+  try {
+    if (!mapMeta) {
+      [mapMeta] = await Promise.all([
+        fetch(api("/map/meta")).then((r) => r.json()), ensureLeaflet()]);
+    } else { await ensureLeaflet(); }
+  } catch (e) {
+    if (location.pathname === "/dev/map")
+      page.innerHTML = `<div class="mapmod"><div class="empty">[!] КАРТА НЕДОСТУПНА</div></div>`;
+    return;
+  }
+  if (location.pathname !== "/dev/map") return;
+  MAP_CATS = mapMeta.categories || [];
+  renderDevMap();
+}
+
+function renderDevMap() {
+  Object.assign(ed, { mode: "view", selected: null, objects: [], layers: {},
+    draftPts: [], draftLine: null, draftDots: [], handles: [] });
+  page.innerHTML = `<div class="mapmod maped">
+    <div class="section-head">
+      <div class="section-title">▸ ДЕВ · РЕДАКТОР КАРТЫ</div>
+      <div class="section-note">Метки, области и линии для интерактивной карты Зоны</div>
+    </div>
+    <div class="dev-subnav"><a class="on">КАРТА</a></div>
+    <div class="maped-bar" id="mapedBar"></div>
+    <div class="maped-wrap">
+      <div class="map-view" id="mapView"></div>
+      <div class="maped-hint" id="mapedHint"></div>
+      <div class="maped-panel hidden" id="mapedPanel"></div>
+    </div>
+    <div class="map-legend" id="mapedStatus"></div>
+  </div>`;
+  ed.el = { bar: $("mapedBar"), hint: $("mapedHint"),
+            panel: $("mapedPanel"), status: $("mapedStatus") };
+  ed.el.bar.addEventListener("click", onBarClick);
+  ed.el.bar.addEventListener("change", onBarChange);
+  ed.el.hint.addEventListener("click", onHintClick);
+  initEditorMap();
+  renderBar();
+  updateHint();
+  loadEditorObjects();
+}
+
+function initEditorMap() {
+  const lm = mapMeta[ed.layer];
+  const { map, px, toPx } = makeTileMap(lm, [0, 0, lm.w, lm.h]);
+  ed.map = map; ed.px = px; ed.toPx = toPx; ed.layerMeta = lm;
+  map.doubleClickZoom.disable();       // dblclick замыкает область/линию
+  map.on("click", onMapClick);
+  map.on("dblclick", () => {
+    if (ed.mode === "area" || ed.mode === "line") finishDraft();
+  });
+}
+
+// ---------- панель инструментов ----------
+function renderBar() {
+  const tool = (m, label) =>
+    `<button class="mp-tool ${ed.mode === m ? "on" : ""}" data-mode="${m}">${label}</button>`;
+  const cats = MAP_CATS.map((c) =>
+    `<button class="mp-cat ${ed.cat === c.id ? "on" : ""}" data-cat="${c.id}"
+       title="${escapeHtml(c.name)}" style="--mo:${c.color}"><span>${c.emoji}</span></button>`).join("");
+  const terrOpts = (mapMeta.territories || []).filter((t) => t.bbox)
+    .map((t) => `<option value="${t.id}">${escapeHtml(t.name)}</option>`).join("");
+  ed.el.bar.innerHTML = `
+    <div class="mp-group">
+      ${tool("view", "▮ КУРСОР")}${tool("marker", "● МЕТКА")}
+      ${tool("area", "▱ ОБЛАСТЬ")}${tool("line", "╱ ЛИНИЯ")}
+    </div>
+    <div class="mp-group mp-cats ${ed.mode === "marker" ? "" : "off"}">${cats}</div>
+    <div class="mp-group">
+      <span class="mp-lbl">СЛОЙ</span>
+      <button class="mp-layer ${ed.layer === "detail" ? "on" : ""}" data-layer="detail">ДЕТАЛЬНАЯ</button>
+      <button class="mp-layer ${ed.layer === "global" ? "on" : ""}" data-layer="global">ГЛОБАЛЬНАЯ</button>
+    </div>
+    ${ed.layer === "detail" ? `<div class="mp-group">
+      <span class="mp-lbl">К ТЕРРИТОРИИ</span>
+      <select class="mp-terr" data-role="terr"><option value="">— выбрать —</option>${terrOpts}</select>
+    </div>` : ""}`;
+}
+
+function onBarClick(e) {
+  const t = e.target.closest("[data-mode],[data-cat],[data-layer]");
+  if (!t) return;
+  if (t.dataset.mode) setMode(t.dataset.mode);
+  else if (t.dataset.cat) { ed.cat = t.dataset.cat; setMode("marker"); }
+  else if (t.dataset.layer) switchLayer(t.dataset.layer);
+}
+
+function onBarChange(e) {
+  const sel = e.target.closest('[data-role="terr"]');
+  if (!sel || !sel.value) return;
+  const t = (mapMeta.territories || []).find((x) => x.id === sel.value);
+  if (t && t.bbox) {
+    ed.map.fitBounds(L.latLngBounds(
+      ed.px(t.bbox[0], t.bbox[1]), ed.px(t.bbox[2], t.bbox[3])));
+  }
+  sel.value = "";
+}
+
+function setMode(m) {
+  if ((ed.mode === "area" || ed.mode === "line") && m !== ed.mode) clearDraft();
+  ed.mode = m;
+  if (m !== "view") selectObject(null);
+  renderBar();
+  updateHint();
+  document.documentElement.classList.toggle("map-drawing", m !== "view");
+}
+
+function switchLayer(l) {
+  if (l === ed.layer) return;
+  clearDraft();
+  if (mapCleanup) { mapCleanup(); mapCleanup = null; }
+  ed.layer = l; ed.mode = "view"; ed.selected = null;
+  ed.objects = []; ed.layers = {}; ed.handles = [];
+  ed.el.panel.classList.add("hidden");
+  initEditorMap();
+  renderBar();
+  updateHint();
+  loadEditorObjects();
+}
+
+// ---------- подсказка / рисование области-линии ----------
+function updateHint() {
+  const drawing = (ed.mode === "area" || ed.mode === "line") && ed.draftPts.length;
+  const need = ed.mode === "area" ? 3 : 2;
+  let txt;
+  if (ed.mode === "marker") {
+    txt = `Клик по карте — поставить метку «${catById(ed.cat).name}».`;
+  } else if (ed.mode === "area" || ed.mode === "line") {
+    txt = `Клик — вершина. Двойной клик или «ГОТОВО» — завершить (нужно ≥${need}). Точек: ${ed.draftPts.length}.`;
+  } else {
+    txt = "Клик по объекту — редактировать. Тяни метку или вершины — переместить.";
+  }
+  ed.el.hint.innerHTML = `<span class="mh-txt">${txt}</span>` + (drawing
+    ? `<button class="mh-btn ok" data-act="finish">ГОТОВО</button>
+       <button class="mh-btn" data-act="cancel">ОТМЕНА</button>` : "");
+}
+
+function onHintClick(e) {
+  const b = e.target.closest("[data-act]");
+  if (!b) return;
+  if (b.dataset.act === "finish") finishDraft();
+  else if (b.dataset.act === "cancel") { clearDraft(); updateHint(); }
+}
+
+function refreshDraft() {
+  const latlngs = ed.draftPts.map((p) => ed.px(p[0], p[1]));
+  if (ed.draftLine) ed.map.removeLayer(ed.draftLine);
+  ed.draftLine = (ed.mode === "area" ? L.polygon : L.polyline)(latlngs,
+    { color: "#ffb84d", weight: 2, dashArray: "5,5", interactive: false,
+      fillOpacity: ed.mode === "area" ? 0.08 : 0 }).addTo(ed.map);
+  ed.draftDots.forEach((d) => ed.map.removeLayer(d));
+  ed.draftDots = latlngs.map((ll) =>
+    L.marker(ll, { icon: vertexIcon(), keyboard: false, interactive: false }).addTo(ed.map));
+  updateHint();
+}
+
+function clearDraft() {
+  if (ed.draftLine) { ed.map.removeLayer(ed.draftLine); ed.draftLine = null; }
+  ed.draftDots.forEach((d) => ed.map.removeLayer(d));
+  ed.draftDots = [];
+  ed.draftPts = [];
+}
+
+async function finishDraft() {
+  const need = ed.mode === "area" ? 3 : 2;
+  if (ed.draftPts.length < need) { flashHint(`нужно ≥${need} точек`); return; }
+  const kind = ed.mode, pts = ed.draftPts.slice();
+  clearDraft();
+  await createObject({ kind, layer: ed.layer, geometry: pts,
+    color: kind === "area" ? "#7ce68e" : "#9ecbff",
+    name: "", description: "", published: false });
+  setMode("view");
+}
+
+function flashHint(msg) {
+  ed.el.hint.querySelector(".mh-txt").textContent = "⚠ " + msg;
+}
+
+// ---------- клики по карте ----------
+function onMapClick(e) {
+  if (ed.mode === "marker") {
+    createObject({ kind: "marker", layer: ed.layer, category: ed.cat,
+      geometry: ed.toPx(e.latlng), name: "", description: "", published: false });
+  } else if (ed.mode === "area" || ed.mode === "line") {
+    ed.draftPts.push(ed.toPx(e.latlng));
+    refreshDraft();
+  } else {
+    selectObject(null);              // клик по пустому месту — снять выделение
+  }
+}
+
+// ---------- CRUD объектов ----------
+async function loadEditorObjects() {
+  clearAllLayers();
+  try {
+    const d = await fetch(api(`/map/objects?layer=${ed.layer}`)).then((r) => r.json());
+    ed.objects = d.objects || [];
+  } catch (e) { ed.objects = []; }
+  ed.objects.forEach(addObjectLayer);
+  updateStatus();
+}
+
+function clearAllLayers() {
+  Object.values(ed.layers).forEach((l) => ed.map.removeLayer(l));
+  ed.layers = {};
+  clearHandles();
+}
+
+async function createObject(payload) {
+  try {
+    const o = await apiJson("/map/objects", "POST", payload);
+    ed.objects.push(o);
+    addObjectLayer(o);
+    selectObject(o.id);
+    updateStatus();
+  } catch (e) { alert("Не удалось создать объект: " + e.message); }
+}
+
+// (Пере)создать слой объекта на карте с актуальным выделением и хэндлерами.
+function addObjectLayer(o) {
+  if (ed.layers[o.id]) ed.map.removeLayer(ed.layers[o.id]);
+  const layer = renderMapObject(o, {
+    map: ed.map, px: ed.px, editable: true, selected: ed.selected === o.id });
+  ed.layers[o.id] = layer;
+  layer.on("click", (e) => { L.DomEvent.stop(e); if (ed.mode === "view") selectObject(o.id); });
+  if (o.kind === "marker") {
+    layer.on("dragend", async () => {
+      o.geometry = ed.toPx(layer.getLatLng());
+      await saveFields(o, { geometry: o.geometry });
+    });
+  }
+  return layer;
+}
+
+function reRenderObject(o) {
+  addObjectLayer(o);
+  if (ed.selected === o.id) showHandles(o);
+}
+
+async function saveFields(o, fields) {
+  try {
+    const upd = await apiJson(`/map/objects/${o.id}`, "PUT", fields);
+    Object.assign(o, upd);
+    return true;
+  } catch (e) { alert("Не удалось сохранить: " + e.message); return false; }
+}
+
+// ---------- выделение и панель редактирования ----------
+ed.byId = (id) => ed.objects.find((o) => o.id === id);
+
+function selectObject(id) {
+  if (ed.selected === id && id != null) return;
+  const prev = ed.selected;
+  ed.selected = id;
+  clearHandles();
+  if (prev != null && ed.byId(prev)) addObjectLayer(ed.byId(prev));   // снять подсветку
+  const o = id != null ? ed.byId(id) : null;
+  if (!o) { ed.el.panel.classList.add("hidden"); return; }
+  addObjectLayer(o);                                                  // подсветить
+  showHandles(o);
+  renderPanel(o);
+}
+
+function renderPanel(o) {
+  const isMarker = o.kind === "marker";
+  const catSel = isMarker ? `<label class="mp-f"><span>Категория</span>
+    <select id="pfCat">${MAP_CATS.map((c) =>
+      `<option value="${c.id}" ${o.category === c.id ? "selected" : ""}>${c.emoji} ${escapeHtml(c.name)}</option>`).join("")}</select></label>` : "";
+  const colorF = !isMarker ? `<label class="mp-f"><span>Цвет</span>
+    <input type="color" id="pfColor" value="${o.color || (o.kind === "area" ? "#7ce68e" : "#9ecbff")}"></label>` : "";
+  ed.el.panel.innerHTML = `
+    <div class="mp-p-head"><span>${KIND_LABEL[o.kind]} #${o.id}</span>
+      <button class="mp-x" id="pfClose" title="Закрыть">✕</button></div>
+    <label class="mp-f"><span>Название</span>
+      <input id="pfName" maxlength="120" value="${escapeHtml(o.name || "")}"
+        placeholder="${isMarker ? escapeHtml(catById(o.category).name) : ""}"></label>
+    ${catSel}${colorF}
+    <label class="mp-f"><span>Описание</span>
+      <textarea id="pfDesc" rows="4" maxlength="2000" placeholder="Показывается во всплывашке">${escapeHtml(o.description || "")}</textarea></label>
+    <label class="mp-chk"><input type="checkbox" id="pfPub" ${o.published ? "checked" : ""}>
+      <span>Опубликовано — видно всем на /map</span></label>
+    <div class="mp-p-actions">
+      <button class="mp-save" id="pfSave">СОХРАНИТЬ</button>
+      <button class="mp-del" id="pfDel">УДАЛИТЬ</button>
+    </div>
+    <div class="mp-p-msg" id="pfMsg"></div>`;
+  ed.el.panel.classList.remove("hidden");
+  $("pfClose").addEventListener("click", () => selectObject(null));
+  $("pfSave").addEventListener("click", () => savePanel(o));
+  $("pfDel").addEventListener("click", () => deleteObject(o));
+  // живой предпросмотр категории/цвета
+  if (isMarker) $("pfCat").addEventListener("change", (e) => {
+    o.category = e.target.value; reRenderObject(o);
+  });
+  else $("pfColor").addEventListener("input", (e) => {
+    o.color = e.target.value; reRenderObject(o);
+  });
+}
+
+async function savePanel(o) {
+  const fields = {
+    name: $("pfName").value.trim(),
+    description: $("pfDesc").value.trim(),
+    published: $("pfPub").checked,
+  };
+  if (o.kind === "marker") fields.category = $("pfCat").value;
+  else fields.color = $("pfColor").value;
+  const ok = await saveFields(o, fields);
+  if (ok) {
+    reRenderObject(o);
+    updateStatus();
+    const msg = $("pfMsg");
+    if (msg) { msg.textContent = "✓ сохранено"; msg.className = "mp-p-msg ok";
+      setTimeout(() => { if ($("pfMsg") === msg) msg.textContent = ""; }, 1800); }
+  }
+}
+
+async function deleteObject(o) {
+  if (!confirm(`Удалить ${KIND_LABEL[o.kind].toLowerCase()} «${o.name || o.id}»?`)) return;
+  try {
+    await apiJson(`/map/objects/${o.id}`, "DELETE");
+    if (ed.layers[o.id]) ed.map.removeLayer(ed.layers[o.id]);
+    delete ed.layers[o.id];
+    ed.objects = ed.objects.filter((x) => x.id !== o.id);
+    selectObject(null);
+    updateStatus();
+  } catch (e) { alert("Не удалось удалить: " + e.message); }
+}
+
+// ---------- хэндлы вершин области/линии ----------
+function vertexIcon() {
+  return L.divIcon({ className: "", html: `<div class="mo-vtx"></div>`,
+    iconSize: [12, 12], iconAnchor: [6, 6] });
+}
+
+function showHandles(o) {
+  clearHandles();
+  if (o.kind === "marker") return;
+  o.geometry.forEach((p, i) => {
+    const h = L.marker(ed.px(p[0], p[1]),
+      { icon: vertexIcon(), draggable: true, keyboard: false, zIndexOffset: 1000 });
+    h.on("drag", () => {
+      o.geometry[i] = ed.toPx(h.getLatLng());
+      const layer = ed.layers[o.id];
+      if (layer && layer.setLatLngs) layer.setLatLngs(o.geometry.map((q) => ed.px(q[0], q[1])));
+    });
+    h.on("dragend", () => saveFields(o, { geometry: o.geometry }));
+    h.addTo(ed.map);
+    ed.handles.push(h);
+  });
+}
+
+function clearHandles() {
+  ed.handles.forEach((h) => ed.map.removeLayer(h));
+  ed.handles = [];
+}
+
+function updateStatus() {
+  const total = ed.objects.length;
+  const drafts = ed.objects.filter((o) => !o.published).length;
+  const n = (k) => ed.objects.filter((o) => o.kind === k).length;
+  ed.el.status.innerHTML = `Слой: <b>${ed.layer === "detail" ? "детальная" : "глобальная"}</b> ·
+    объектов: <b>${total}</b> (метки ${n("marker")}, области ${n("area")}, линии ${n("line")}) ·
+    черновиков: <b>${drafts}</b>. Черновики видны только тебе (пунктир/полупрозрачные),
+    опубликованные — всем на <a href="/map">/map</a>.`;
 }
 
 // ---------- разделы в разработке: заглушки с описанием модуля ----------
@@ -3027,9 +3509,16 @@ function route() {
   let mm;
 
   // десктопный масштаб 120% ломает координаты Leaflet — на карте отключаем
-  document.documentElement.classList.toggle("on-map", path.startsWith("/map"));
+  const onMap = path.startsWith("/map") || path === "/dev/map";
+  document.documentElement.classList.toggle("on-map", onMap);
+  document.documentElement.classList.remove("map-drawing");
 
-  if (mapCleanup && !path.startsWith("/map")) { mapCleanup(); mapCleanup = null; }
+  if (mapCleanup && !onMap) { mapCleanup(); mapCleanup = null; }
+  if (path === "/dev") { navigate("/dev/map", { replace: true }); return; }
+  if (path === "/dev/map") {
+    strip.classList.add("hidden");
+    setNav("dev"); openDevMap(); return;
+  }
   if ((mm = path.match(/^\/map(?:\/([a-z0-9_-]+))?$/))) {
     strip.classList.add("hidden");
     setNav("map"); openMap(mm[1] || null); return;

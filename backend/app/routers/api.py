@@ -12,7 +12,7 @@ import httpx
 from fastapi import APIRouter, Body, HTTPException, Query, Request
 
 from app import config
-from app.db import chat, market, news, users
+from app.db import chat, mapobjects, market, news, users
 from app.db.index import db
 from app.routers.auth import current_user
 from app.services import (auction, barter, builds, craft, exchange, hideout,
@@ -591,19 +591,143 @@ MAP_TERRITORIES = [
     {"id": "cnpp", "name": "ЧАЭС", "label": [9750, 2150], "closed": True},
 ]
 
+# Категории меток DEV-редактора: id → значок (emoji) + цвет. Расширяется свободно;
+# фронт рисует иконку/цвет и фильтры-слои из этого списка (приходит в /map/meta).
+MAP_CATEGORIES = [
+    {"id": "stash",      "name": "Тайник",         "emoji": "🧰", "color": "#ffb84d"},
+    {"id": "loot",       "name": "Контейнер / лут", "emoji": "📦", "color": "#7ce68e"},
+    {"id": "anomaly",    "name": "Аномалия",       "emoji": "☢",  "color": "#b48cff"},
+    {"id": "danger",     "name": "Опасность",      "emoji": "☠",  "color": "#ff6b5e"},
+    {"id": "npc",        "name": "NPC / Торговец",  "emoji": "👤", "color": "#5fa8ff"},
+    {"id": "quest",      "name": "Квест",          "emoji": "❗", "color": "#e8d44d"},
+    {"id": "spawn",      "name": "Точка входа",    "emoji": "⚑",  "color": "#5fd67a"},
+    {"id": "transition", "name": "Переход",        "emoji": "🚪", "color": "#9ecbff"},
+    {"id": "poi",        "name": "Точка интереса", "emoji": "📍", "color": "#dff5df"},
+]
+_MAP_CAT_IDS = {c["id"] for c in MAP_CATEGORIES}
+_MAP_KINDS = {"marker", "area", "line"}
+_MAP_LAYERS = {"global", "detail"}
+
 MAP_META = {
     "global": {"w": 18432, "h": 8192, "tile_size": 256, "min_zoom": 0, "max_zoom": 6,
                "tile_url": "wmap/{z}/{x}/{y}.webp"},
     "detail": {"w": 112128, "h": 51712, "tile_size": 256, "min_zoom": 0, "max_zoom": 6,
                "tile_url": "dmap/{z}/{x}/{y}.webp"},
     "territories": MAP_TERRITORIES,
+    "categories": MAP_CATEGORIES,
 }
 
 
 @router.get("/map/meta")
 async def map_meta():
-    """Параметры тайловой карты мира и территории для Leaflet."""
+    """Параметры тайловой карты, территории и категории меток для Leaflet."""
     return MAP_META
+
+
+def _require_admin(request: Request) -> dict:
+    """Пользователь-админ (ADMIN_USER_IDS) или 403 — гейт DEV-инструментов."""
+    user = current_user(request)
+    if not user or user["exbo_id"] not in config.ADMIN_USER_IDS:
+        raise HTTPException(403, "только для админов")
+    return user
+
+
+def _clean_map_geometry(kind: str, geom) -> list:
+    """Проверка/нормализация геометрии по типу объекта (см. db/mapobjects)."""
+    if kind == "marker":
+        if not isinstance(geom, (list, tuple)) or len(geom) != 2:
+            raise HTTPException(422, "geometry метки: [x, y]")
+        try:
+            return [round(float(geom[0]), 2), round(float(geom[1]), 2)]
+        except (TypeError, ValueError):
+            raise HTTPException(422, "geometry: числа")
+    min_pts = 3 if kind == "area" else 2
+    if not isinstance(geom, (list, tuple)) or len(geom) < min_pts:
+        raise HTTPException(422, f"нужно ≥{min_pts} вершин")
+    pts = []
+    for p in geom:
+        if not isinstance(p, (list, tuple)) or len(p) != 2:
+            raise HTTPException(422, "вершина: [x, y]")
+        try:
+            pts.append([round(float(p[0]), 2), round(float(p[1]), 2)])
+        except (TypeError, ValueError):
+            raise HTTPException(422, "geometry: числа")
+    return pts
+
+
+def _clean_map_payload(payload: dict, *, creating: bool) -> dict:
+    """Санитайз тела метки/области; при создании требует kind/layer/geometry."""
+    out: dict = {}
+    if creating:
+        kind = str(payload.get("kind") or "")
+        layer = str(payload.get("layer") or "")
+        if kind not in _MAP_KINDS:
+            raise HTTPException(422, "kind: marker|area|line")
+        if layer not in _MAP_LAYERS:
+            raise HTTPException(422, "layer: global|detail")
+        out["kind"] = kind
+        out["layer"] = layer
+        out["geometry"] = _clean_map_geometry(kind, payload.get("geometry"))
+    elif "geometry" in payload:
+        # тип берём из существующего объекта — проверит вызывающий
+        out["geometry"] = payload.get("geometry")
+    if "category" in payload:
+        cat = payload.get("category")
+        out["category"] = cat if cat in _MAP_CAT_IDS else None
+    if "name" in payload:
+        out["name"] = str(payload.get("name") or "").strip()[:120]
+    if "description" in payload:
+        out["description"] = str(payload.get("description") or "").strip()[:2000]
+    if "color" in payload:
+        col = str(payload.get("color") or "").strip()
+        out["color"] = col[:16] if col else None
+    if "published" in payload:
+        out["published"] = bool(payload.get("published"))
+    return out
+
+
+@router.get("/map/objects")
+async def map_objects_list(request: Request, layer: str | None = None):
+    """Метки/области карты. Публично — только опубликованные; админу — с черновиками."""
+    user = current_user(request)
+    is_admin = bool(user and user["exbo_id"] in config.ADMIN_USER_IDS)
+    if layer and layer not in _MAP_LAYERS:
+        raise HTTPException(422, "layer: global|detail")
+    return {"objects": mapobjects.list_objects(layer=layer, include_drafts=is_admin),
+            "is_admin": is_admin}
+
+
+@router.post("/map/objects")
+async def map_object_create(request: Request, payload: dict = Body(...)):
+    """Создать метку/область (только админ). Возвращает созданный объект."""
+    user = _require_admin(request)
+    obj = _clean_map_payload(payload, creating=True)
+    oid = mapobjects.create(obj, user["id"])
+    return mapobjects.get(oid)
+
+
+@router.put("/map/objects/{oid}")
+async def map_object_update(oid: int, request: Request, payload: dict = Body(...)):
+    """Изменить объект (только админ): любые поля, включая геометрию и публикацию."""
+    _require_admin(request)
+    existing = mapobjects.get(oid)
+    if not existing:
+        raise HTTPException(404, "объект не найден")
+    fields = _clean_map_payload(payload, creating=False)
+    if "geometry" in fields:
+        fields["geometry"] = _clean_map_geometry(existing["kind"], fields["geometry"])
+    if not mapobjects.update(oid, fields):
+        raise HTTPException(422, "нечего обновлять")
+    return mapobjects.get(oid)
+
+
+@router.delete("/map/objects/{oid}")
+async def map_object_delete(oid: int, request: Request):
+    """Удалить объект (только админ)."""
+    _require_admin(request)
+    if not mapobjects.delete(oid):
+        raise HTTPException(404, "объект не найден")
+    return {"ok": True}
 
 
 # ---------- калькулятор сборок ----------

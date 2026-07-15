@@ -131,4 +131,5 @@ async def me(request: Request):
         return {"authenticated": False, "auth_enabled": enabled()}
     prof = users.get_profile(user["id"])
     return {"authenticated": True, "auth_enabled": True, "user": user,
+            "is_admin": user["exbo_id"] in config.ADMIN_USER_IDS,
             "profile_empty": not (prof.get("perks") or prof.get("features"))}
