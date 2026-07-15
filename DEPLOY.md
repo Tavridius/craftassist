@@ -85,19 +85,91 @@ CRAFT_MAX_VARIANTS=6
 Проверка: в `docker logs stalzone_craft` строка `oauth: obtained app token`,
 в `/api/health` → `"demo": false, "token": true`.
 
-## Авторизация пользователей (OAuth 2.0 через аккаунт EXBO) — ВКЛЮЧЕНА (10 июля 2026)
+## Авторизация пользователей — локальная (email+пароль) + EXBO OAuth
 
-Код: `routers/auth.py`, `db/users.py`; SQLite `data/users.db` живёт в том же volume.
-Использует те же креды TradeAssist. Как развёрнуто:
+Код: `routers/auth.py`, `db/users.py`, `services/mailer.py`; SQLite `data/users.db`
+в том же volume. **Два входа**, кнопка «ВХОД» открывает модал с вкладками:
 
-- В кабинете exbo.net зарегистрирован redirect URI
-  `https://stalzone-helper.ru/auth/callback` (корень; старый /mvp-вариант тоже
-  зарегистрирован и работает через 301).
-- В `.env` на сервере: `PUBLIC_BASE_URL=https://stalzone-helper.ru`
-  (переменная прокинута в docker-compose.yml).
-- Проверка: `/api/health` → `users`, `/auth/login` → 302 на exbo.net/oauth/authorize.
+- **Локальная** (email/ник + пароль). Работает ВСЕГДА, даже без кред EXBO.
+  Пароли — pbkdf2 (stdlib). Эндпоинты: `POST /auth/register`, `POST /auth/signin`,
+  `POST /auth/reset` + `POST /auth/reset/confirm`, `GET /auth/verify`.
+- **EXBO OAuth** (кнопка в модале). Аккаунт создаётся автоматически при первом
+  входе (без формы регистрации). Требует кред TradeAssist. Redirect URI
+  `https://stalzone-helper.ru/auth/callback` зарегистрирован в кабинете exbo.net.
 
-Без `PUBLIC_BASE_URL`/кред авторизация тихо выключена (кнопки нет) — ничего не ломает.
+Схема БД мигрирует автоматически при старте (`exbo_id` стал nullable, добавлены
+`email`/`password_hash`/`email_verified` + таблица `email_tokens`) — существующие
+EXBO-аккаунты и сессии сохраняются. `/api/me` отдаёт флаги `auth_enabled`
+(локальная всегда true), `oauth_enabled`, `mail_enabled`.
+
+Env в `.env` на сервере (прокинуть в docker-compose.yml): `PUBLIC_BASE_URL=https://stalzone-helper.ru`,
+`SESSION_TTL_DAYS`, `PASSWORD_MIN_LEN`, `ADMIN_EMAILS` (локальные админы через запятую).
+
+Проверка: `/api/health` → `users`; `POST /auth/register` с `{email,login,password}` → 200 + кука `sz_session`.
+
+### Метки Я.Метрики (цели)
+
+При успешном входе/регистрации фронт вызывает `ym(110585101,'reachGoal', …)`:
+`signup` — регистрация (локальная и первый вход через EXBO), `login` — вход
+вернувшегося. **Нужно создать две цели типа «JavaScript-событие»** в счётчике
+110585101 (Метрика → Настройка → Цели → идентификаторы ровно `signup` и `login`).
+Для EXBO-редиректа цель шлётся по маркеру `#auth=signup|login` (см. `authInit` в app.js).
+
+## Почтовый сервис на домене (для verify email + сброс пароля)
+
+Пока SMTP не задан — регистрация работает, аккаунт активен сразу, но письма не
+шлются (`mailer.enabled()`=false, «Забыли пароль?» скрыт). Чтобы включить:
+
+**1. Env бэкенда** (`.env` + `environment:` в docker-compose.yml):
+```
+SMTP_HOST=127.0.0.1          # или mail.stalzone-helper.ru
+SMTP_PORT=587                # 465 (ssl) / 587 (starttls) / 25 (none, локальный релей)
+SMTP_SECURITY=starttls       # starttls | ssl | none
+SMTP_USER=noreply@stalzone-helper.ru   # пусто, если локальный релей без auth
+SMTP_PASS=...
+MAIL_FROM=noreply@stalzone-helper.ru
+MAIL_FROM_NAME=StalZone Helper
+```
+Контейнеру нужен доступ к MTA: либо `SMTP_HOST` = внешний почтовый сервер, либо
+Postfix на хосте и `SMTP_HOST=172.17.0.1` (docker bridge) / сеть `host`.
+
+**2. Postfix на valera (send-only MTA)** — если поднимаем свою почту:
+```
+apt install postfix opendkim opendkim-tools
+# postfix: "Internet Site", myhostname = mail.stalzone-helper.ru
+```
+DNS для доставляемости (у регистратора домена):
+- **A**  `mail.stalzone-helper.ru` → 88.87.70.167
+- **MX** `stalzone-helper.ru` → `mail.stalzone-helper.ru` (приоритет 10)
+- **SPF** (TXT `@`): `v=spf1 a mx ip4:88.87.70.167 -all`
+- **DKIM**: `opendkim-genkey`, публичный ключ в TXT `<selector>._domainkey`
+- **DMARC** (TXT `_dmarc`): `v=DMARC1; p=none; rua=mailto:postmaster@stalzone-helper.ru`
+- **PTR / reverse DNS** 88.87.70.167 → `mail.stalzone-helper.ru` — подключает
+  владелец IP (я подключу — прим. владельца сервера).
+
+**3. Старую почту `@artwood34.ru` убрать** — снять её MX/SPF/DKIM с домена
+artwood34.ru и не использовать в `MAIL_FROM`.
+
+Проверка после настройки: `docker logs stalzone_craft | grep mailer`; тест —
+`POST /auth/reset` для существующего email → письмо должно прийти; `swaks` или
+mail-tester.com для оценки доставляемости/спам-скора.
+
+## Профили убежища (11 июля 2026)
+
+У авторизованных: профиль прокачки (`#profile` — перки 0–10 + станки/фичи),
+хранится в той же SQLite (`profiles`, JSON). Эндпоинты: `GET /api/hideout`
+(справочник), `GET/PUT /api/profile`. Карточка отдаёт `req_check`
+(есть/не хватает по выбранному варианту) и `available`; `/api/search` и
+`/api/top` принимают `?available=1` — фильтр «на что хватает прокачки»
+(тумблер «РЕЦЕПТЫ: ДОСТУПНЫЕ/ВСЕ» в шапке).
+
+## Google Search Console
+
+Верификация домена — HTML-файлом: `frontend/google8788bd5e337192f4.html`
+(раздаётся статикой в корень → `https://stalzone-helper.ru/google8788bd5e337192f4.html`).
+После деплоя: в GSC добавить ресурс `https://stalzone-helper.ru/`, метод «HTML-файл»,
+подтвердить, скормить `https://stalzone-helper.ru/sitemap.xml`. Робот `/api/`, `/auth/`
+закрыты в robots.txt; `/profile`, `/search` — noindex.
 
 ## Профили убежища (11 июля 2026)
 

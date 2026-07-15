@@ -14,7 +14,7 @@ from fastapi import APIRouter, Body, HTTPException, Query, Request
 from app import config
 from app.db import chat, mapobjects, market, news, users
 from app.db.index import db
-from app.routers.auth import current_user
+from app.routers.auth import current_user, is_admin
 from app.services import (auction, barter, builds, craft, exchange, hideout,
                           oauth, sales_log)
 from app.services import fuel as fuel_svc
@@ -361,7 +361,7 @@ async def comments_delete(cid: int, request: Request):
     user = current_user(request)
     if not user:
         raise HTTPException(401, "не авторизован")
-    ok = news.delete_comment(cid, user["id"], user["exbo_id"] in config.ADMIN_USER_IDS)
+    ok = news.delete_comment(cid, user["id"], is_admin(user))
     if not ok:
         raise HTTPException(403, "нельзя удалить этот комментарий")
     return {"ok": True}
@@ -639,7 +639,7 @@ async def map_meta():
 def _require_admin(request: Request) -> dict:
     """Пользователь-админ (ADMIN_USER_IDS) или 403 — гейт DEV-инструментов."""
     user = current_user(request)
-    if not user or user["exbo_id"] not in config.ADMIN_USER_IDS:
+    if not is_admin(user):
         raise HTTPException(403, "только для админов")
     return user
 
@@ -702,11 +702,11 @@ def _clean_map_payload(payload: dict, *, creating: bool) -> dict:
 async def map_objects_list(request: Request, layer: str | None = None):
     """Метки/области карты. Публично — только опубликованные; админу — с черновиками."""
     user = current_user(request)
-    is_admin = bool(user and user["exbo_id"] in config.ADMIN_USER_IDS)
+    admin = is_admin(user)
     if layer and layer not in _MAP_LAYERS:
         raise HTTPException(422, "layer: global|detail")
-    return {"objects": mapobjects.list_objects(layer=layer, include_drafts=is_admin),
-            "is_admin": is_admin}
+    return {"objects": mapobjects.list_objects(layer=layer, include_drafts=admin),
+            "is_admin": admin}
 
 
 @router.post("/map/objects")

@@ -3,6 +3,13 @@ const BASE = "";                       // приложение на корне �
 const api = (p) => `${BASE}/api${p}`;
 const asset = (p) => (p ? `${BASE}/${p}` : "");
 
+// ---------- Я.Метрика: целевые действия ----------
+// Цели-«JavaScript-событие» в счётчике 110585101: signup (регистрация) / login (вход).
+const YM_ID = 110585101;
+function ymGoal(name) {
+  try { if (window.ym) ym(YM_ID, "reachGoal", name); } catch (e) { /* счётчик не загрузился */ }
+}
+
 // ---------- History API-роутинг: реальные пути вместо #hash ----------
 // navigate(path) — переход по SPA (pushState), route() читает location.pathname.
 function navigate(path, { replace = false } = {}) {
@@ -145,7 +152,8 @@ async function loadAuth() {
         loadAuth().then(() => { if (location.pathname === "/profile") navigate("/"); });
       });
     } else if (ME.auth_enabled) {
-      authBox.innerHTML = `<a class="auth-login" href="${BASE}/auth/login">ВХОД</a>`;
+      authBox.innerHTML = `<button class="auth-login" id="loginBtn">ВХОД</button>`;
+      $("loginBtn").addEventListener("click", () => openAuthModal("signin"));
     } else {
       authBox.innerHTML = "";
     }
@@ -190,13 +198,248 @@ function renderOnboard() {
     renderOnboard();
   });
 }
+// ---------- всплывающее уведомление ----------
+function authNotice(msg, kind = "ok") {
+  let el = $("authNotice");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "authNotice";
+    el.className = "auth-notice";
+    document.body.appendChild(el);
+  }
+  el.className = `auth-notice ${kind}`;
+  el.textContent = msg;
+  el.classList.add("show");
+  clearTimeout(el._t);
+  el._t = setTimeout(() => el.classList.remove("show"), 6000);
+}
+
+// ---------- модал авторизации (вкладки Вход / Регистрация + EXBO) ----------
+let authModal = null;
+
+function exboBlock(label) {
+  if (!(ME && ME.oauth_enabled)) return "";
+  return `<div class="auth-or">ИЛИ</div>
+    <a class="auth-exbo" href="${BASE}/auth/login">${label}</a>`;
+}
+
+function ensureAuthModal() {
+  if (authModal) return authModal;
+  authModal = document.createElement("div");
+  authModal.id = "authModal";
+  authModal.className = "mk-modal auth-modal hidden";
+  authModal.setAttribute("role", "dialog");
+  authModal.setAttribute("aria-modal", "true");
+  authModal.addEventListener("click", (e) => {
+    if (e.target === authModal || e.target.closest("[data-close]")) closeAuthModal();
+  });
+  document.body.appendChild(authModal);
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !authModal.classList.contains("hidden")) closeAuthModal();
+  });
+  return authModal;
+}
+
+function authModalHtml(tab) {
+  const mailOff = ME && ME.mail_enabled === false;
+  return `<div class="mk-modal-box auth-box">
+    <button class="mk-modal-x" data-close title="Закрыть (Esc)">✕</button>
+    <div class="auth-brand">SCZ//ДОСТУП</div>
+    <div class="auth-tabs" data-tabs>
+      <button class="auth-tab" data-tab="signin">ВХОД</button>
+      <button class="auth-tab" data-tab="register">РЕГИСТРАЦИЯ</button>
+    </div>
+
+    <form class="auth-pane" data-pane="signin" autocomplete="on">
+      <label>EMAIL ИЛИ НИК
+        <input name="ident" autocomplete="username" required></label>
+      <label>ПАРОЛЬ
+        <input name="password" type="password" autocomplete="current-password" required></label>
+      <div class="auth-err" data-err></div>
+      <button type="submit" class="auth-submit">ВОЙТИ</button>
+      ${mailOff ? "" : `<button type="button" class="auth-link" data-goto="reset">Забыли пароль?</button>`}
+      ${exboBlock("ВОЙТИ ЧЕРЕЗ EXBO")}
+    </form>
+
+    <form class="auth-pane" data-pane="register" autocomplete="on">
+      <label>EMAIL
+        <input name="email" type="email" autocomplete="email" required></label>
+      <label>НИК
+        <input name="login" autocomplete="nickname" required minlength="2" maxlength="24"></label>
+      <label>ПАРОЛЬ
+        <input name="password" type="password" autocomplete="new-password" required minlength="8"></label>
+      <label>ПОВТОР ПАРОЛЯ
+        <input name="password2" type="password" autocomplete="new-password" required minlength="8"></label>
+      <div class="auth-err" data-err></div>
+      <button type="submit" class="auth-submit">СОЗДАТЬ АККАУНТ</button>
+      ${exboBlock("РЕГИСТРАЦИЯ ЧЕРЕЗ EXBO")}
+    </form>
+
+    <form class="auth-pane" data-pane="reset" autocomplete="on">
+      <div class="auth-note">Укажи email аккаунта — пришлём ссылку для сброса пароля.</div>
+      <label>EMAIL
+        <input name="email" type="email" autocomplete="email" required></label>
+      <div class="auth-err" data-err></div>
+      <button type="submit" class="auth-submit">ОТПРАВИТЬ ССЫЛКУ</button>
+      <button type="button" class="auth-link" data-goto="signin">← Назад ко входу</button>
+    </form>
+
+    <form class="auth-pane" data-pane="reset-confirm" autocomplete="on">
+      <div class="auth-note">Задай новый пароль для аккаунта.</div>
+      <label>НОВЫЙ ПАРОЛЬ
+        <input name="password" type="password" autocomplete="new-password" required minlength="8"></label>
+      <label>ПОВТОР ПАРОЛЯ
+        <input name="password2" type="password" autocomplete="new-password" required minlength="8"></label>
+      <div class="auth-err" data-err></div>
+      <button type="submit" class="auth-submit">СОХРАНИТЬ И ВОЙТИ</button>
+    </form>
+  </div>`;
+}
+
+let resetToken = "";  // токен из ссылки письма (для вкладки reset-confirm)
+
+function setAuthTab(tab) {
+  const box = authModal;
+  box.querySelectorAll("[data-tabs] .auth-tab").forEach((b) =>
+    b.classList.toggle("on", b.dataset.tab === tab));
+  box.querySelectorAll(".auth-pane").forEach((p) =>
+    p.classList.toggle("active", p.dataset.pane === tab));
+  // вкладки видны только для форм входа/регистрации
+  box.querySelector("[data-tabs]").style.display =
+    (tab === "signin" || tab === "register") ? "" : "none";
+  box.querySelectorAll(".auth-err").forEach((e) => (e.textContent = ""));
+  const first = box.querySelector(`.auth-pane[data-pane="${tab}"] input`);
+  if (first) setTimeout(() => first.focus(), 30);
+}
+
+function openAuthModal(tab = "signin") {
+  ensureAuthModal();
+  authModal.innerHTML = authModalHtml(tab);
+  authModal.querySelectorAll("[data-tabs] .auth-tab").forEach((b) =>
+    b.addEventListener("click", () => setAuthTab(b.dataset.tab)));
+  authModal.querySelectorAll("[data-goto]").forEach((b) =>
+    b.addEventListener("click", () => setAuthTab(b.dataset.goto)));
+  authModal.querySelectorAll(".auth-pane").forEach((f) =>
+    f.addEventListener("submit", onAuthSubmit));
+  authModal.classList.remove("hidden");
+  document.body.classList.add("modal-open");
+  setAuthTab(tab);
+}
+
+function closeAuthModal() {
+  if (!authModal) return;
+  authModal.classList.add("hidden");
+  document.body.classList.remove("modal-open");
+  // почистить токен сброса из URL, если был
+  if (resetToken) {
+    resetToken = "";
+    const u = new URL(location.href);
+    u.searchParams.delete("reset");
+    history.replaceState(null, "", u.pathname + u.search);
+  }
+}
+
+async function onAuthSubmit(e) {
+  e.preventDefault();
+  const form = e.currentTarget;
+  const pane = form.dataset.pane;
+  const errEl = form.querySelector("[data-err]");
+  const btn = form.querySelector(".auth-submit");
+  const val = (n) => (form.querySelector(`[name="${n}"]`) || {}).value || "";
+  errEl.textContent = "";
+
+  // клиентская проверка совпадения паролей
+  if ((pane === "register" || pane === "reset-confirm") && val("password") !== val("password2")) {
+    errEl.textContent = "Пароли не совпадают";
+    return;
+  }
+
+  let url, payload, goal = null;
+  if (pane === "signin") {
+    url = "/auth/signin"; payload = { ident: val("ident"), password: val("password") }; goal = "login";
+  } else if (pane === "register") {
+    url = "/auth/register";
+    payload = { email: val("email"), login: val("login"), password: val("password") };
+    goal = "signup";
+  } else if (pane === "reset") {
+    url = "/auth/reset"; payload = { email: val("email") };
+  } else if (pane === "reset-confirm") {
+    url = "/auth/reset/confirm"; payload = { token: resetToken, password: val("password") };
+  }
+
+  btn.disabled = true;
+  const prev = btn.textContent;
+  btn.textContent = "…";
+  try {
+    const r = await fetch(`${BASE}${url}`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) { errEl.textContent = data.error || "Ошибка. Попробуйте ещё раз."; return; }
+
+    if (pane === "reset") {
+      // не раскрываем, есть ли такой email
+      setAuthTab("signin");
+      authNotice("Если email зарегистрирован — письмо со ссылкой отправлено.");
+      return;
+    }
+    // signin / register / reset-confirm — успех, сессия установлена
+    if (goal) ymGoal(goal);
+    closeAuthModal();
+    await loadAuth();
+    if (pane === "register") {
+      authNotice(data.mail_sent
+        ? "Аккаунт создан. Проверь почту — отправили письмо для подтверждения email."
+        : "Аккаунт создан. Добро пожаловать!");
+    } else if (pane === "reset-confirm") {
+      authNotice("Пароль обновлён. Ты вошёл в аккаунт.");
+    } else {
+      authNotice("Вход выполнен.");
+    }
+  } catch (err) {
+    errEl.textContent = "Сеть недоступна. Попробуйте ещё раз.";
+  } finally {
+    btn.disabled = false;
+    btn.textContent = prev;
+  }
+}
+
+// открытие модала из CTA (чат/комменты/профиль) — делегирование по классу
+document.addEventListener("click", (e) => {
+  const t = e.target.closest(".js-open-auth");
+  if (t) { e.preventDefault(); openAuthModal(t.dataset.authTab || "signin"); }
+});
+
 (function authInit() {
-  const m = new URLSearchParams(location.hash.slice(1));
-  if (m.get("auth") === "error") {
-    authBox.innerHTML = `<span class="auth-err">ОШИБКА ВХОДА</span>`;
-    history.replaceState(null, "", location.pathname + location.search);
-    setTimeout(loadAuth, 4000);
-  } else loadAuth();
+  const hash = new URLSearchParams(location.hash.slice(1));
+  const marker = hash.get("auth");
+  const resetQ = new URLSearchParams(location.search).get("reset");
+
+  const afterAuth = () => {
+    if (resetQ) {                       // пришли по ссылке сброса пароля из письма
+      resetToken = resetQ;
+      openAuthModal("reset-confirm");
+    }
+  };
+
+  if (marker) history.replaceState(null, "", location.pathname + location.search);
+
+  if (marker === "error" || marker === "verify_failed") {
+    authNotice(marker === "error" ? "Не удалось войти через EXBO." :
+      "Ссылка подтверждения недействительна или устарела.", "err");
+    loadAuth().then(afterAuth);
+  } else if (marker === "signup" || marker === "login") {
+    ymGoal(marker);                     // цель Я.Метрики после EXBO-редиректа
+    loadAuth().then(() => {
+      afterAuth();
+      authNotice(marker === "signup" ? "Аккаунт EXBO создан. Добро пожаловать!" : "Вход выполнен.");
+    });
+  } else if (marker === "verified") {
+    loadAuth().then(() => { afterAuth(); authNotice("Email подтверждён."); });
+  } else {
+    loadAuth().then(afterAuth);
+  }
 })();
 
 // ---------- поиск ----------
@@ -1039,7 +1282,7 @@ function chatDockRender() {
     <div class="chat-msgs" id="chatMsgs"><div class="spinner">// ЗАГРУЗКА</div></div>
     <div class="chat-form">${canPost
       ? `<input id="chatInput" maxlength="500" autocomplete="off" placeholder="СООБЩЕНИЕ…"><button id="chatSend">▸</button>`
-      : `<a class="chat-login" href="${BASE}/auth/login">ВОЙТИ ЧЕРЕЗ EXBO, ЧТОБЫ ПИСАТЬ</a>`}</div>`;
+      : `<a class="chat-login js-open-auth" href="${BASE}/auth/login">ВОЙТИ, ЧТОБЫ ПИСАТЬ</a>`}</div>`;
   dock.querySelectorAll(".chat-tab").forEach((b) => b.addEventListener("click", () => {
     if (b.dataset.room === chatRoom) return;
     chatRoom = b.dataset.room; localStorage.setItem("sz_chat_room", chatRoom);
@@ -1930,7 +2173,7 @@ async function renderComments(pageKey) {
         <button id="cmtSend" class="bt-more" style="margin:6px 0 0">ОТПРАВИТЬ</button>
         <div id="cmtErr" class="cmt-err"></div></div>`
     : (ME && ME.auth_enabled
-       ? `<div class="cmt-cta">ЧТОБЫ КОММЕНТИРОВАТЬ — <a href="${BASE}/auth/login">ВОЙДИ ЧЕРЕЗ EXBO</a>.</div>`
+       ? `<div class="cmt-cta">ЧТОБЫ КОММЕНТИРОВАТЬ — <a class="js-open-auth" href="${BASE}/auth/login">ВОЙДИ ИЛИ ЗАРЕГИСТРИРУЙСЯ</a>.</div>`
        : "");
   host.innerHTML = `<div class="cmt-box">
     <div class="reqs-lbl">КОММЕНТАРИИ · ${(d.comments || []).length}</div>
@@ -2809,8 +3052,8 @@ async function openProfile() {
   try {
     const me = await fetch(api("/me")).then((r) => r.json());
     if (!me.authenticated) {
-      detail.innerHTML = `<div class="empty">ПРОФИЛЬ ДОСТУПЕН ПОСЛЕ ВХОДА ЧЕРЕЗ EXBO.
-        <a class="auth-login" href="${BASE}/auth/login">ВОЙТИ</a></div>`;
+      detail.innerHTML = `<div class="empty">ПРОФИЛЬ ДОСТУПЕН ПОСЛЕ ВХОДА.
+        <a class="auth-login js-open-auth" href="${BASE}/auth/login">ВОЙТИ</a></div>`;
       return;
     }
     const [dict, prof] = await Promise.all([

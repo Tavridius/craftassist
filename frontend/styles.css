@@ -1325,6 +1325,75 @@ body.modal-open { overflow: hidden; }
   .mk-modal-box { max-height: 100vh; width: 100%; }
 }
 
+/* ---------- модал авторизации ---------- */
+button.auth-login { font: inherit; background: transparent; cursor: pointer; }
+.auth-modal .mk-modal-box.auth-box {
+  width: min(400px, 100%); padding: 20px 22px 24px;
+}
+.auth-brand {
+  color: var(--green); letter-spacing: 0.14em; font-size: 12px; font-weight: 700;
+  text-align: center; margin: 2px 0 16px; text-shadow: var(--glow);
+}
+.auth-tabs { display: flex; gap: 0; margin-bottom: 16px; border: 1px solid var(--border); }
+.auth-tab {
+  flex: 1; font: inherit; font-size: 12px; letter-spacing: 0.08em; cursor: pointer;
+  padding: 9px 4px; background: transparent; border: none; color: var(--dim);
+  border-bottom: 2px solid transparent;
+}
+.auth-tab + .auth-tab { border-left: 1px solid var(--border); }
+.auth-tab:hover { color: var(--text); background: var(--row-hover); }
+.auth-tab.on { color: var(--green); border-bottom-color: var(--green); background: rgba(124, 230, 142, 0.05); }
+
+.auth-pane { display: none; flex-direction: column; gap: 11px; }
+.auth-pane.active { display: flex; }
+.auth-pane label {
+  display: flex; flex-direction: column; gap: 5px;
+  font-size: 10px; letter-spacing: 0.1em; color: var(--dim);
+}
+.auth-pane input {
+  font: inherit; font-size: 13px; color: var(--bright);
+  background: var(--panel-main); border: 1px solid var(--border);
+  padding: 9px 10px; outline: none;
+}
+.auth-pane input:focus { border-color: var(--green-border); box-shadow: 0 0 0 1px var(--green-border); }
+.auth-submit {
+  font: inherit; font-size: 12px; letter-spacing: 0.08em; cursor: pointer;
+  margin-top: 4px; padding: 11px; color: var(--green);
+  background: rgba(124, 230, 142, 0.06); border: 1px solid var(--green-border);
+}
+.auth-submit:hover:not(:disabled) { border-color: var(--green); box-shadow: var(--glow); }
+.auth-submit:disabled { opacity: 0.5; cursor: default; }
+.auth-err { color: var(--red); font-size: 11px; letter-spacing: 0.04em; min-height: 0; }
+.auth-err:empty { display: none; }
+.auth-note { color: var(--dim); font-size: 11px; line-height: 1.6; }
+.auth-link {
+  font: inherit; font-size: 11px; color: var(--dim); background: transparent;
+  border: none; cursor: pointer; text-align: center; padding: 2px; text-decoration: underline;
+}
+.auth-link:hover { color: var(--green); }
+.auth-or {
+  text-align: center; color: var(--dimmer); font-size: 10px; letter-spacing: 0.2em;
+  margin: 6px 0 2px; position: relative;
+}
+.auth-exbo {
+  display: block; text-align: center; text-decoration: none;
+  font-size: 12px; letter-spacing: 0.06em; padding: 10px; color: var(--amber);
+  background: rgba(255, 184, 77, 0.05); border: 1px solid var(--amber-border);
+}
+.auth-exbo:hover { border-color: var(--amber); color: var(--amber); }
+
+/* всплывающее уведомление */
+.auth-notice {
+  position: fixed; left: 50%; bottom: 22px; transform: translateX(-50%) translateY(20px);
+  z-index: 400; max-width: min(460px, calc(100vw - 24px));
+  background: var(--panel-deep); border: 1px solid var(--green-border);
+  color: var(--text); font-size: 12px; line-height: 1.5; letter-spacing: 0.03em;
+  padding: 12px 16px; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+  opacity: 0; pointer-events: none; transition: opacity 0.25s, transform 0.25s;
+}
+.auth-notice.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+.auth-notice.err { border-color: var(--red-border); color: var(--red); }
+
 /* ---------- патчноуты ---------- */
 .patch-list { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
 .patch-row {

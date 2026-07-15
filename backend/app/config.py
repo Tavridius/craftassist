@@ -53,6 +53,25 @@ OAUTH_REDIRECT_URI = os.getenv(
     "OAUTH_REDIRECT_URI", f"{PUBLIC_BASE_URL}/auth/callback" if PUBLIC_BASE_URL else "")
 SESSION_TTL_DAYS = int(os.getenv("SESSION_TTL_DAYS", "30"))  # срок жизни сессии в куке/БД
 
+# --- Локальная авторизация (email + пароль) ---
+# Работает всегда (не требует кред EXBO). EXBO-вход остаётся альтернативой в модале.
+PASSWORD_MIN_LEN = int(os.getenv("PASSWORD_MIN_LEN", "8"))
+# Локальные админы по email (в дополнение к ADMIN_USER_IDS по exbo_id ниже)
+ADMIN_EMAILS = {e.strip().lower() for e in os.getenv("ADMIN_EMAILS", "").split(",") if e.strip()}
+
+# --- Почта (верификация email + сброс пароля) ---
+# Пока SMTP не задан — регистрация работает, аккаунт активен сразу, но письма
+# (подтверждение email, сброс пароля) не отправляются. Задать на проде, когда
+# поднимем почтовый сервис на домене (см. DEPLOY.md).
+SMTP_HOST = os.getenv("SMTP_HOST", "").strip()
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
+SMTP_USER = os.getenv("SMTP_USER", "").strip()
+SMTP_PASS = os.getenv("SMTP_PASS", "")
+SMTP_SECURITY = os.getenv("SMTP_SECURITY", "starttls").strip().lower()  # starttls | ssl | none
+MAIL_FROM = os.getenv("MAIL_FROM", "").strip()          # напр. noreply@stalzone-helper.ru
+MAIL_FROM_NAME = os.getenv("MAIL_FROM_NAME", "StalZone Helper")
+EMAIL_TOKEN_TTL_HOURS = int(os.getenv("EMAIL_TOKEN_TTL_HOURS", "24"))  # жизнь ссылок verify/reset
+
 # --- Источник игровой БД (рецепты, предметы, иконки) ---
 DB_REPO_ZIP = os.getenv(
     "DB_REPO_ZIP",

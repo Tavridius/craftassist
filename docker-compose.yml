@@ -22,10 +22,20 @@ services:
       - AUCTION_MIN_INTERVAL=${AUCTION_MIN_INTERVAL:-0.5}
       - CRAFT_MAX_DEPTH=${CRAFT_MAX_DEPTH:-4}
       - CRAFT_MAX_VARIANTS=${CRAFT_MAX_VARIANTS:-3}
-      # Авторизация пользователей (OAuth EXBO): внешний адрес приложения за прокси.
-      # redirect_uri = PUBLIC_BASE_URL + /auth/callback — зарегистрировать на exbo.net.
+      # Авторизация: локальная (email+пароль) всегда; EXBO OAuth — по кредам выше.
+      # PUBLIC_BASE_URL — внешний адрес за прокси; redirect_uri = +/auth/callback (exbo.net).
       - PUBLIC_BASE_URL=${PUBLIC_BASE_URL:-}
       - SESSION_TTL_DAYS=${SESSION_TTL_DAYS:-30}
+      - PASSWORD_MIN_LEN=${PASSWORD_MIN_LEN:-8}
+      # Почта (подтверждение email + сброс пароля); пусто — письма не шлются
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_SECURITY=${SMTP_SECURITY:-starttls}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASS=${SMTP_PASS:-}
+      - MAIL_FROM=${MAIL_FROM:-}
+      - MAIL_FROM_NAME=${MAIL_FROM_NAME:-StalZone Helper}
+      - EMAIL_TOKEN_TTL_HOURS=${EMAIL_TOKEN_TTL_HOURS:-24}
       # Биржа артефактов: снапшоты корзин качество×заточка (см. config.py)
       - ART_WATCH_ENABLED=${ART_WATCH_ENABLED:-1}
       - ART_WATCH_HOURS=${ART_WATCH_HOURS:-1,7,13,19}
