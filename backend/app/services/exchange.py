@@ -81,6 +81,19 @@ def _read() -> None:
         logger.exception("exchange: failed to read %s", live)
 
 
+def by_item() -> dict:
+    """{item_id: {"coins", "amount", "limit"}} — позиции Перекупщика для
+    подсказок в других разделах (напр. корзина бартеров), hot-reload."""
+    _read()
+    out = {}
+    for p in _doc.get("positions", []):
+        iid = p.get("item")
+        if iid and (p.get("coins") or 0) > 0:
+            out[iid] = {"coins": p["coins"], "amount": p.get("amount") or 1,
+                        "limit": p.get("limit")}
+    return out
+
+
 def snapshot() -> dict:
     """Позиции с курсами (руб/монета), отсортированы по выгодности."""
     _read()  # hot-reload, если файл правили

@@ -17,7 +17,7 @@ import time
 
 from app import config
 from app.db.index import db
-from app.services import craft
+from app.services import craft, exchange
 from app.services.price_store import store
 
 BARTER_TTL = int(os.getenv("BARTER_TTL", "60"))          # кэш рейтинга, сек
@@ -210,6 +210,8 @@ def basket(items: list[dict]) -> dict:
                 a["cost"] += line["line"]
             else:
                 a["farm"] = True
+            if line.get("disasm"):
+                a["_disasm"] = line["disasm"]
             want.add(line["item"])
         rows.append({**_brief(iid), "qty": qty,
                      "settlement_name": b["settlement_name"], "level": b["level"],
@@ -219,6 +221,21 @@ def basket(items: list[dict]) -> dict:
     if want:
         store.request(want)  # непосчитанное — воркеру вне очереди
     resources = sorted(agg.values(), key=lambda r: -(r["cost"] or 0))
+    ex_pos = exchange.by_item()  # позиции Перекупщика — колонка «в обменках»
+    for r in resources:
+        dz = r.pop("_disasm", None)
+        if dz:  # ресурс не с аука напрямую: покупаются родители и разбираются
+            blocks = math.ceil(r["amount"] / dz["count"])
+            r["disasm"] = {"parent": dz["parent"],
+                           "parent_name": _brief(dz["parent"])["name"],
+                           "count": dz["count"], "blocks": blocks,
+                           "parent_unit": dz["parent_unit"]}
+        ex = ex_pos.get(r["id"])
+        if ex:
+            bundles = math.ceil(r["amount"] / ex["amount"])
+            r["obmen"] = {"coins": ex["coins"], "amount": ex["amount"],
+                          "coins_total": bundles * ex["coins"], "limit": ex["limit"],
+                          "over_limit": bool(ex["limit"]) and bundles > ex["limit"]}
     total = round(sum(r["cost"] for r in resources) + money_by_cur.get("money", 0.0))
     return {
         "items": rows,

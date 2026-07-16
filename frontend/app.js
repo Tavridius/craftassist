@@ -1788,11 +1788,15 @@ async function refreshBarter(full = false) {
   }
   if (location.pathname !== "/barter") return;
   btLastRows = d.rows;
+  // корзина следует фильтрам: не попавшее под текущий фильтр вылетает из выбора
+  const visible = new Set(d.rows.map((r) => r.id));
+  let pruned = false;
+  for (const id of [...btSel.keys()])
+    if (!visible.has(id)) { btSel.delete(id); pruned = true; }
+  if (pruned) btSelSave();
   if (full) renderBarter(d);
   $("btBody").innerHTML = btRows(d.rows);
   $("btCount").textContent = `${d.total} ОБМЕНОВ · КОМИССИЯ АУКА ${d.fee_pct}% УЧТЕНА`;
-  const all = $("btSelAll");
-  if (all) all.textContent = `ВЫБРАТЬ ВСЁ (${d.total})`;
   wireBtRows(openBarterModal);
   wireBtSel();
   btSelBar();
@@ -1880,9 +1884,13 @@ function renderBarter(d) {
     clearTimeout(btTimer);
     btTimer = setTimeout(() => { btState.q = e.target.value.trim(); btState.shown = 60; refreshBarter(); }, 250);
   });
-  // «выбрать всё» — весь отфильтрованный набор (не только показанная страница)
+  // «выбрать всё» — тоггл по отфильтрованному набору: есть выбранное → снять,
+  // иначе выбрать всё (не только показанную страницу)
   $("btSelAll").addEventListener("click", () => {
-    btLastRows.slice(0, 300).forEach((r) => { if (!btSel.has(r.id)) btSel.set(r.id, 1); });
+    if (btLastRows.some((r) => btSel.has(r.id)))
+      btLastRows.forEach((r) => btSel.delete(r.id));
+    else
+      btLastRows.slice(0, 300).forEach((r) => btSel.set(r.id, 1));
     btSelSave();
     btSelSync();
   });
@@ -1920,6 +1928,9 @@ function btSelBar() {
   bar.classList.toggle("hidden", !btSel.size);
   const n = $("btSelN");
   if (n) n.textContent = btSel.size;
+  const all = $("btSelAll");
+  if (all) all.textContent = btLastRows.some((r) => btSel.has(r.id))
+    ? "СНЯТЬ ВЫБОР" : `ВЫБРАТЬ ВСЁ (${btLastRows.length})`;
 }
 
 function wireBtRows(open) {
@@ -1964,32 +1975,42 @@ async function openBasketModal() {
       <td class="bt-place">${place}</td>
       <td class="r">${cost}</td></tr>`;
   }).join("");
-  const resRows = (d.resources || []).map((r) => `<tr class="brt-row" data-id="${r.id}">
+  const resRows = (d.resources || []).map((r) => {
+    // не с аука напрямую — закупаются родители и разбираются (цена уже это учитывает)
+    const dz = r.disasm ? `<div class="bk-note">= ${fmt(r.disasm.blocks)}× ${escapeHtml(r.disasm.parent_name)} С АУКА (В КАЖДОМ ${r.disasm.count} ШТ)</div>` : "";
+    const ob = r.obmen
+      ? `${fmt(r.obmen.coins_total)} МОНЕТ${r.obmen.over_limit ? `<div class="bk-note">ЛИМИТ ${fmt(r.obmen.limit)} ПОКУПОК</div>` : ""}`
+      : `<span class="bk-dim">—</span>`;
+    const price = r.farm && !r.cost ? '<span class="bt-farm">ФАРМ</span>' : `${fmt(r.cost)} ₽${dz}`;
+    return `<tr class="brt-row" data-id="${r.id}">
       <td><div class="bt-item"><img loading="lazy" src="${asset(r.icon)}" alt="">
         <span class="nm" style="color:${rank(r.color).color}">${escapeHtml(r.name)}</span></div></td>
       <td class="r">${fmt(r.amount)}</td>
-      <td class="r">${r.farm && !r.cost ? '<span class="bt-farm">ФАРМ</span>' : fmt(r.cost) + " ₽"}</td></tr>`).join("");
+      <td class="r">${ob}</td>
+      <td class="r">${price}</td></tr>`;
+  }).join("");
   const moneyRows = (d.money || []).map((m) => `<tr>
       <td><div class="bt-item"><span class="nm">ДЕНЬГИ ТОРГОВЦАМ · ${escapeHtml((m.name || m.currency).toUpperCase())}</span></div></td>
-      <td class="r"></td>
+      <td class="r"></td><td class="r"></td>
       <td class="r">${fmt(m.amount)} ${m.currency === "money" ? "₽" : (CUR_RU[m.currency] || "")}</td></tr>`).join("");
   const foreign = (d.money || []).filter((m) => m.currency !== "money");
   $("gModalBody").innerHTML = `
     <div class="gm-head">
       <div class="gm-title">КОРЗИНА БАРТЕРОВ · ${nBarter} ${nBarter === 1 ? "ОБМЕН" : nBarter < 5 ? "ОБМЕНА" : "ОБМЕНОВ"}</div>
     </div>
-    <div class="gm-stats">ПО КАЖДОМУ ПРЕДМЕТУ ВЗЯТ ЛУЧШИЙ ОФФЕР (СПЕРВА ПОЛНОСТЬЮ ПОКУПАЕМЫЕ, ДАЛЬШЕ ДЕШЕВЛЕ). КЛИК ПО НАЗВАНИЮ — ДОСЬЕ ОБМЕНА.</div>
+    <div class="reqs-lbl">ЗАКУПКА РЕСУРСОВ · ВСЕГО ПО КОРЗИНЕ</div>
+    <div class="bt-wrap"><table class="bt-table bk-res-tbl">
+      <thead><tr><th style="width:42%">РЕСУРС</th><th class="r" style="width:14%">КОЛ-ВО</th>
+        <th class="r" style="width:20%">В ОБМЕНКАХ</th><th class="r" style="width:24%">ЦЕНА (АУК)</th></tr></thead>
+      <tbody>${resRows || ""}${moneyRows}${!resRows && !moneyRows ? `<tr><td colspan="4" class="empty-sm">НЕЧЕГО ЗАКУПАТЬ.</td></tr>` : ""}</tbody>
+    </table></div>
+    <div class="chain-total">ИТОГО (РЕСУРСЫ + ДЕНЬГИ): <b>${fmt(d.total)} ₽</b>${foreign.map((m) => ` + <b>${fmt(m.amount)} ${CUR_RU[m.currency] || m.currency.toUpperCase()}</b>`).join("")}${d.has_farm ? ` <span class="bt-farm">+ ФАРМ-ВХОДЫ (НЕТ НА АУКЕ)</span>` : ""}</div>
+    <div class="reqs-lbl">ЧТО ПОЛУЧАЕШЬ · ${d.items.length} · ЛУЧШИЙ ОФФЕР НА ПРЕДМЕТ, КЛИК ПО НАЗВАНИЮ — ДОСЬЕ ОБМЕНА</div>
     <div class="bt-wrap"><table class="bt-table bk-tbl">
       <thead><tr><th style="width:42%">ПРЕДМЕТ</th><th class="r" style="width:18%">КОЛ-ВО</th>
         <th style="width:22%">ГДЕ</th><th class="r" style="width:18%">СТОИМОСТЬ</th></tr></thead>
       <tbody>${itemRows}</tbody>
-    </table></div>
-    <div class="reqs-lbl">ЗАКУПКА РЕСУРСОВ · ВСЕГО ПО КОРЗИНЕ</div>
-    <div class="bt-wrap"><table class="bt-table chain-tbl">
-      <thead><tr><th style="width:60%">РЕСУРС</th><th class="r" style="width:20%">КОЛ-ВО</th><th class="r" style="width:20%">ЦЕНА</th></tr></thead>
-      <tbody>${resRows || ""}${moneyRows}${!resRows && !moneyRows ? `<tr><td colspan="3" class="empty-sm">НЕЧЕГО ЗАКУПАТЬ.</td></tr>` : ""}</tbody>
-    </table></div>
-    <div class="chain-total">ИТОГО (РЕСУРСЫ + ДЕНЬГИ): <b>${fmt(d.total)} ₽</b>${foreign.map((m) => ` + <b>${fmt(m.amount)} ${CUR_RU[m.currency] || m.currency.toUpperCase()}</b>`).join("")}${d.has_farm ? ` <span class="bt-farm">+ ФАРМ-ВХОДЫ (НЕТ НА АУКЕ)</span>` : ""}</div>`;
+    </table></div>`;
   const upd = (id, delta) => {
     const q = (btSel.get(id) || 1) + delta;
     if (q < 1) return;
