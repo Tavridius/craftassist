@@ -96,7 +96,7 @@ PRICE_STALE_AFTER = int(os.getenv("PRICE_STALE_AFTER", "1800"))    # для UI: 
 # Цены снимаются ТОЛЬКО в назначенные часы (МСК) — дважды в сутки, между
 # замерами API не дёргается. Показываем среднюю цену продаж из истории аука.
 WATCH_IDS = [s.strip() for s in os.getenv(
-    "WATCH_IDS", "7l127,9mmq,g00n,404p,y7po").split(",") if s.strip()]
+    "WATCH_IDS", "7l127,9mmq,g00n,404p,y7po,zy32").split(",") if s.strip()]
 WATCH_HOURS = sorted({int(h) for h in os.getenv("WATCH_HOURS", "1,11").split(",")})
 WATCH_KEEP = int(os.getenv("WATCH_KEEP", "60"))  # точек в серии (~месяц при 2/сутки)
 
@@ -151,9 +151,35 @@ PATCH_POLL_MIN = int(os.getenv("PATCH_POLL_MIN", "30"))
 PATCH_BACKFILL_MAX = int(os.getenv("PATCH_BACKFILL_MAX", "1000"))  # предохранитель бэкфилла
 NEWS_IMG_DIR = DATA_DIR / "news_img"                 # зеркало картинок патчноутов
 
+# --- Гайды (авторские статьи; админ-редактор) ---
+# Хранилище — SQLite data/guides.db в volume (переживает редеплой). Бандл
+# content/guides/*.json+html сидится в БД при старте (insert-if-absent). Картинки,
+# загруженные админом, лежат в volume DATA_DIR/guide_uploads и раздаются с /guide-uploads.
+GUIDE_UPLOADS_DIR = DATA_DIR / "guide_uploads"
+GUIDE_SEED_DIR = BACKEND_DIR / "content" / "guides"
+GUIDE_HTML_MAX = int(os.getenv("GUIDE_HTML_MAX", "80000"))     # потолок размера тела гайда
+GUIDE_IMG_MAX_MB = float(os.getenv("GUIDE_IMG_MAX_MB", "6"))   # лимит одной картинки
+
 # --- Комментарии под статьями ---
 # EXBO user id админов через запятую — могут удалять чужие комментарии
 ADMIN_USER_IDS = {int(x) for x in os.getenv("ADMIN_USER_IDS", "").split(",") if x.strip().isdigit()}
+
+# --- A/B-тест дизайна (серверный cookie-сплит) ---
+# Включён → части посетителей отдаётся вариант B: поверх базовой styles.css
+# подключается frontend/styles-b.css («Биржевой терминал»), а на <html>
+# ставится data-ab="B". Вариант липкий (cookie AB_TEST_COOKIE, TTL AB_TEST_TTL_DAYS)
+# и уходит в Я.Метрику параметром визита ym('params',{ab_design}) — отчёты
+# сегментируются по варианту. Боты/краулеры и выключенный тест → всегда A
+# (стабильная индексация, без сплита). Выключен по умолчанию — деплой без риска.
+AB_TEST_DESIGN = os.getenv("AB_TEST_DESIGN", "0") not in ("0", "false", "False", "")
+AB_TEST_COOKIE = os.getenv("AB_TEST_COOKIE", "sz_ab").strip() or "sz_ab"
+# доля варианта B, 0..1 (0.5 = поровну)
+AB_TEST_SPLIT = min(1.0, max(0.0, float(os.getenv("AB_TEST_SPLIT", "0.5"))))
+AB_TEST_TTL_DAYS = int(os.getenv("AB_TEST_TTL_DAYS", "90"))  # срок липкости варианта
+# Админский форс-предпросмотр: cookie ставит POST /api/dev/ab (только админ).
+# render_index уважает её ВСЕГДА (даже при выключенном тесте) и помечает вариант
+# как предпросмотр (в статистику Метрики не идёт).
+AB_TEST_FORCE_COOKIE = os.getenv("AB_TEST_FORCE_COOKIE", "sz_ab_force").strip() or "sz_ab_force"
 
 # --- Расчёт дерева крафта ---
 # На демо-API (лимит ~2 запроса/с) глубина×ветвление = долгий холодный запрос.

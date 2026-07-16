@@ -10,6 +10,17 @@ function ymGoal(name) {
   try { if (window.ym) ym(YM_ID, "reachGoal", name); } catch (e) { /* счётчик не загрузился */ }
 }
 
+// A/B-тест дизайна: сервер проставил вариант в <html data-ab="A|B"> (только когда
+// тест включён). Шлём его параметром визита — в Метрике все отчёты (глубина, время,
+// отказы) сегментируются условием «Параметры визита → ab_design = A/B».
+// ym-заглушка в <head> ставится синхронно и очередит вызов до загрузки счётчика.
+(function reportAbVariant() {
+  const ab = document.documentElement.getAttribute("data-ab");
+  if (!ab) return;
+  if (document.documentElement.hasAttribute("data-ab-preview")) return;  // админский предпросмотр — мимо статистики
+  try { if (window.ym) ym(YM_ID, "params", { ab_design: ab }); } catch (e) { /* счётчик не загрузился */ }
+})();
+
 // ---------- History API-роутинг: реальные пути вместо #hash ----------
 // navigate(path) — переход по SPA (pushState), route() читает location.pathname.
 function navigate(path, { replace = false } = {}) {
@@ -871,7 +882,7 @@ async function loadDashboard() {
       fetch(api("/emission")).then((r) => r.json()).catch(() => null),
       fetch(api("/sales/top?n=12")).then((r) => r.json()).catch(() => null),
       fetch(api("/fuel/top?n=20")).then((r) => r.json()).catch(() => null),
-      fetch(api("/patches?limit=3")).then((r) => r.json()).catch(() => null),
+      fetch(api("/patches?limit=5")).then((r) => r.json()).catch(() => null),
       fetch(api("/build/daily")).then((r) => r.json()).catch(() => null),
     ]);
     home.dataset.ts = Date.now();
@@ -911,7 +922,7 @@ function emissionBody(em) {
     head = `<div class="em-since"><span class="em-ago" data-ts="${hist[0]}">…</span></div>
       <div class="em-sub">С ПОСЛЕДНЕГО ВЫБРОСА</div>`;
   }
-  const rows = hist.slice(0, 3).map((t) =>
+  const rows = hist.slice(0, 13).map((t) =>
     `<div class="em-row">☢ ${fmtMsk(t)}</div>`).join("");
   return `${head}<div class="em-hist"><div class="dash-grp">ПОСЛЕДНИЕ ВЫБРОСЫ</div>${rows}</div>`;
 }
@@ -1069,7 +1080,7 @@ function renderDashboard(top, art, watch, em, sales, fuelTop, patches, daily) {
   let trends = "";
   if (art && ((art.up || []).length || (art.down || []).length)) {
     const grp = (t, list) => (list && list.length)
-      ? `<div class="dash-grp">${t}</div>` + list.slice(0, 3).map(dashArtRow).join("") : "";
+      ? `<div class="dash-grp">${t}</div>` + list.slice(0, 6).map(dashArtRow).join("") : "";
     trends = grp("РАСТУТ", art.up) + grp("ПАДАЮТ", art.down);
   } else trends = `<div class="empty-sm">БИРЖА НАКАПЛИВАЕТ ЗАМЕРЫ — СКОРО ПОЯВЯТСЯ ТРЕНДЫ.</div>`;
 
@@ -1427,8 +1438,11 @@ function mkModalClose() {
   syncModalScroll();
 }
 
-// ---------- общий модал разделов (бартер, обменки) ----------
+// ---------- общий модал разделов (бартер, обменки, квесты) ----------
+let gModalCleanup = null;   // хук закрытия (квесты убивают Leaflet-миникарту)
+
 function gModalOpen(html) {
+  if (gModalCleanup) { const f = gModalCleanup; gModalCleanup = null; f(); }
   $("gModalBody").innerHTML = html;
   const m = $("gModal");
   m.classList.remove("hidden");
@@ -1437,6 +1451,7 @@ function gModalOpen(html) {
 }
 
 function gModalClose() {
+  if (gModalCleanup) { const f = gModalCleanup; gModalCleanup = null; f(); }
   $("gModal").classList.add("hidden");
   syncModalScroll();
 }
@@ -1732,8 +1747,19 @@ const CAT_RU = {
 const catName = (c) => CAT_RU[c] || String(c || "").toUpperCase();
 const CUR_RU = { money: "₽", sleeves: "ГИЛЬЗ" };
 
-let btState = { settlement: "", cat: "", maxLevel: 0, pure: false, q: "", shown: 60 };
+let btState = { settlement: "", cat: "", maxLevel: 0, pure: false, q: "", rank: "", shown: 60 };
 let btTimer = null;
+let btLastRows = [];   // отфильтрованный набор последнего ответа — для «выбрать всё»
+
+// корзина мультивыбора: id -> qty, переживает перезагрузку (localStorage)
+let btSel = new Map();
+try {
+  btSel = new Map(Object.entries(JSON.parse(localStorage.getItem("bt_basket") || "{}"))
+    .map(([id, q]) => [id, Math.max(1, Math.min(99, +q || 1))]));
+} catch (e) { /* битый JSON — начинаем с пустой */ }
+const btSelSave = () => {
+  try { localStorage.setItem("bt_basket", JSON.stringify(Object.fromEntries(btSel))); } catch (e) {}
+};
 
 async function openBarter() {
   home.classList.add("hidden");
@@ -1752,6 +1778,7 @@ async function refreshBarter(full = false) {
   if (btState.maxLevel) p.set("max_level", btState.maxLevel);
   if (btState.pure) p.set("pure", "1");
   if (btState.q) p.set("q", btState.q);
+  if (btState.rank) p.set("rank", btState.rank);
   let d;
   try {
     d = await fetch(api(`/barter/top?${p}`)).then((r) => r.json());
@@ -1760,10 +1787,15 @@ async function refreshBarter(full = false) {
     return;
   }
   if (location.pathname !== "/barter") return;
+  btLastRows = d.rows;
   if (full) renderBarter(d);
   $("btBody").innerHTML = btRows(d.rows);
   $("btCount").textContent = `${d.total} ОБМЕНОВ · КОМИССИЯ АУКА ${d.fee_pct}% УЧТЕНА`;
+  const all = $("btSelAll");
+  if (all) all.textContent = `ВЫБРАТЬ ВСЁ (${d.total})`;
   wireBtRows(openBarterModal);
+  wireBtSel();
+  btSelBar();
   btMore(d.rows);
 }
 
@@ -1778,12 +1810,13 @@ function btRows(rows) {
     const places = r.n_places > 1
       ? ` <span class="bt-more-place" title="Доступно ещё в ${r.n_places - 1} — детали в обмене">+ ещё ${r.n_places - 1}</span>` : "";
     return `<tr class="brt-row" data-id="${r.id}">
+      <td class="bt-selc"><input type="checkbox" class="bt-selbox" data-id="${r.id}" ${btSel.has(r.id) ? "checked" : ""}></td>
       <td><div class="bt-item"><img loading="lazy" src="${asset(r.icon)}" alt="">
         <span class="nm" style="color:${rank(r.color).color}">${escapeHtml(r.name)}</span>${missing}${cur}</div></td>
       <td class="bt-place">${escapeHtml(r.settlement_name)}${r.level ? ` <span class="lv">УР.${r.level}</span>` : ""}${places}</td>
       <td class="r">${cost}</td>
     </tr>`;
-  }).join("") || `<tr><td colspan="3" class="empty-sm">НИЧЕГО НЕ НАЙДЕНО ПО ФИЛЬТРАМ.</td></tr>`;
+  }).join("") || `<tr><td colspan="4" class="empty-sm">НИЧЕГО НЕ НАЙДЕНО ПО ФИЛЬТРАМ.</td></tr>`;
 }
 
 function btMore(rows) {
@@ -1798,6 +1831,8 @@ function renderBarter(d) {
     list.map((s) => `<option value="${s.v}" ${cur === s.v ? "selected" : ""}>${escapeHtml(s.t)}</option>`).join("");
   const setl = (d.settlements || []).map((s) => ({ v: s.key, t: s.name }));
   const lvls = [1, 2, 3, 4, 5, 6, 7].map((v) => ({ v: String(v), t: `БАЗА ДО УР.${v}` }));
+  const ranks = ["RANK_NEWBIE", "RANK_STALKER", "RANK_VETERAN", "RANK_MASTER", "RANK_LEGEND"]
+    .map((v) => ({ v, t: `РАНГ: ${RANKS[v].label}` }));
   // разделы по категориям результата — табами, как вкладки внутри раздела
   const cats = ["", ...(d.categories || [])];
   const catTabs = cats.map((c) => `<button class="bt-cat ${btState.cat === c ? "on" : ""}"
@@ -1811,18 +1846,26 @@ function renderBarter(d) {
     <div class="bt-filters">
       <select id="btSettle">${opts(setl, btState.settlement, "ВСЕ ПОСЕЛЕНИЯ")}</select>
       <select id="btLevel">${opts(lvls, btState.maxLevel ? String(btState.maxLevel) : "", "ЛЮБОЙ УРОВЕНЬ")}</select>
+      <select id="btRank">${opts(ranks, btState.rank, "ЛЮБОЙ РАНГ")}</select>
       <label class="bt-pure"><input type="checkbox" id="btPure" ${btState.pure ? "checked" : ""}> БЕЗ ФАРМА</label>
+      <button id="btSelAll" class="bt-selall">ВЫБРАТЬ ВСЁ (${d.total})</button>
       <div class="search-box bt-search"><div class="search-prompt">&gt;_</div>
         <input id="btQ" type="search" autocomplete="off" placeholder="ФИЛЬТР ПО НАЗВАНИЮ…" value="${escapeHtml(btState.q)}"></div>
     </div>
     <div class="bt-note">СТОИМОСТЬ = ДЕНЬГИ ТОРГОВЦУ + ЗАКУПКА ВХОДОВ НА АУКЕ (ТРЕЙД-ИН РАСКРЫВАЕТСЯ РЕКУРСИВНО).
-      «ФАРМ» — ВХОДЫ, КОТОРЫХ НЕТ НА АУКЕ (КВЕСТОВЫЕ/ЖЕТОНЫ). КЛИК ПО СТРОКЕ — ДЕТАЛИ ОБМЕНА.</div>
+      «ФАРМ» — ВХОДЫ, КОТОРЫХ НЕТ НА АУКЕ (КВЕСТОВЫЕ/ЖЕТОНЫ). КЛИК ПО СТРОКЕ — ДЕТАЛИ ОБМЕНА.
+      ГАЛОЧКА — В КОРЗИНУ: СУММАРНАЯ СТОИМОСТЬ НЕСКОЛЬКИХ ОБМЕНОВ СРАЗУ.</div>
     <div class="bt-wrap"><table class="bt-table">
-      <thead><tr><th style="width:48%">ПРЕДМЕТ</th><th style="width:32%">ГДЕ</th>
-        <th class="r" style="width:20%">СТОИМОСТЬ</th></tr></thead>
+      <thead><tr><th class="bt-selc" style="width:34px"></th><th style="width:46%">ПРЕДМЕТ</th>
+        <th style="width:30%">ГДЕ</th><th class="r" style="width:20%">СТОИМОСТЬ</th></tr></thead>
       <tbody id="btBody"></tbody>
     </table></div>
     <button id="btMore" class="bt-more hidden">ПОКАЗАТЬ ЕЩЁ</button>
+    <div id="btSelBar" class="bt-selbar hidden">
+      <span>В КОРЗИНЕ: <b id="btSelN">0</b></span>
+      <button id="btSelCalc" class="bt-selcalc">ПОСЧИТАТЬ ИТОГО ▸</button>
+      <button id="btSelClear" class="bt-selclear">ОЧИСТИТЬ</button>
+    </div>
   </div>`;
   page.querySelectorAll(".bt-cat").forEach((b) => b.addEventListener("click", () => {
     btState.cat = b.dataset.cat; btState.shown = 60;
@@ -1831,17 +1874,139 @@ function renderBarter(d) {
   }));
   $("btSettle").addEventListener("change", (e) => { btState.settlement = e.target.value; btState.shown = 60; refreshBarter(); });
   $("btLevel").addEventListener("change", (e) => { btState.maxLevel = +e.target.value || 0; btState.shown = 60; refreshBarter(); });
+  $("btRank").addEventListener("change", (e) => { btState.rank = e.target.value; btState.shown = 60; refreshBarter(); });
   $("btPure").addEventListener("change", (e) => { btState.pure = e.target.checked; btState.shown = 60; refreshBarter(); });
   $("btQ").addEventListener("input", (e) => {
     clearTimeout(btTimer);
     btTimer = setTimeout(() => { btState.q = e.target.value.trim(); btState.shown = 60; refreshBarter(); }, 250);
   });
+  // «выбрать всё» — весь отфильтрованный набор (не только показанная страница)
+  $("btSelAll").addEventListener("click", () => {
+    btLastRows.slice(0, 300).forEach((r) => { if (!btSel.has(r.id)) btSel.set(r.id, 1); });
+    btSelSave();
+    btSelSync();
+  });
+  $("btSelClear").addEventListener("click", () => {
+    btSel.clear();
+    btSelSave();
+    btSelSync();
+  });
+  $("btSelCalc").addEventListener("click", openBasketModal);
+  btSelBar();
+}
+
+// ---------- корзина: галочки в списке + плавающая панель итога ----------
+function wireBtSel() {
+  page.querySelectorAll(".bt-selbox").forEach((cb) => {
+    cb.addEventListener("click", (e) => e.stopPropagation());  // не открывать модал строки
+    cb.addEventListener("change", () => {
+      if (cb.checked) btSel.set(cb.dataset.id, btSel.get(cb.dataset.id) || 1);
+      else btSel.delete(cb.dataset.id);
+      btSelSave();
+      btSelBar();
+    });
+  });
+}
+
+function btSelSync() {
+  // галочки видимых строк + панель — под текущее состояние корзины
+  page.querySelectorAll(".bt-selbox").forEach((cb) => { cb.checked = btSel.has(cb.dataset.id); });
+  btSelBar();
+}
+
+function btSelBar() {
+  const bar = $("btSelBar");
+  if (!bar) return;
+  bar.classList.toggle("hidden", !btSel.size);
+  const n = $("btSelN");
+  if (n) n.textContent = btSel.size;
 }
 
 function wireBtRows(open) {
   // клик по строке раздела открывает модал СВОЕГО раздела (не карточку крафта)
   page.querySelectorAll(".brt-row[data-id]").forEach((r) =>
     r.addEventListener("click", () => { open(r.dataset.id); }));
+}
+
+// ---------- модал корзины: итог по выбранным бартерам ----------
+async function openBasketModal() {
+  if (!btSel.size) return;
+  gModalOpen(`<div class="spinner">// СЧИТАЕМ КОРЗИНУ</div>`);
+  let d;
+  try {
+    d = await fetch(api("/barter/basket"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ items: [...btSel].map(([id, qty]) => ({ id, qty })) }),
+    }).then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); });
+  } catch (e) {
+    $("gModalBody").innerHTML = `<div class="empty">[!] ОШИБКА СЕТИ</div>`;
+    return;
+  }
+  const nBarter = d.items.filter((it) => !it.no_barter).reduce((s, it) => s + it.qty, 0);
+  const itemRows = d.items.map((it) => {
+    const cost = it.no_barter ? `<span class="bt-farm">НЕТ БАРТЕРА</span>`
+      : it.cost != null ? `${fmt(it.cost)} ₽`
+      : (it.cost_partial ? `${fmt(it.cost_partial)} ₽ + ФАРМ` : `<span class="bt-farm">ФАРМ</span>`);
+    const cur = !it.no_barter && it.currency !== "money" && it.money
+      ? `<span class="bt-cur">${fmt(it.money * it.qty)} ${CUR_RU[it.currency] || it.currency.toUpperCase()}</span>` : "";
+    const missing = (it.missing || []).length
+      ? `<span class="bt-miss" title="${escapeHtml(it.missing.join(", "))}">+${it.missing.length} ФАРМ</span>` : "";
+    const place = it.no_barter ? "—"
+      : `${escapeHtml(it.settlement_name)}${it.level ? ` <span class="lv">УР.${it.level}</span>` : ""}`;
+    return `<tr>
+      <td><div class="bt-item"><img loading="lazy" src="${asset(it.icon)}" alt="">
+        <span class="nm ilink" data-id="${it.id}" style="color:${rank(it.color).color}">${escapeHtml(it.name)}</span>${missing}${cur}</div></td>
+      <td class="r"><span class="bk-qty">
+        <button class="bk-dec" data-id="${it.id}" title="Меньше">−</button><b>${it.qty}</b>
+        <button class="bk-inc" data-id="${it.id}" title="Больше">+</button>
+        <button class="bk-del" data-id="${it.id}" title="Убрать из корзины">✕</button></span></td>
+      <td class="bt-place">${place}</td>
+      <td class="r">${cost}</td></tr>`;
+  }).join("");
+  const resRows = (d.resources || []).map((r) => `<tr class="brt-row" data-id="${r.id}">
+      <td><div class="bt-item"><img loading="lazy" src="${asset(r.icon)}" alt="">
+        <span class="nm" style="color:${rank(r.color).color}">${escapeHtml(r.name)}</span></div></td>
+      <td class="r">${fmt(r.amount)}</td>
+      <td class="r">${r.farm && !r.cost ? '<span class="bt-farm">ФАРМ</span>' : fmt(r.cost) + " ₽"}</td></tr>`).join("");
+  const moneyRows = (d.money || []).map((m) => `<tr>
+      <td><div class="bt-item"><span class="nm">ДЕНЬГИ ТОРГОВЦАМ · ${escapeHtml((m.name || m.currency).toUpperCase())}</span></div></td>
+      <td class="r"></td>
+      <td class="r">${fmt(m.amount)} ${m.currency === "money" ? "₽" : (CUR_RU[m.currency] || "")}</td></tr>`).join("");
+  const foreign = (d.money || []).filter((m) => m.currency !== "money");
+  $("gModalBody").innerHTML = `
+    <div class="gm-head">
+      <div class="gm-title">КОРЗИНА БАРТЕРОВ · ${nBarter} ${nBarter === 1 ? "ОБМЕН" : nBarter < 5 ? "ОБМЕНА" : "ОБМЕНОВ"}</div>
+    </div>
+    <div class="gm-stats">ПО КАЖДОМУ ПРЕДМЕТУ ВЗЯТ ЛУЧШИЙ ОФФЕР (СПЕРВА ПОЛНОСТЬЮ ПОКУПАЕМЫЕ, ДАЛЬШЕ ДЕШЕВЛЕ). КЛИК ПО НАЗВАНИЮ — ДОСЬЕ ОБМЕНА.</div>
+    <div class="bt-wrap"><table class="bt-table bk-tbl">
+      <thead><tr><th style="width:42%">ПРЕДМЕТ</th><th class="r" style="width:18%">КОЛ-ВО</th>
+        <th style="width:22%">ГДЕ</th><th class="r" style="width:18%">СТОИМОСТЬ</th></tr></thead>
+      <tbody>${itemRows}</tbody>
+    </table></div>
+    <div class="reqs-lbl">ЗАКУПКА РЕСУРСОВ · ВСЕГО ПО КОРЗИНЕ</div>
+    <div class="bt-wrap"><table class="bt-table chain-tbl">
+      <thead><tr><th style="width:60%">РЕСУРС</th><th class="r" style="width:20%">КОЛ-ВО</th><th class="r" style="width:20%">ЦЕНА</th></tr></thead>
+      <tbody>${resRows || ""}${moneyRows}${!resRows && !moneyRows ? `<tr><td colspan="3" class="empty-sm">НЕЧЕГО ЗАКУПАТЬ.</td></tr>` : ""}</tbody>
+    </table></div>
+    <div class="chain-total">ИТОГО (РЕСУРСЫ + ДЕНЬГИ): <b>${fmt(d.total)} ₽</b>${foreign.map((m) => ` + <b>${fmt(m.amount)} ${CUR_RU[m.currency] || m.currency.toUpperCase()}</b>`).join("")}${d.has_farm ? ` <span class="bt-farm">+ ФАРМ-ВХОДЫ (НЕТ НА АУКЕ)</span>` : ""}</div>`;
+  const upd = (id, delta) => {
+    const q = (btSel.get(id) || 1) + delta;
+    if (q < 1) return;
+    btSel.set(id, Math.min(99, q));
+    btSelSave();
+    openBasketModal();  // перечёт с сервера
+  };
+  $("gModalBody").querySelectorAll(".bk-inc").forEach((b) => b.addEventListener("click", () => upd(b.dataset.id, 1)));
+  $("gModalBody").querySelectorAll(".bk-dec").forEach((b) => b.addEventListener("click", () => upd(b.dataset.id, -1)));
+  $("gModalBody").querySelectorAll(".bk-del").forEach((b) => b.addEventListener("click", () => {
+    btSel.delete(b.dataset.id);
+    btSelSave();
+    btSelSync();
+    if (btSel.size) openBasketModal(); else gModalClose();
+  }));
+  $("gModalBody").querySelectorAll(".ilink[data-id], .brt-row[data-id]").forEach((el) =>
+    el.addEventListener("click", () => { openBarterModal(el.dataset.id); }));
 }
 
 // ---------- модал бартера: все способы обмена предмета ----------
@@ -2148,6 +2313,76 @@ async function openPatch(pid) {
   renderComments(`patch:${pid}`);
 }
 
+// ---------- гайды (авторские статьи; тело в стиле патчей) ----------
+const guideTags = (tags) => (tags && tags.length)
+  ? `<div class="guide-tags">${tags.map((t) => `<span class="guide-tag">${escapeHtml(t)}</span>`).join("")}</div>`
+  : "";
+
+async function openGuides() {
+  home.classList.add("hidden");
+  detail.classList.add("hidden");
+  results.innerHTML = "";
+  page.classList.remove("hidden");
+  page.innerHTML = `<div class="spinner">// ЗАГРУЗКА ГАЙДОВ</div>`;
+  window.scrollTo(0, 0);
+  let d;
+  try {
+    d = await fetch(api("/guides")).then((r) => r.json());
+  } catch (e) {
+    page.innerHTML = `<div class="empty">[!] ОШИБКА СЕТИ</div>`;
+    return;
+  }
+  if (location.pathname !== "/guides") return;
+  const cards = (d.items || []).map((g) => `
+    <a class="guide-card" href="/guides/${g.slug}">
+      ${g.cover ? `<img class="guide-cover" loading="lazy" src="${escapeHtml(g.cover)}" alt="">` : ""}
+      <div class="guide-card-b">
+        <div class="guide-card-t">${escapeHtml(g.title)}</div>
+        <div class="guide-card-d">${fmtPatchDate(g.created_at)}</div>
+        <div class="guide-card-a">${escapeHtml(g.description || "")}</div>
+        ${guideTags(g.tags)}
+      </div>
+    </a>`).join("");
+  page.innerHTML = `<div class="btmod">
+    <div class="section-head">
+      <div class="section-title">▸ ГАЙДЫ · РАЗБОРЫ ПО ИГРЕ</div>
+      <div class="section-note">ЗАДАНИЯ · КРАФТ · ЭКОНОМИКА · СНАРЯЖЕНИЕ · СОБЫТИЯ</div>
+    </div>
+    <div class="guide-list">${cards || `<div class="empty-sm">ГАЙДОВ ПОКА НЕТ — СКОРО ПОЯВЯТСЯ.</div>`}</div>
+  </div>`;
+}
+
+async function openGuide(slug) {
+  home.classList.add("hidden");
+  detail.classList.add("hidden");
+  results.innerHTML = "";
+  page.classList.remove("hidden");
+  page.innerHTML = `<div class="spinner">// ЗАГРУЗКА ГАЙДА</div>`;
+  window.scrollTo(0, 0);
+  let g;
+  try {
+    const r = await fetch(api(`/guides/${encodeURIComponent(slug)}`));
+    if (!r.ok) throw new Error();
+    g = await r.json();
+  } catch (e) {
+    page.innerHTML = `<div class="empty">[!] ГАЙД НЕ НАЙДЕН</div>`;
+    return;
+  }
+  if (location.pathname !== `/guides/${slug}`) return;
+  page.innerHTML = `<div class="btmod">
+    <button class="back" id="guideBack">◂ ВСЕ ГАЙДЫ</button>
+    <article class="patch-article guide-article">
+      ${guideTags(g.tags)}
+      <h1>${escapeHtml(g.title)}</h1>
+      <div class="patch-meta">${fmtPatchDate(g.created_at)} · ГАЙД · STALZONE (STALCRAFT)</div>
+      <div class="patch-body">${g.html}</div>
+    </article>
+    <div id="comments"></div>
+  </div>`;
+  $("guideBack").addEventListener("click", () => { navigate("/guides"); });
+  renderComments(`guide:${slug}`);
+}
+
 // ---------- комментарии под статьями ----------
 async function renderComments(pageKey) {
   const host = $("comments");
@@ -2202,6 +2437,235 @@ async function renderComments(pageKey) {
     await fetch(api(`/comments/${b.dataset.id}`), { method: "DELETE" }).catch(() => {});
     renderComments(pageKey);
   }));
+}
+
+// ---------- квесты: блок-схемы линеек (сталкеры/бандиты/группировки) ----------
+// Данные — /api/quests (мета) + /api/quests/{id} (прохождение). Раскладка
+// автоматическая: уровень = длина цепочки родителей, стрелки — SVG-безье.
+let questData = null;                                  // кэш ответа /api/quests
+let questFaction = localStorage.getItem("sz_quest_f") || "stalkers";
+let qmMapCleanup = null;                               // Leaflet-миникарта модала
+let qmEpoch = 0;                                       // гонки: модал переоткрыли/закрыли
+
+const questFactionOf = (id) =>
+  (questData && questData.factions.find((f) => f.id === id))
+  || { id, name: id, color: "#7ce68e" };
+
+async function openQuests(selId) {
+  home.classList.add("hidden");
+  detail.classList.add("hidden");
+  results.innerHTML = "";
+  page.classList.remove("hidden");
+  page.innerHTML = `<div class="spinner">// ЗАГРУЗКА КВЕСТОВ</div>`;
+  window.scrollTo(0, 0);
+  let d;
+  try {
+    d = await fetch(api("/quests")).then((r) => r.json());
+  } catch (e) {
+    page.innerHTML = `<div class="empty">[!] ОШИБКА СЕТИ</div>`;
+    return;
+  }
+  if (!location.pathname.startsWith("/quests")) return;
+  questData = d;
+  if (selId != null) {          // диплинк /quests/{id} — открыть нужную линейку
+    const q = d.items.find((x) => x.id === selId);
+    if (q) questFaction = q.faction;
+  }
+  if (!d.factions.some((f) => f.id === questFaction)) questFaction = d.factions[0].id;
+  renderQuests();
+  if (selId != null) openQuestModal(selId);
+}
+
+function renderQuests() {
+  const d = questData;
+  const tabs = d.factions.map((f) => {
+    const n = d.items.filter((q) => q.faction === f.id).length;
+    return `<button class="qst-tab${f.id === questFaction ? " on" : ""}" data-f="${f.id}"
+      style="--fc:${f.color}">${escapeHtml(f.name.toUpperCase())}${n ? ` <span>${n}</span>` : ""}</button>`;
+  }).join("");
+  page.innerHTML = `<div class="btmod">
+    <div class="section-head">
+      <div class="section-title">▸ КВЕСТЫ · СХЕМЫ ЛИНЕЕК</div>
+      <div class="section-note">КЛИК ПО КВЕСТУ — ПРОХОЖДЕНИЕ, НАГРАДА И ТОЧКИ НА КАРТЕ</div>
+    </div>
+    <div class="qst-tabs">${tabs}</div>
+    <div class="qst-wrap" id="qstWrap"></div>
+    <div class="map-legend">Стрелка — «открывается после». Блоки с
+      <b style="color:var(--amber)">янтарной</b> рамкой — основная линейка, серые — побочные.
+      📍 — у квеста есть точки на карте.${d.is_admin ? " Пунктирные — черновики (видны только админам)." : ""}</div>
+  </div>`;
+  page.querySelectorAll(".qst-tab").forEach((b) => b.addEventListener("click", () => {
+    questFaction = b.dataset.f;
+    localStorage.setItem("sz_quest_f", questFaction);
+    renderQuests();
+  }));
+  renderQuestChart(d.items.filter((q) => q.faction === questFaction));
+}
+
+function renderQuestChart(items) {
+  const wrap = $("qstWrap");
+  if (!items.length) {
+    wrap.innerHTML = `<div class="empty-sm" style="padding:24px 10px">ЛИНЕЙКА ЕЩЁ ЗАПОЛНЯЕТСЯ — КВЕСТЫ ПОЯВЯТСЯ ПОЗЖЕ.</div>`;
+    return;
+  }
+  const byId = new Map(items.map((q) => [q.id, q]));
+  // уровень (колонка) = самая длинная цепочка родителей внутри линейки
+  const level = new Map();
+  const lvl = (q, stack) => {
+    if (level.has(q.id)) return level.get(q.id);
+    if (stack.has(q.id)) return 0;                    // защита от цикла в данных
+    stack.add(q.id);
+    const ps = (q.parents || []).filter((p) => byId.has(p));
+    const l = ps.length ? Math.max(...ps.map((p) => lvl(byId.get(p), stack))) + 1 : 0;
+    stack.delete(q.id);
+    level.set(q.id, l);
+    return l;
+  };
+  items.forEach((q) => lvl(q, new Set()));
+  // строка внутри колонки: sort админа, потом ближе к родителям, основные выше
+  const cols = [];
+  items.forEach((q) => (cols[level.get(q.id)] ||= []).push(q));
+  const row = new Map();
+  cols.forEach((col) => {
+    const pr = (q) => {
+      const ps = (q.parents || []).filter((p) => row.has(p));
+      return ps.length ? ps.reduce((s, p) => s + row.get(p), 0) / ps.length : 1e9;
+    };
+    col.sort((a, b) => (a.sort - b.sort) || (pr(a) - pr(b))
+      || (a.kind === "main" ? 0 : 1) - (b.kind === "main" ? 0 : 1) || (a.id - b.id));
+    col.forEach((q, i) => row.set(q.id, i));
+  });
+
+  const W = 190, H = 72, GX = 90, GY = 20, PAD = 10;
+  const pos = (q) => ({ x: PAD + level.get(q.id) * (W + GX),
+                        y: PAD + row.get(q.id) * (H + GY) });
+  const cw = PAD * 2 + cols.length * (W + GX) - GX;
+  const ch = PAD * 2 + Math.max(...cols.map((c) => c.length)) * (H + GY) - GY;
+
+  let edges = "";
+  items.forEach((q) => (q.parents || []).forEach((pid) => {
+    if (!byId.has(pid)) return;
+    const a = pos(byId.get(pid)), b = pos(q);
+    const x1 = a.x + W, y1 = a.y + H / 2, x2 = b.x, y2 = b.y + H / 2;
+    const mx = (x1 + x2) / 2;
+    edges += `<path d="M${x1} ${y1} C${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}"
+      class="qst-edge${q.kind === "side" ? " is-side" : ""}"/>
+      <circle cx="${x2}" cy="${y2}" r="2.5" class="qst-dot${q.kind === "side" ? " is-side" : ""}"/>`;
+  }));
+
+  const nodes = items.map((q) => {
+    const p = pos(q);
+    // родители из другой линейки — маленькая метка ⇠ с подсказкой
+    const ext = (q.parents || [])
+      .filter((pid) => !byId.has(pid))
+      .map((pid) => questData.items.find((x) => x.id === pid)).filter(Boolean);
+    const extHtml = ext.length
+      ? `<div class="qst-ext" title="После: ${escapeHtml(ext.map((x) =>
+          `${x.title} (${questFactionOf(x.faction).name})`).join(", "))}">⇠</div>` : "";
+    return `<div class="qst-node is-${q.kind}${q.published ? "" : " draft"}" data-id="${q.id}"
+      style="left:${p.x}px;top:${p.y}px;width:${W}px;height:${H}px"
+      title="${escapeHtml(q.summary || q.title)}">
+      <div class="qst-kind">${q.kind === "main" ? "ОСНОВНОЙ" : "ПОБОЧНЫЙ"}${q.published ? "" : " · ЧЕРНОВИК"}</div>
+      <div class="qst-name">${escapeHtml(q.title)}</div>
+      ${q.has_map ? `<div class="qst-map-i">📍</div>` : ""}${extHtml}
+    </div>`;
+  }).join("");
+
+  wrap.innerHTML = `<div class="qst-canvas" style="width:${cw}px;height:${ch}px">
+    <svg width="${cw}" height="${ch}" viewBox="0 0 ${cw} ${ch}">${edges}</svg>${nodes}</div>`;
+  wrap.querySelectorAll(".qst-node").forEach((n) =>
+    n.addEventListener("click", () => openQuestModal(+n.dataset.id)));
+}
+
+// ---------- модал квеста: прохождение, награда, миникарта с точками ----------
+async function openQuestModal(qid) {
+  let q;
+  try {
+    const r = await fetch(api(`/quests/${qid}`));
+    if (!r.ok) throw new Error();
+    q = await r.json();
+  } catch (e) { return; }
+  if (!questData || !location.pathname.startsWith("/quests")) return;
+  const f = questFactionOf(q.faction);
+  const parents = (q.parents || [])
+    .map((pid) => questData.items.find((x) => x.id === pid)).filter(Boolean);
+  const hasMap = q.map_layer && (q.map_points || []).length;
+  gModalOpen(`<div class="qm">
+    <div class="qm-badges">
+      <span class="qm-badge" style="--fc:${f.color}">${escapeHtml(f.name.toUpperCase())}</span>
+      <span class="qm-badge is-${q.kind}">${q.kind === "main" ? "ОСНОВНОЙ КВЕСТ" : "ПОБОЧНЫЙ КВЕСТ"}</span>
+      ${q.published ? "" : `<span class="qm-badge draft">ЧЕРНОВИК</span>`}
+    </div>
+    <h2 class="qm-title">${escapeHtml(q.title)}</h2>
+    ${parents.length ? `<div class="qm-after">ОТКРЫВАЕТСЯ ПОСЛЕ: ${parents.map((p) =>
+      `<a class="qm-plink" data-id="${p.id}" href="/quests/${p.id}">${escapeHtml(p.title)}</a>`).join(" · ")}</div>` : ""}
+    ${q.reward ? `<div class="qm-reward"><span>НАГРАДА</span>${escapeHtml(q.reward)}</div>` : ""}
+    <div class="patch-body qm-body">${q.html || `<p style="color:var(--dim)">Прохождение ещё пишется — загляни позже.</p>`}</div>
+    ${hasMap ? `<div class="qm-map-h">ТОЧКИ КВЕСТА НА КАРТЕ · наведи на номер</div>
+      <div class="qm-map" id="qmMap"></div>` : ""}
+    ${questData.is_admin ? `<div class="qm-admin"><a href="/dev/quests?edit=${q.id}">✎ РЕДАКТИРОВАТЬ КВЕСТ</a></div>` : ""}
+  </div>`);
+  if (location.pathname.startsWith("/quests"))
+    history.replaceState(null, "", `/quests/${q.id}`);   // диплинк для шаринга
+  const ep = ++qmEpoch;
+  gModalCleanup = () => {
+    qmEpoch++;
+    if (qmMapCleanup) { qmMapCleanup(); qmMapCleanup = null; }
+    document.documentElement.classList.remove("on-map");
+    if (location.pathname.startsWith("/quests/"))
+      history.replaceState(null, "", "/quests");
+  };
+  $("gModalBody").querySelectorAll(".qm-plink").forEach((a) =>
+    a.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();      // не отдаём SPA-роутеру — просто меняем модал
+      openQuestModal(+a.dataset.id);
+    }));
+  if (hasMap) initQuestModalMap(q, ep);
+  ymGoal("quest_open");
+}
+
+// Миникарта квеста в модале: тайлы нужного слоя + нумерованные точки.
+async function initQuestModalMap(q, ep) {
+  try {
+    if (!mapMeta) {
+      [mapMeta] = await Promise.all([
+        fetch(api("/map/meta")).then((r) => r.json()), ensureLeaflet()]);
+      MAP_CATS = mapMeta.categories || [];
+    } else {
+      await ensureLeaflet();
+    }
+  } catch (e) { return; }
+  if (ep !== qmEpoch || !$("qmMap")) return;   // модал уже закрыли/переоткрыли
+  const lm = mapMeta[q.map_layer];
+  if (!lm) return;
+  // десктопный zoom:1.2 сдвигает координаты Leaflet — на время модала снимаем
+  document.documentElement.classList.add("on-map");
+  const map = L.map("qmMap", {
+    crs: L.CRS.Simple, zoomSnap: 0.25, wheelPxPerZoomLevel: 90,
+    attributionControl: false, maxBoundsViscosity: 1.0,
+  });
+  const px = (x, y) => map.unproject([x, y], lm.max_zoom);
+  L.tileLayer(asset(lm.tile_url), {
+    tileSize: lm.tile_size,
+    minNativeZoom: lm.min_zoom, maxNativeZoom: lm.max_zoom,
+    bounds: L.latLngBounds(px(0, 0), px(lm.w, lm.h)), noWrap: true,
+  }).addTo(map);
+  map.setMaxBounds(L.latLngBounds(px(0, 0), px(lm.w, lm.h)));
+  map.setMaxZoom(lm.max_zoom);
+  (q.map_points || []).forEach((p, i) => {
+    const m = L.marker(px(p[0], p[1]), {
+      icon: L.divIcon({ className: "", html: `<div class="qm-pt">${i + 1}</div>`,
+                        iconSize: [24, 24], iconAnchor: [12, 12] }),
+      riseOnHover: true,
+    }).addTo(map);
+    if (p[2]) m.bindTooltip(`<b>${i + 1}.</b> ${escapeHtml(String(p[2]))}`,
+      { direction: "top", className: "mo-tooltip", opacity: 1 });
+  });
+  const b = L.latLngBounds((q.map_points || []).map((p) => px(p[0], p[1])));
+  map.fitBounds(b.pad(0.5), { maxZoom: lm.max_zoom - 1 });
+  qmMapCleanup = () => { map.remove(); };
+  setTimeout(() => { if (ep === qmEpoch) map.invalidateSize(); }, 60);
 }
 
 // ---------- обменки: монеты Перекупщика ----------
@@ -3240,8 +3704,8 @@ async function openMap(territoryId) {
 }
 
 // Общая инициализация Leaflet-вида (CRS.Simple, границы строго по изображению).
-function makeTileMap(layerMeta, viewBoundsPx) {
-  const map = L.map("mapView", {
+function makeTileMap(layerMeta, viewBoundsPx, elId = "mapView") {
+  const map = L.map(elId, {
     crs: L.CRS.Simple,
     zoomSnap: 0.25,
     wheelPxPerZoomLevel: 90,
@@ -3460,7 +3924,7 @@ function renderDevMap() {
       <div class="section-title">▸ ДЕВ · РЕДАКТОР КАРТЫ</div>
       <div class="section-note">Метки, области и линии для интерактивной карты Зоны</div>
     </div>
-    <div class="dev-subnav"><a class="on">КАРТА</a></div>
+    ${devSubnav("map")}
     <div class="maped-bar" id="mapedBar"></div>
     <div class="maped-wrap">
       <div class="map-view" id="mapView"></div>
@@ -3478,6 +3942,649 @@ function renderDevMap() {
   renderBar();
   updateHint();
   loadEditorObjects();
+}
+
+// ---------- DEV · A/B-тест: форс-предпросмотр варианта для админа ----------
+function openDevAb() {
+  if (mapCleanup) { mapCleanup(); mapCleanup = null; }
+  home.classList.add("hidden"); detail.classList.add("hidden"); results.innerHTML = "";
+  page.classList.remove("hidden");
+  window.scrollTo(0, 0);
+  if (!ME) { page.innerHTML = `<div class="mapmod"><div class="spinner">// ПРОВЕРКА ДОСТУПА</div></div>`; return; }
+  if (!ME.is_admin) {
+    page.innerHTML = `<div class="stub"><div class="stub-code">[ 403 ]</div>
+      <div class="stub-title">▸ ДОСТУП ТОЛЬКО ДЛЯ АДМИНОВ</div>
+      <a class="stub-back" href="/">◂ НА ГЛАВНУЮ</a></div>`;
+    return;
+  }
+  renderDevAb();
+}
+
+function renderDevAb() {
+  const cur = document.documentElement.getAttribute("data-ab");
+  const preview = document.documentElement.hasAttribute("data-ab-preview");
+  const state = !cur ? "НЕ НАЗНАЧЕН — тест выключен, показывается A"
+    : (preview ? `${cur} · ПРИНУДИТЕЛЬНО (предпросмотр)` : `${cur} · обычное назначение сплитом`);
+  page.innerHTML = `<div class="mapmod">
+    <div class="section-head">
+      <div class="section-title">▸ ДЕВ · A/B-ТЕСТ ДИЗАЙНА</div>
+      <div class="section-note">Форс-предпросмотр варианта для себя. На статистику Метрики не влияет
+        и обычных посетителей не касается — их сплит идёт как раньше.</div>
+    </div>
+    ${devSubnav("ab")}
+    <div class="devab">
+      <div class="devab-cur">ТЕКУЩИЙ ВАРИАНТ: <b>${escapeHtml(state)}</b></div>
+      <div class="devab-btns">
+        <button class="devab-btn ${cur === "A" && preview ? "on" : ""}" data-v="A">ПОКАЗАТЬ A · ТЕКУЩИЙ ДИЗАЙН</button>
+        <button class="devab-btn ${cur === "B" && preview ? "on" : ""}" data-v="B">ПОКАЗАТЬ B · ТОРГОВЫЙ ТЕРМИНАЛ</button>
+        <button class="devab-btn" data-v="off">СБРОС · КАК ОБЫЧНОМУ ЮЗЕРУ</button>
+      </div>
+      <div class="devab-note">Переключение ставит служебную cookie (только у тебя) и открывает главную с выбранным вариантом.</div>
+    </div>
+  </div>`;
+  page.querySelectorAll(".devab-btn").forEach((b) => b.addEventListener("click", async () => {
+    page.querySelectorAll(".devab-btn").forEach((x) => { x.disabled = true; });
+    try {
+      const r = await fetch(api("/dev/ab"), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ variant: b.dataset.v }),
+      });
+      if (!r.ok) throw new Error(r.status);
+      location.href = "/";                 // полная перезагрузка → сервер применит вариант
+    } catch (e) {
+      page.querySelectorAll(".devab-btn").forEach((x) => { x.disabled = false; });
+      const n = page.querySelector(".devab-note");
+      if (n) n.textContent = "НЕ УДАЛОСЬ ПЕРЕКЛЮЧИТЬ (нужны права админа). " + e;
+    }
+  }));
+}
+
+// ---------- панель форматирования HTML-полей (гайды, квесты) ----------
+// Выделяешь текст в textarea → жмёшь кнопку → тег оборачивает выделенное.
+// Без выделения вставляется заготовка с выделенным плейсхолдером — сразу печатай.
+const FMT_ACTIONS = [
+  { t: "h2", label: "H2 ЗАГОЛОВОК", hint: "Крупный заголовок раздела", block: true, ph: "Заголовок" },
+  { t: "h3", label: "H3 ПОДЗАГОЛОВОК", hint: "Подзаголовок внутри раздела", block: true, ph: "Подзаголовок" },
+  { t: "p", label: "¶ АБЗАЦ", hint: "Абзац текста", block: true, ph: "Текст абзаца" },
+  { t: "b", label: "Ж ЖИРНЫЙ", hint: "Жирный текст (Ctrl+B)", ph: "жирный" },
+  { t: "i", label: "К КУРСИВ", hint: "Курсив (Ctrl+I)", ph: "курсив" },
+  { t: "s", label: "ЗАЧЁРКНУТЫЙ", hint: "Зачёркнутый текст", ph: "зачёркнутый" },
+  { t: "ul", label: "• СПИСОК", hint: "Маркированный список: каждая строка выделения станет пунктом" },
+  { t: "ol", label: "1. НУМЕРАЦИЯ", hint: "Нумерованный список: каждая строка выделения станет пунктом" },
+  { t: "blockquote", label: "❝ ЦИТАТА", hint: "Врезка-цитата / совет (рамка слева)", block: true, ph: "Текст врезки" },
+  { t: "a", label: "🔗 ССЫЛКА", hint: "Ссылка — спросит адрес, выделенный текст станет текстом ссылки" },
+  { t: "img", label: "🖼 КАРТИНКА", hint: "Картинка по URL — спросит адрес (или загрузи файл кнопкой ниже)" },
+  { t: "hr", label: "— РАЗДЕЛИТЕЛЬ", hint: "Горизонтальная линия между блоками" },
+];
+
+// host — контейнер кнопок, ta — textarea, onChange — колбэк (обновить предпросмотр)
+function fmtToolbar(host, ta, onChange) {
+  const apply = (a) => {
+    const s = ta.selectionStart, e = ta.selectionEnd;
+    const sel = ta.value.slice(s, e);
+    let ins, cs = -1, ce = -1;                 // cs/ce — что выделить после вставки
+    if (a.t === "hr") {
+      ins = "\n<hr>\n";
+    } else if (a.t === "img") {
+      const url = prompt("Адрес картинки (URL):", "");
+      if (url == null || !url.trim()) return;
+      ins = `\n<img src="${url.trim()}" alt="">\n`;
+    } else if (a.t === "a") {
+      const url = prompt("Адрес ссылки (URL):", "https://");
+      if (url == null || !url.trim()) return;
+      const body = sel || "текст ссылки";
+      const pre = `<a href="${url.trim()}">`;
+      ins = `${pre}${body}</a>`;
+      if (!sel) { cs = pre.length; ce = cs + body.length; }
+    } else if (a.t === "ul" || a.t === "ol") {
+      const lines = (sel || "пункт списка").split("\n")
+        .map((l) => l.trim()).filter(Boolean);
+      ins = `\n<${a.t}>\n${lines.map((l) => `  <li>${l}</li>`).join("\n")}\n</${a.t}>\n`;
+    } else {
+      const body = sel || a.ph;
+      const pre = a.block ? `\n<${a.t}>` : `<${a.t}>`;
+      ins = `${pre}${body}</${a.t}>${a.block ? "\n" : ""}`;
+      if (!sel) { cs = pre.length; ce = cs + body.length; }
+    }
+    ta.setRangeText(ins, s, e, "end");
+    if (cs >= 0) { ta.selectionStart = s + cs; ta.selectionEnd = s + ce; }
+    ta.focus();
+    if (onChange) onChange();
+  };
+  host.classList.add("fmt-bar");
+  host.innerHTML = FMT_ACTIONS.map((a, i) =>
+    `<button type="button" class="fmt-btn" data-i="${i}" title="${escapeHtml(a.hint)}">${a.label}</button>`).join("")
+    + `<span class="fmt-tip">выдели текст → кнопка обернёт его в тег</span>`;
+  host.addEventListener("click", (ev) => {
+    const b = ev.target.closest(".fmt-btn");
+    if (b) apply(FMT_ACTIONS[+b.dataset.i]);
+  });
+  ta.addEventListener("keydown", (ev) => {
+    if (!(ev.ctrlKey || ev.metaKey) || ev.altKey) return;
+    const k = ev.key.toLowerCase();
+    if (k === "b" || k === "i") {
+      ev.preventDefault();
+      apply(FMT_ACTIONS.find((a) => a.t === k));
+    }
+  });
+}
+
+// ---------- ДЕВ · редактор гайдов (только админ) ----------
+const devSubnav = (on) => `<div class="dev-subnav">
+  <a href="/dev/map"${on === "map" ? ' class="on"' : ""}>КАРТА</a>
+  <a href="/dev/ab"${on === "ab" ? ' class="on"' : ""}>A/B-ТЕСТ</a>
+  <a href="/dev/guides"${on === "guides" ? ' class="on"' : ""}>ГАЙДЫ</a>
+  <a href="/dev/quests"${on === "quests" ? ' class="on"' : ""}>КВЕСТЫ</a>
+</div>`;
+
+const todayISO = () => new Date().toISOString().slice(0, 10);
+
+function devGate() {
+  if (mapCleanup) { mapCleanup(); mapCleanup = null; }
+  home.classList.add("hidden"); detail.classList.add("hidden"); results.innerHTML = "";
+  page.classList.remove("hidden");
+  window.scrollTo(0, 0);
+  if (!ME) { page.innerHTML = `<div class="mapmod"><div class="spinner">// ПРОВЕРКА ДОСТУПА</div></div>`; return false; }
+  if (!ME.is_admin) {
+    page.innerHTML = `<div class="stub"><div class="stub-code">[ 403 ]</div>
+      <div class="stub-title">▸ ДОСТУП ТОЛЬКО ДЛЯ АДМИНОВ</div>
+      <a class="stub-back" href="/">◂ НА ГЛАВНУЮ</a></div>`;
+    return false;
+  }
+  return true;
+}
+
+async function openDevGuides() {
+  if (!devGate()) return;
+  await renderDevGuidesList();
+}
+
+async function renderDevGuidesList() {
+  page.innerHTML = `<div class="mapmod"><div class="spinner">// ЗАГРУЗКА ГАЙДОВ</div></div>`;
+  let d;
+  try { d = await fetch(api("/admin/guides")).then((r) => r.json()); }
+  catch (e) { page.innerHTML = `<div class="empty">[!] ОШИБКА СЕТИ</div>`; return; }
+  if (location.pathname !== "/dev/guides") return;
+  const rows = (d.items || []).map((g) => `
+    <div class="gadm-row">
+      <div class="gadm-row-i">
+        <div class="gadm-row-t">${escapeHtml(g.title)}${g.published ? "" : ` <span class="gadm-draft">ЧЕРНОВИК</span>`}</div>
+        <div class="gadm-row-s">/guides/${escapeHtml(g.slug)} · ${escapeHtml(g.created_at || "")}</div>
+      </div>
+      <div class="gadm-row-a">
+        <a class="gadm-btn" href="/guides/${escapeHtml(g.slug)}" target="_blank" rel="noopener" title="Открыть">↗</a>
+        <button class="gadm-btn" data-edit="${escapeHtml(g.slug)}">РЕД.</button>
+        <button class="gadm-btn gadm-del" data-del="${escapeHtml(g.slug)}" title="Удалить">✕</button>
+      </div>
+    </div>`).join("");
+  page.innerHTML = `<div class="mapmod">
+    <div class="section-head">
+      <div class="section-title">▸ ДЕВ · ГАЙДЫ</div>
+      <div class="section-note">Создание и правка гайдов. Публикация — сразу на /guides, в sitemap и выдачу.</div>
+    </div>
+    ${devSubnav("guides")}
+    <button class="gadm-new" id="gadmNew">＋ НОВЫЙ ГАЙД</button>
+    <div class="gadm-list">${rows || `<div class="empty-sm">ГАЙДОВ ПОКА НЕТ.</div>`}</div>
+  </div>`;
+  $("gadmNew").addEventListener("click", () => renderDevGuideForm(null));
+  page.querySelectorAll("[data-edit]").forEach((b) =>
+    b.addEventListener("click", () => renderDevGuideForm(b.dataset.edit)));
+  page.querySelectorAll("[data-del]").forEach((b) =>
+    b.addEventListener("click", async () => {
+      if (!confirm(`Удалить гайд «${b.dataset.del}»? Страница уйдёт с сайта.`)) return;
+      await fetch(api(`/admin/guides/${b.dataset.del}`), { method: "DELETE" }).catch(() => {});
+      renderDevGuidesList();
+    }));
+}
+
+async function renderDevGuideForm(slug) {
+  let g = { slug: "", title: "", description: "", tags: [], cover: "", html: "",
+            created_at: todayISO(), published: true };
+  const isNew = !slug;
+  if (slug) {
+    try { g = await fetch(api(`/admin/guides/${slug}`)).then((r) => r.json()); }
+    catch (e) { alert("не удалось загрузить гайд"); return; }
+  }
+  if (location.pathname !== "/dev/guides") return;
+  page.innerHTML = `<div class="mapmod">
+    <div class="section-head">
+      <div class="section-title">▸ ДЕВ · ГАЙДЫ · ${isNew ? "НОВЫЙ" : "РЕДАКТИРОВАНИЕ"}</div>
+    </div>
+    ${devSubnav("guides")}
+    <div class="gform">
+      <label class="gform-l">АДРЕС СТРАНИЦЫ · SLUG (латиница, цифры, дефис)
+        <input id="gfSlug" value="${escapeHtml(g.slug)}" ${isNew ? "" : "readonly"}
+          placeholder="konvert-s-baksami" autocomplete="off"></label>
+      <div class="gform-url">URL: <b>/guides/<span id="gfUrl">${escapeHtml(g.slug || "…")}</span></b></div>
+      <label class="gform-l">ЗАГОЛОВОК
+        <input id="gfTitle" value="${escapeHtml(g.title)}" placeholder="Конверт с баксами: как разменять доллары у торговца"></label>
+      <label class="gform-l">КРАТКОЕ ОПИСАНИЕ · для списка и поисковиков (до 400 симв.)
+        <textarea id="gfDesc" rows="2">${escapeHtml(g.description)}</textarea></label>
+      <label class="gform-l">ТЕГИ · через запятую
+        <input id="gfTags" value="${escapeHtml((g.tags || []).join(", "))}" placeholder="Задания, Экономика"></label>
+      <div class="gform-row">
+        <label class="gform-l">ДАТА <input id="gfDate" type="date" value="${escapeHtml(g.created_at || "")}"></label>
+        <label class="gform-chk"><input id="gfPub" type="checkbox" ${g.published ? "checked" : ""}> ОПУБЛИКОВАН</label>
+      </div>
+      <label class="gform-l">ОБЛОЖКА · URL картинки
+        <input id="gfCover" value="${escapeHtml(g.cover)}" placeholder="/guide-uploads/… или /guide-img/…"></label>
+      <div class="gform-cover"><img id="gfCoverImg" alt="" src="${escapeHtml(g.cover || "")}" ${g.cover ? "" : 'style="display:none"'}></div>
+      <div class="gform-upload">
+        <input type="file" id="gfImg" accept="image/png,image/jpeg,image/webp,image/gif">
+        <button type="button" class="gadm-btn" id="gfUpload">ЗАГРУЗИТЬ КАРТИНКУ</button>
+        <span id="gfUpMsg" class="gform-msg"></span>
+      </div>
+      <div class="gform-l">ТЕЛО ГАЙДА · HTML — выдели текст и жми кнопки форматирования
+        <div id="gfBar"></div>
+        <textarea id="gfHtml" rows="18" class="gform-html" spellcheck="false">${escapeHtml(g.html)}</textarea></div>
+      <div class="gform-actions">
+        <button type="button" class="gadm-save" id="gfSave">СОХРАНИТЬ</button>
+        <button type="button" class="gadm-btn" id="gfPrevBtn">ОБНОВИТЬ ПРЕДПРОСМОТР ⟳</button>
+        <button type="button" class="gadm-btn" id="gfCancel">◂ К СПИСКУ</button>
+        <span id="gfMsg" class="gform-msg"></span>
+      </div>
+      <div class="gform-prev-h">ПРЕДПРОСМОТР</div>
+      <article class="patch-article guide-article"><div class="patch-body gform-prev" id="gfPrev"></div></article>
+    </div>
+  </div>`;
+
+  const gv = (id) => $(id).value;
+  const setCover = (url) => {
+    $("gfCover").value = url;
+    const im = $("gfCoverImg"); im.src = url; im.style.display = url ? "" : "none";
+  };
+  if (isNew) $("gfSlug").addEventListener("input", () => {
+    $("gfUrl").textContent = $("gfSlug").value.trim().toLowerCase() || "…";
+  });
+  $("gfCover").addEventListener("input", () => {
+    const im = $("gfCoverImg"), v = $("gfCover").value.trim();
+    im.src = v; im.style.display = v ? "" : "none";
+  });
+  const renderPrev = () => { $("gfPrev").innerHTML = gv("gfHtml"); };
+  fmtToolbar($("gfBar"), $("gfHtml"), renderPrev);
+  $("gfPrevBtn").addEventListener("click", renderPrev);
+  renderPrev();
+  $("gfCancel").addEventListener("click", () => renderDevGuidesList());
+
+  $("gfUpload").addEventListener("click", () => {
+    const f = $("gfImg").files[0], msg = $("gfUpMsg");
+    if (!f) { msg.textContent = "выбери файл"; return; }
+    const rd = new FileReader();
+    rd.onload = async () => {
+      msg.textContent = "загрузка…";
+      try {
+        const r = await fetch(api("/admin/guides/image"), {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ data: rd.result, filename: f.name }),
+        });
+        const j = await r.json();
+        if (!r.ok) { msg.textContent = j.detail || "ошибка загрузки"; return; }
+        const ta = $("gfHtml");
+        ta.value = `${ta.value}\n<img src="${j.url}" alt="">\n`;
+        if (!$("gfCover").value.trim()) setCover(j.url);
+        msg.innerHTML = `готово, вставлено в тело: <b>${escapeHtml(j.url)}</b>`;
+        renderPrev();
+      } catch (e) { msg.textContent = "ошибка сети"; }
+    };
+    rd.readAsDataURL(f);
+  });
+
+  $("gfSave").addEventListener("click", async () => {
+    const slugV = gv("gfSlug").trim().toLowerCase(), msg = $("gfMsg");
+    if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slugV)) { msg.textContent = "адрес: латиница, цифры, дефис"; return; }
+    if (!gv("gfTitle").trim()) { msg.textContent = "нужен заголовок"; return; }
+    const body = {
+      slug: slugV, title: gv("gfTitle").trim(), description: gv("gfDesc").trim(),
+      tags: gv("gfTags").split(",").map((t) => t.trim()).filter(Boolean),
+      cover: gv("gfCover").trim(), html: gv("gfHtml"),
+      created_at: gv("gfDate"), published: $("gfPub").checked, is_new: isNew,
+    };
+    $("gfSave").disabled = true; msg.textContent = "сохранение…";
+    try {
+      const r = await fetch(api("/admin/guides"), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const j = await r.json();
+      if (!r.ok) { msg.textContent = j.detail || "ошибка сохранения"; $("gfSave").disabled = false; return; }
+      renderDevGuidesList();
+    } catch (e) { msg.textContent = "ошибка сети"; $("gfSave").disabled = false; }
+  });
+}
+
+// ---------- ДЕВ · редактор квестов (только админ) ----------
+async function openDevQuests() {
+  if (!devGate()) return;
+  const editId = new URLSearchParams(location.search).get("edit");
+  if (editId && /^\d+$/.test(editId)) { await renderDevQuestForm(+editId); return; }
+  await renderDevQuestsList();
+}
+
+// уйти из формы: убить Leaflet формы и вернуть десктопный масштаб
+function qfCleanup() {
+  if (mapCleanup) { mapCleanup(); mapCleanup = null; }
+  document.documentElement.classList.remove("on-map");
+}
+
+async function renderDevQuestsList() {
+  qfCleanup();
+  if (location.search) history.replaceState(null, "", "/dev/quests");
+  page.innerHTML = `<div class="mapmod"><div class="spinner">// ЗАГРУЗКА КВЕСТОВ</div></div>`;
+  let d;
+  try { d = await fetch(api("/quests")).then((r) => r.json()); }
+  catch (e) { page.innerHTML = `<div class="empty">[!] ОШИБКА СЕТИ</div>`; return; }
+  if (location.pathname !== "/dev/quests") return;
+  questData = d;
+  const titleOf = (pid) => {
+    const p = d.items.find((x) => x.id === pid);
+    return p ? p.title : `#${pid}`;
+  };
+  const groups = d.factions.map((f) => {
+    const rows = d.items.filter((q) => q.faction === f.id).map((q) => `
+      <div class="gadm-row">
+        <div class="gadm-row-i">
+          <div class="gadm-row-t">${q.kind === "main" ? `<span style="color:var(--amber)">★</span> ` : ""}${escapeHtml(q.title)}${q.published ? "" : ` <span class="gadm-draft">ЧЕРНОВИК</span>`}</div>
+          <div class="gadm-row-s">#${q.id} · ${q.parents.length
+            ? `после: ${escapeHtml(q.parents.map(titleOf).join(", "))}`
+            : "старт линейки"}${q.has_map ? " · 📍 карта" : ""}</div>
+        </div>
+        <div class="gadm-row-a">
+          <a class="gadm-btn" href="/quests/${q.id}" target="_blank" rel="noopener" title="Открыть на сайте">↗</a>
+          <button class="gadm-btn" data-edit="${q.id}">РЕД.</button>
+          <button class="gadm-btn gadm-del" data-del="${q.id}" data-t="${escapeHtml(q.title)}" title="Удалить">✕</button>
+        </div>
+      </div>`).join("");
+    return `<div class="qadm-f" style="--fc:${f.color}">${escapeHtml(f.name.toUpperCase())}
+        <span>${d.items.filter((q) => q.faction === f.id).length}</span></div>
+      ${rows || `<div class="empty-sm" style="margin:4px 0 10px">пусто</div>`}`;
+  }).join("");
+  page.innerHTML = `<div class="mapmod">
+    <div class="section-head">
+      <div class="section-title">▸ ДЕВ · КВЕСТЫ</div>
+      <div class="section-note">Блок-схема строится сама по связям «после». Публикация — сразу на /quests.</div>
+    </div>
+    ${devSubnav("quests")}
+    <button class="gadm-new" id="qadmNew">＋ НОВЫЙ КВЕСТ</button>
+    <div class="gadm-list">${groups}</div>
+  </div>`;
+  $("qadmNew").addEventListener("click", () => renderDevQuestForm(null));
+  page.querySelectorAll("[data-edit]").forEach((b) =>
+    b.addEventListener("click", () => renderDevQuestForm(+b.dataset.edit)));
+  page.querySelectorAll("[data-del]").forEach((b) =>
+    b.addEventListener("click", async () => {
+      if (!confirm(`Удалить квест «${b.dataset.t}»? Связи на него у других квестов очистятся.`)) return;
+      await fetch(api(`/admin/quests/${b.dataset.del}`), { method: "DELETE" }).catch(() => {});
+      renderDevQuestsList();
+    }));
+}
+
+async function renderDevQuestForm(qid) {
+  qfCleanup();
+  page.innerHTML = `<div class="mapmod"><div class="spinner">// ЗАГРУЗКА</div></div>`;
+  let all, q = { id: null, title: "", faction: "stalkers", kind: "main", summary: "",
+                 reward: "", html: "", parents: [], map_layer: "", map_points: [],
+                 sort: 0, published: false };
+  try {
+    all = await fetch(api("/quests")).then((r) => r.json());
+    if (qid != null) {
+      const r = await fetch(api(`/quests/${qid}`));
+      if (!r.ok) throw new Error();
+      q = await r.json();
+    }
+  } catch (e) {
+    page.innerHTML = `<div class="empty">[!] КВЕСТ НЕ ЗАГРУЗИЛСЯ</div>`;
+    return;
+  }
+  if (location.pathname !== "/dev/quests") return;
+  questData = all;
+  const isNew = qid == null;
+
+  const factionOpts = all.factions.map((f) =>
+    `<option value="${f.id}"${q.faction === f.id ? " selected" : ""}>${escapeHtml(f.name)}</option>`).join("");
+  const parentsBox = all.factions.map((f) => {
+    const opts = all.items.filter((x) => x.faction === f.id && x.id !== qid).map((x) => `
+      <label class="qadm-p"><input type="checkbox" data-pid="${x.id}"
+          ${q.parents.includes(x.id) ? " checked" : ""}>
+        ${x.kind === "main" ? "★ " : ""}${escapeHtml(x.title)}${x.published ? "" : " (черновик)"}</label>`).join("");
+    return opts ? `<div class="qadm-pf" style="--fc:${f.color}">${escapeHtml(f.name.toUpperCase())}</div>${opts}` : "";
+  }).join("");
+  const terrOpts = `<option value="">ВСЯ КАРТА</option>` + ((mapMeta && mapMeta.territories) || [])
+    .filter((t) => t.bbox)
+    .map((t) => `<option value="${t.id}">${escapeHtml(t.name)}</option>`).join("");
+
+  page.innerHTML = `<div class="mapmod">
+    <div class="section-head">
+      <div class="section-title">▸ ДЕВ · КВЕСТЫ · ${isNew ? "НОВЫЙ" : `РЕДАКТИРОВАНИЕ #${qid}`}</div>
+    </div>
+    ${devSubnav("quests")}
+    <div class="gform">
+      <label class="gform-l">НАЗВАНИЕ КВЕСТА
+        <input id="qfTitle" value="${escapeHtml(q.title)}" placeholder="Например: Первый выход в Зону"></label>
+      <div class="gform-row">
+        <label class="gform-l">ЛИНЕЙКА <select id="qfFaction">${factionOpts}</select></label>
+        <label class="gform-l">ТИП <select id="qfKind">
+          <option value="main"${q.kind === "main" ? " selected" : ""}>Основной</option>
+          <option value="side"${q.kind === "side" ? " selected" : ""}>Побочный</option>
+        </select></label>
+        <label class="gform-l" title="Ветки на одном уровне сортируются по этому числу (меньше — выше)">
+          ПОРЯДОК <input id="qfSort" type="number" value="${q.sort || 0}" style="width:80px"></label>
+        <label class="gform-chk"><input id="qfPub" type="checkbox"${q.published ? " checked" : ""}> ОПУБЛИКОВАН</label>
+      </div>
+      <div class="gform-l">ОТКРЫВАЕТСЯ ПОСЛЕ · отметь квесты-предшественники (стрелки на схеме)
+        <div class="qadm-parents" id="qfParents">${parentsBox || `<div class="empty-sm">других квестов пока нет — этот будет стартовым</div>`}</div>
+      </div>
+      <label class="gform-l">КРАТКО · подсказка при наведении на блок схемы (до 400 симв.)
+        <textarea id="qfSummary" rows="2">${escapeHtml(q.summary)}</textarea></label>
+      <label class="gform-l">НАГРАДА · текст (деньги, предметы, репутация)
+        <input id="qfReward" value="${escapeHtml(q.reward)}" placeholder="15 000 ₽ · Аптечка армейская ×2 · +репутация у барменов"></label>
+      <div class="gform-l">ПРОХОЖДЕНИЕ · HTML — выдели текст и жми кнопки форматирования
+        <div id="qfBar"></div>
+        <textarea id="qfHtml" rows="14" class="gform-html" spellcheck="false">${escapeHtml(q.html)}</textarea>
+      </div>
+      <div class="gform-upload">
+        <input type="file" id="qfImg" accept="image/png,image/jpeg,image/webp,image/gif">
+        <button type="button" class="gadm-btn" id="qfUpload">ЗАГРУЗИТЬ КАРТИНКУ В ТЕКСТ</button>
+        <span id="qfUpMsg" class="gform-msg"></span>
+      </div>
+      <div class="gform-row">
+        <label class="gform-l">ТОЧКИ НА КАРТЕ · слой
+          <select id="qfLayer">
+            <option value=""${q.map_layer ? "" : " selected"}>БЕЗ КАРТЫ</option>
+            <option value="global"${q.map_layer === "global" ? " selected" : ""}>ГЛОБАЛЬНАЯ</option>
+            <option value="detail"${q.map_layer === "detail" ? " selected" : ""}>ДЕТАЛЬНАЯ</option>
+          </select></label>
+        <label class="gform-l hidden" id="qfGotoWrap">ПЕРЕЙТИ К ТЕРРИТОРИИ
+          <select id="qfGoto">${terrOpts}</select></label>
+      </div>
+      <div id="qfMapBlock" class="hidden">
+        <div class="qadm-maphint">Клик по карте — добавить точку. Маркеры можно перетаскивать.
+          Подписи и удаление — в списке под картой; в модале квеста точки нумеруются так же.</div>
+        <div class="map-view qadm-map" id="qfMap"></div>
+        <div class="qadm-pts" id="qfPts"></div>
+      </div>
+      <div class="gform-actions">
+        <button type="button" class="gadm-save" id="qfSave">СОХРАНИТЬ</button>
+        <button type="button" class="gadm-btn" id="qfPrevBtn">ОБНОВИТЬ ПРЕДПРОСМОТР ⟳</button>
+        <button type="button" class="gadm-btn" id="qfCancel">◂ К СПИСКУ</button>
+        <span id="qfMsg" class="gform-msg"></span>
+      </div>
+      <div class="gform-prev-h">ПРЕДПРОСМОТР ПРОХОЖДЕНИЯ</div>
+      <article class="patch-article guide-article"><div class="patch-body gform-prev" id="qfPrev"></div></article>
+    </div>
+  </div>`;
+
+  // --- прохождение: панель форматирования + предпросмотр + картинки ---
+  const renderPrev = () => { $("qfPrev").innerHTML = $("qfHtml").value; };
+  fmtToolbar($("qfBar"), $("qfHtml"), renderPrev);
+  $("qfPrevBtn").addEventListener("click", renderPrev);
+  renderPrev();
+  $("qfCancel").addEventListener("click", () => renderDevQuestsList());
+  $("qfUpload").addEventListener("click", () => {
+    const f = $("qfImg").files[0], msg = $("qfUpMsg");
+    if (!f) { msg.textContent = "выбери файл"; return; }
+    const rd = new FileReader();
+    rd.onload = async () => {
+      msg.textContent = "загрузка…";
+      try {
+        const r = await fetch(api("/admin/guides/image"), {   // общий загрузчик картинок
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ data: rd.result, filename: f.name }),
+        });
+        const j = await r.json();
+        if (!r.ok) { msg.textContent = j.detail || "ошибка загрузки"; return; }
+        const ta = $("qfHtml");
+        ta.value = `${ta.value}\n<img src="${j.url}" alt="">\n`;
+        msg.innerHTML = `готово, вставлено в текст: <b>${escapeHtml(j.url)}</b>`;
+        renderPrev();
+      } catch (e) { msg.textContent = "ошибка сети"; }
+    };
+    rd.readAsDataURL(f);
+  });
+
+  // --- точки на карте: встроенный Leaflet-редактор ---
+  const pts = (q.map_points || []).map((p) => [p[0], p[1], p[2] || ""]);
+  let qem = null;                                // {map, px, toPx} текущего слоя
+  let qemLayer = "";                             // слой, под который создана карта
+  let qemMarkers = [];
+
+  const ptIcon = (i) => L.divIcon({ className: "",
+    html: `<div class="qm-pt">${i + 1}</div>`, iconSize: [24, 24], iconAnchor: [12, 12] });
+
+  const renderPtList = () => {
+    const box = $("qfPts");
+    if (!box) return;
+    box.innerHTML = pts.map((p, i) => `
+      <div class="qadm-pt-row">
+        <span class="qadm-pt-n">${i + 1}</span>
+        <input data-pi="${i}" value="${escapeHtml(p[2])}" placeholder="подпись точки — например: забрать записку из тайника">
+        <button type="button" class="gadm-btn gadm-del" data-px="${i}" title="Удалить точку">✕</button>
+      </div>`).join("") || `<div class="empty-sm">точек нет — кликни по карте</div>`;
+    box.querySelectorAll("input[data-pi]").forEach((inp) =>
+      inp.addEventListener("input", () => { pts[+inp.dataset.pi][2] = inp.value.slice(0, 120); }));
+    box.querySelectorAll("[data-px]").forEach((b) =>
+      b.addEventListener("click", () => { pts.splice(+b.dataset.px, 1); redrawPts(); }));
+  };
+
+  const redrawPts = () => {
+    if (!qem) { renderPtList(); return; }
+    qemMarkers.forEach((m) => qem.map.removeLayer(m));
+    qemMarkers = pts.map((p, i) => {
+      const m = L.marker(qem.px(p[0], p[1]), { draggable: true, icon: ptIcon(i) })
+        .addTo(qem.map);
+      m.on("dragend", () => {
+        const c = qem.toPx(m.getLatLng());
+        p[0] = c[0]; p[1] = c[1];
+      });
+      return m;
+    });
+    renderPtList();
+  };
+
+  async function initQuestEditorMap(layer) {
+    try {
+      if (!mapMeta) {
+        [mapMeta] = await Promise.all([
+          fetch(api("/map/meta")).then((r) => r.json()), ensureLeaflet()]);
+        MAP_CATS = mapMeta.categories || [];
+      } else {
+        await ensureLeaflet();
+      }
+    } catch (e) { return; }
+    if (location.pathname !== "/dev/quests" || $("qfLayer").value !== layer) return;
+    if (qem && qemLayer === layer) return;
+    // территории могли не попасть в форму, если mapMeta грузился только что
+    const goto = $("qfGoto");
+    if (goto && goto.options.length <= 1) {
+      goto.innerHTML = `<option value="">ВСЯ КАРТА</option>` + (mapMeta.territories || [])
+        .filter((t) => t.bbox)
+        .map((t) => `<option value="${t.id}">${escapeHtml(t.name)}</option>`).join("");
+    }
+    if (mapCleanup) { mapCleanup(); mapCleanup = null; }   // карта предыдущего слоя
+    qemMarkers = [];
+    // территории есть только на детальной пирамиде
+    $("qfGotoWrap").classList.toggle("hidden", layer !== "detail");
+    document.documentElement.classList.add("on-map");      // зум 1.2 ломает клики Leaflet
+    const lm = mapMeta[layer];
+    qem = makeTileMap(lm, [0, 0, lm.w, lm.h], "qfMap");
+    qemLayer = layer;
+    qem.map.on("click", (e) => {
+      const c = qem.toPx(e.latlng);
+      pts.push([c[0], c[1], ""]);
+      redrawPts();
+    });
+    if (pts.length) {
+      const b = L.latLngBounds(pts.map((p) => qem.px(p[0], p[1])));
+      qem.map.fitBounds(b.pad(0.5), { maxZoom: lm.max_zoom - 1 });
+    }
+    redrawPts();
+    setTimeout(() => { if (qem) qem.map.invalidateSize(); }, 60);
+  }
+
+  const syncMapBlock = () => {
+    const layer = $("qfLayer").value;
+    $("qfMapBlock").classList.toggle("hidden", !layer);
+    if (!layer) {
+      if (mapCleanup) { mapCleanup(); mapCleanup = null; }
+      document.documentElement.classList.remove("on-map");
+      qem = null; qemLayer = ""; qemMarkers = [];
+      return;
+    }
+    initQuestEditorMap(layer);
+  };
+  $("qfLayer").addEventListener("change", () => {
+    const layer = $("qfLayer").value;
+    if (pts.length && layer !== qemLayer) {
+      if (!confirm("Сменить слой? Координаты точек привязаны к слою — текущие точки будут удалены.")) {
+        $("qfLayer").value = qemLayer || "";
+        return;
+      }
+      pts.length = 0;
+    }
+    syncMapBlock();
+  });
+  $("qfGoto").addEventListener("change", () => {
+    const t = ((mapMeta && mapMeta.territories) || []).find((x) => x.id === $("qfGoto").value);
+    if (qem) {
+      const [x0, y0, x1, y1] = t && t.bbox ? t.bbox : [0, 0, qem.layerMeta.w, qem.layerMeta.h];
+      qem.map.fitBounds(L.latLngBounds(qem.px(x0, y0), qem.px(x1, y1)));
+    }
+  });
+  syncMapBlock();
+
+  // --- сохранение ---
+  $("qfSave").addEventListener("click", async () => {
+    const msg = $("qfMsg");
+    if (!$("qfTitle").value.trim()) { msg.textContent = "нужно название"; return; }
+    const parents = [...page.querySelectorAll("#qfParents input:checked")]
+      .map((c) => +c.dataset.pid);
+    const layer = $("qfLayer").value;
+    const body = {
+      id: qid, title: $("qfTitle").value.trim(),
+      faction: $("qfFaction").value, kind: $("qfKind").value,
+      summary: $("qfSummary").value.trim(), reward: $("qfReward").value.trim(),
+      html: $("qfHtml").value, parents,
+      map_layer: layer, map_points: layer ? pts : [],
+      sort: +$("qfSort").value || 0, published: $("qfPub").checked,
+    };
+    $("qfSave").disabled = true;
+    msg.textContent = "сохранение…";
+    try {
+      const r = await fetch(api("/admin/quests"), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const j = await r.json();
+      if (!r.ok) {
+        msg.textContent = j.detail || "ошибка сохранения";
+        $("qfSave").disabled = false;
+        return;
+      }
+      renderDevQuestsList();
+    } catch (e) {
+      msg.textContent = "ошибка сети";
+      $("qfSave").disabled = false;
+    }
+  });
 }
 
 function initEditorMap() {
@@ -3806,13 +4913,7 @@ function updateStatus() {
 }
 
 // ---------- разделы в разработке: заглушки с описанием модуля ----------
-const PAGES = {
-  guides: {
-    title: "ГАЙДЫ",
-    desc: "Статьи по крафту, фарму и снаряжению — с живыми ценами и ссылками на " +
-          "карточки предметов прямо из текста.",
-  },
-};
+const PAGES = {};
 
 function setNav(sec) {
   document.querySelectorAll("#topnav a").forEach((a) =>
@@ -3872,6 +4973,18 @@ function route() {
     strip.classList.add("hidden");
     setNav("dev"); openDevMap(); return;
   }
+  if (path === "/dev/ab") {
+    strip.classList.add("hidden");
+    setNav("dev"); openDevAb(); return;
+  }
+  if (path === "/dev/guides") {
+    strip.classList.add("hidden");
+    setNav("dev"); openDevGuides(); return;
+  }
+  if (path === "/dev/quests") {
+    strip.classList.add("hidden");
+    setNav("dev"); openDevQuests(); return;
+  }
   if ((mm = path.match(/^\/map(?:\/([a-z0-9_-]+))?$/))) {
     strip.classList.add("hidden");
     setNav("map"); openMap(mm[1] || null); return;
@@ -3896,6 +5009,18 @@ function route() {
   if ((mm = path.match(/^\/patches\/(\d+)$/))) {
     strip.classList.add("hidden"); detail.classList.add("hidden");
     setNav("patches"); openPatch(mm[1]); return;
+  }
+  if ((mm = path.match(/^\/quests(?:\/(\d+))?$/))) {
+    strip.classList.add("hidden"); detail.classList.add("hidden");
+    setNav("quests"); openQuests(mm[1] ? +mm[1] : null); return;
+  }
+  if (path === "/guides") {
+    strip.classList.add("hidden"); detail.classList.add("hidden");
+    setNav("guides"); openGuides(); return;
+  }
+  if ((mm = path.match(/^\/guides\/([a-z0-9-]+)$/))) {
+    strip.classList.add("hidden"); detail.classList.add("hidden");
+    setNav("guides"); openGuide(mm[1]); return;
   }
   if (path === "/auction") {
     strip.classList.add("hidden"); page.classList.add("hidden");

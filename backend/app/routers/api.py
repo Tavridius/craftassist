@@ -4,19 +4,23 @@
 (живые лоты полного аукциона): внешний запрос по требованию с коротким кэшем.
 """
 import asyncio
+import base64
+import binascii
 import re
+import secrets
 import time
 from datetime import datetime, timedelta
 
 import httpx
 from fastapi import APIRouter, Body, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 
 from app import config
-from app.db import chat, mapobjects, market, news, users
+from app.db import chat, guides, mapobjects, market, news, quests, users
 from app.db.index import db
 from app.routers.auth import current_user, is_admin
-from app.services import (auction, barter, builds, craft, exchange, hideout,
-                          oauth, sales_log)
+from app.services import (auction, barter, builds, craft, exchange,
+                          hideout, oauth, sales_log)
 from app.services import fuel as fuel_svc
 from app.services.artefact_lots import artlots
 from app.services.artefact_watch import MSK
@@ -247,15 +251,17 @@ async def emission():
 
 @router.get("/barter/top")
 async def barter_top(settlement: str = "", cat: str = "", max_level: int = 0,
-                     pure: int = 0, q: str = ""):
-    """Рейтинг бартеров из тёплого кэша. Фильтры: поселение, категория,
-    уровень поселения ≤ max_level, pure=1 — только полностью покупаемые входы."""
+                     pure: int = 0, q: str = "", rank: str = ""):
+    """Рейтинг бартеров из тёплого кэша. Фильтры: поселение, категория, ранг
+    (цвет), уровень поселения ≤ max_level, pure=1 — только покупаемые входы."""
     data = barter.compute_top()
     rows = data["rows"]
     if settlement:
         rows = [r for r in rows if r["settlement"] == settlement]
     if cat:
         rows = [r for r in rows if r["category"] == cat]
+    if rank:
+        rows = [r for r in rows if r["color"] == rank]
     if max_level:
         rows = [r for r in rows if (r["level"] or 0) <= max_level]
     if pure:  # полностью покупаемые: без фарм-входов и не за спец-валюту
@@ -286,6 +292,31 @@ async def barter_item(item_id: str):
     return barter.analyze(item_id)
 
 
+@router.post("/barter/basket")
+async def barter_basket(payload: dict = Body(...)):
+    """Корзина бартеров: суммарная стоимость выбранного набора обменов.
+
+    payload: {"items": [{"id": str, "qty": int}]} — до 300 позиций, qty 1..99.
+    """
+    raw = payload.get("items")
+    if not isinstance(raw, list) or not raw:
+        raise HTTPException(400, "items required")
+    items, seen = [], set()
+    for it in raw[:300]:
+        iid = str((it or {}).get("id") or "")
+        if not iid or iid in seen or not db.item(iid):
+            continue
+        seen.add(iid)
+        try:
+            qty = max(1, min(99, int(it.get("qty") or 1)))
+        except (TypeError, ValueError):
+            qty = 1
+        items.append({"id": iid, "qty": qty})
+    if not items:
+        raise HTTPException(400, "no valid items")
+    return barter.basket(items)
+
+
 # ---------- патчноуты игры ----------
 
 @router.get("/patches")
@@ -305,7 +336,270 @@ async def patch_get(pid: int):
     return p
 
 
-# ---------- комментарии под статьями (патчи; page_key универсальный) ----------
+# ---------- гайды (статьи по игре, авторский контент) ----------
+
+@router.get("/guides")
+async def guides_list():
+    """Список гайдов (без тела) — свежие сверху."""
+    items = guides.list_guides()
+    return {"items": items, "total": len(items)}
+
+
+@router.get("/guides/{slug}")
+async def guide_get(slug: str):
+    """Полный гайд: заголовок, мета и доверенный HTML тела (только опубликованный)."""
+    g = guides.get_guide(slug)
+    if not g:
+        raise HTTPException(404, "guide not found")
+    return g
+
+
+# ---------- гайды: админ-редактор (создание/правка/удаление, загрузка картинок) ----------
+
+_SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+
+
+def _clean_guide(payload: dict) -> dict:
+    """Санитайз/валидация тела гайда из редактора (форма шлёт объект целиком)."""
+    slug = str(payload.get("slug") or "").strip().lower()
+    if not _SLUG_RE.match(slug) or len(slug) > 64:
+        raise HTTPException(422, "адрес (slug): только латиница, цифры и дефис")
+    title = str(payload.get("title") or "").strip()
+    if not title:
+        raise HTTPException(422, "нужен заголовок")
+    html = str(payload.get("html") or "")
+    if len(html) > config.GUIDE_HTML_MAX:
+        raise HTTPException(422, f"тело гайда длиннее {config.GUIDE_HTML_MAX} символов")
+    created = str(payload.get("created_at") or "").strip()[:10]
+    if created and not re.match(r"^\d{4}-\d{2}-\d{2}$", created):
+        raise HTTPException(422, "дата: YYYY-MM-DD")
+    tags_raw = payload.get("tags") or []
+    if isinstance(tags_raw, str):
+        tags_raw = tags_raw.split(",")
+    tags = [str(t).strip()[:40] for t in tags_raw if str(t).strip()][:8]
+    return {
+        "slug": slug, "title": title[:200],
+        "description": str(payload.get("description") or "").strip()[:400],
+        "tags": tags, "cover": str(payload.get("cover") or "").strip()[:400],
+        "html": html, "created_at": created,
+        "published": bool(payload.get("published", True)),
+    }
+
+
+def _sniff_image(b: bytes) -> str | None:
+    """Расширение по магическим байтам (png/jpg/webp/gif) или None."""
+    if b[:8] == b"\x89PNG\r\n\x1a\n":
+        return "png"
+    if b[:3] == b"\xff\xd8\xff":
+        return "jpg"
+    if b[:6] in (b"GIF87a", b"GIF89a"):
+        return "gif"
+    if b[:4] == b"RIFF" and b[8:12] == b"WEBP":
+        return "webp"
+    return None
+
+
+@router.get("/admin/guides")
+async def admin_guides_list(request: Request):
+    """Все гайды, включая черновики (только админ)."""
+    _require_admin(request)
+    return {"items": guides.list_guides(include_drafts=True)}
+
+
+@router.get("/admin/guides/{slug}")
+async def admin_guide_get(request: Request, slug: str):
+    """Полный гайд для редактирования, включая черновик (только админ)."""
+    _require_admin(request)
+    g = guides.get_guide(slug, include_drafts=True)
+    if not g:
+        raise HTTPException(404, "guide not found")
+    return g
+
+
+@router.post("/admin/guides")
+async def admin_guide_save(request: Request, payload: dict = Body(...)):
+    """Создать/сохранить гайд (только админ). is_new=true — запрет на занятый slug."""
+    _require_admin(request)
+    data = _clean_guide(payload)
+    if payload.get("is_new") and guides.has(data["slug"]):
+        raise HTTPException(409, "гайд с таким адресом уже существует")
+    return guides.upsert(data)
+
+
+@router.delete("/admin/guides/{slug}")
+async def admin_guide_delete(request: Request, slug: str):
+    """Удалить гайд (только админ) — страница уходит с сайта и из sitemap."""
+    _require_admin(request)
+    if not guides.delete(slug):
+        raise HTTPException(404, "guide not found")
+    return {"ok": True}
+
+
+@router.post("/admin/guides/image")
+async def admin_guide_image(request: Request, payload: dict = Body(...)):
+    """Загрузка картинки гайда (base64 в JSON, без multipart). Кладёт в volume,
+    возвращает {url: /guide-uploads/...} для вставки в тело/обложку."""
+    _require_admin(request)
+    raw = str(payload.get("data") or "").strip()
+    if raw.startswith("data:") and "," in raw:
+        raw = raw.split(",", 1)[1]
+    try:
+        blob = base64.b64decode(raw, validate=True)
+    except (binascii.Error, ValueError):
+        raise HTTPException(422, "картинка: битый base64")
+    if not blob:
+        raise HTTPException(422, "пустой файл")
+    if len(blob) > int(config.GUIDE_IMG_MAX_MB * 1024 * 1024):
+        raise HTTPException(413, f"картинка больше {config.GUIDE_IMG_MAX_MB:g} МБ")
+    ext = _sniff_image(blob)
+    if not ext:
+        raise HTTPException(422, "формат не поддержан (png, jpg, webp, gif)")
+    name = f"{int(time.time())}-{secrets.token_hex(4)}.{ext}"
+    config.GUIDE_UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    (config.GUIDE_UPLOADS_DIR / name).write_bytes(blob)
+    return {"url": f"/guide-uploads/{name}"}
+
+
+# ---------- квесты: блок-схемы линеек + прохождение (см. db/quests) ----------
+
+# Линейки квестов. Фронт рисует вкладки и цвета из этого списка — расширяется
+# свободно (id менять нельзя — они записаны в строках quests.faction).
+QUEST_FACTIONS = [
+    {"id": "stalkers", "name": "Сталкеры", "color": "#7ce68e"},
+    {"id": "bandits",  "name": "Бандиты",  "color": "#ffb84d"},
+    {"id": "covenant", "name": "Завет",    "color": "#5fa8ff"},
+    {"id": "dawn",     "name": "Заря",     "color": "#e8d44d"},
+    {"id": "duty",     "name": "Долг",     "color": "#ff6b5e"},
+    {"id": "mercs",    "name": "Наёмники", "color": "#9ecbff"},
+]
+_QUEST_FACTION_IDS = {f["id"] for f in QUEST_FACTIONS}
+_QUEST_KINDS = {"main", "side"}
+_QUEST_MAX_POINTS = 50
+
+
+@router.get("/quests")
+async def quests_list(request: Request):
+    """Мета всех квестов для блок-схемы (без тел). Админ видит и черновики."""
+    admin = is_admin(current_user(request))
+    return {"factions": QUEST_FACTIONS,
+            "items": quests.list_quests(include_drafts=admin),
+            "is_admin": admin}
+
+
+@router.get("/quests/{qid}")
+async def quest_get(qid: int, request: Request):
+    """Полный квест: прохождение (HTML), награда, точки карты."""
+    q = quests.get(qid, include_drafts=is_admin(current_user(request)))
+    if not q:
+        raise HTTPException(404, "quest not found")
+    return q
+
+
+def _quest_makes_cycle(qid: int | None, parents: list[int]) -> bool:
+    """Появится ли цикл, если квесту qid назначить таких родителей.
+    Цикл ломает раскладку схемы (уровень = max(уровень родителей)+1)."""
+    if qid is None:
+        return False        # новый квест: на него ещё никто не ссылается
+    pmap = quests.parent_map()
+    seen: set[int] = set()
+    stack = list(parents)
+    while stack:
+        p = stack.pop()
+        if p == qid:
+            return True
+        if p in seen:
+            continue
+        seen.add(p)
+        stack.extend(pmap.get(p, []))
+    return False
+
+
+def _clean_quest(payload: dict, qid: int | None) -> dict:
+    """Санитайз/валидация квеста из DEV-редактора (форма шлёт объект целиком)."""
+    title = str(payload.get("title") or "").strip()
+    if not title:
+        raise HTTPException(422, "нужно название квеста")
+    faction = str(payload.get("faction") or "")
+    if faction not in _QUEST_FACTION_IDS:
+        raise HTTPException(422, "линейка: " + ", ".join(sorted(_QUEST_FACTION_IDS)))
+    kind = str(payload.get("kind") or "main")
+    if kind not in _QUEST_KINDS:
+        raise HTTPException(422, "тип: main|side")
+    html = str(payload.get("html") or "")
+    if len(html) > config.GUIDE_HTML_MAX:
+        raise HTTPException(422, f"прохождение длиннее {config.GUIDE_HTML_MAX} символов")
+
+    parents: list[int] = []
+    for p in (payload.get("parents") or []):
+        try:
+            p = int(p)
+        except (TypeError, ValueError):
+            raise HTTPException(422, "parents: список id")
+        if p == qid or p in parents:
+            continue
+        if not quests.exists(p):
+            raise HTTPException(422, f"родитель #{p} не найден")
+        parents.append(p)
+    if _quest_makes_cycle(qid, parents):
+        raise HTTPException(422, "цикл в связях: квест не может открываться после самого себя")
+
+    map_layer = str(payload.get("map_layer") or "")
+    if map_layer not in ("", "global", "detail"):
+        raise HTTPException(422, "map_layer: global|detail или пусто")
+    pts = []
+    if map_layer:
+        raw = payload.get("map_points") or []
+        if not isinstance(raw, list) or len(raw) > _QUEST_MAX_POINTS:
+            raise HTTPException(422, f"точек карты — не больше {_QUEST_MAX_POINTS}")
+        for p in raw:
+            if not isinstance(p, (list, tuple)) or len(p) < 2:
+                raise HTTPException(422, "точка карты: [x, y, подпись]")
+            try:
+                x, y = round(float(p[0]), 2), round(float(p[1]), 2)
+            except (TypeError, ValueError):
+                raise HTTPException(422, "точка карты: координаты — числа")
+            name = str(p[2]).strip()[:120] if len(p) > 2 and p[2] else ""
+            pts.append([x, y, name])
+
+    try:
+        sort = max(-999, min(999, int(payload.get("sort") or 0)))
+    except (TypeError, ValueError):
+        sort = 0
+    return {
+        "title": title[:200], "faction": faction, "kind": kind,
+        "summary": str(payload.get("summary") or "").strip()[:400],
+        "reward": str(payload.get("reward") or "").strip()[:400],
+        "html": html, "parents": parents,
+        "map_layer": map_layer if pts else "", "map_points": pts,
+        "sort": sort, "published": bool(payload.get("published", False)),
+    }
+
+
+@router.post("/admin/quests")
+async def admin_quest_save(request: Request, payload: dict = Body(...)):
+    """Создать (без id) или сохранить (с id) квест — только админ."""
+    _require_admin(request)
+    qid = payload.get("id")
+    qid = int(qid) if qid is not None else None
+    data = _clean_quest(payload, qid)
+    if qid is None:
+        return quests.create(data)
+    saved = quests.update(qid, data)
+    if not saved:
+        raise HTTPException(404, "quest not found")
+    return saved
+
+
+@router.delete("/admin/quests/{qid}")
+async def admin_quest_delete(request: Request, qid: int):
+    """Удалить квест (только админ). Связи на него у остальных чистятся."""
+    _require_admin(request)
+    if not quests.delete(qid):
+        raise HTTPException(404, "quest not found")
+    return {"ok": True}
+
+
+# ---------- комментарии под статьями (патчи/гайды; page_key универсальный) ----------
 
 _comment_last_post: dict[int, float] = {}   # антифлуд, как в чате
 
@@ -321,6 +615,8 @@ def _valid_page(page: str) -> bool:
         return ref.isdigit() and news.patch_meta(int(ref)) is not None
     if kind == "item":
         return db.item(ref) is not None
+    if kind == "guide":
+        return guides.exists(ref)
     return True
 
 
@@ -642,6 +938,23 @@ def _require_admin(request: Request) -> dict:
     if not is_admin(user):
         raise HTTPException(403, "только для админов")
     return user
+
+
+@router.post("/dev/ab")
+async def dev_ab_override(request: Request, payload: dict = Body(...)):
+    """Админ форсит себе вариант дизайна для предпросмотра (cookie sz_ab_force).
+    variant: 'A'|'B' — показать вариант; иначе — сброс (снять форс). Действует
+    только на самого админа (его cookie), сплит обычных посетителей не трогает."""
+    _require_admin(request)
+    v = str(payload.get("variant") or "").upper()
+    resp = JSONResponse({"ok": True, "variant": v if v in ("A", "B") else None})
+    if v in ("A", "B"):
+        resp.set_cookie(config.AB_TEST_FORCE_COOKIE, v, max_age=30 * 86400,
+                        path="/", httponly=True, samesite="lax",
+                        secure=str(request.base_url).startswith("https"))
+    else:
+        resp.delete_cookie(config.AB_TEST_FORCE_COOKIE, path="/")
+    return resp
 
 
 def _clean_map_geometry(kind: str, geom) -> list:

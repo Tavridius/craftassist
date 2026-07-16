@@ -51,8 +51,15 @@ services:
       # Патчноуты с форума EXBO + комментарии
       - PATCH_WATCH_ENABLED=${PATCH_WATCH_ENABLED:-1}
       - PATCH_POLL_MIN=${PATCH_POLL_MIN:-30}
-      # EXBO id админов через запятую — могут удалять чужие комментарии
+      # Админы (комментарии, DEV-редактор карты, редактор гайдов):
+      # EXBO id через запятую и/или email локальных аккаунтов через запятую
       - ADMIN_USER_IDS=${ADMIN_USER_IDS:-}
+      - ADMIN_EMAILS=${ADMIN_EMAILS:-}
+      # A/B-тест дизайна: 1 = половине посетителей вариант B (styles-b.css),
+      # вариант уходит в Я.Метрику параметром визита ab_design. По умолчанию выкл.
+      - AB_TEST_DESIGN=${AB_TEST_DESIGN:-0}
+      - AB_TEST_SPLIT=${AB_TEST_SPLIT:-0.5}
+      - AB_TEST_TTL_DAYS=${AB_TEST_TTL_DAYS:-90}
     volumes:
       # Кэш игровой БД + зеркало иконок (скачивается один раз при первом старте)
       - craft_data:/app/backend/data

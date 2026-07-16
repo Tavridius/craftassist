@@ -72,29 +72,30 @@ def _obtain(iid: str, path: tuple, memo: dict, needed: int = 1) -> dict:
 CURRENCY_RU = {"money": "Рубли", "sleeves": "Гильзы"}
 
 
-def _offer_cost(off: dict, path: tuple, memo: dict) -> dict:
-    """Стоимость оффера: деньги + покупаемые входы; missing — фарм-входы.
+def _offer_cost(off: dict, path: tuple, memo: dict, qty: int = 1) -> dict:
+    """Стоимость оффера (qty повторов): деньги + покупаемые входы; missing — фарм.
 
     cost в не-рублёвой валюте (гильзы сессионных боёв) в рубли не конвертируется —
     оффер считается «не чисто за деньги» (currency_cost отражается отдельно).
     """
-    cash = float(off["cost"] or 0)
+    cash = float(off["cost"] or 0) * qty
     foreign = off["currency"] != "money" and cash > 0
     total = 0.0 if foreign else cash
     missing: list[str] = []
     lines = []
     for ing in off["inputs"]:
-        got = _obtain(ing["item"], path, memo, needed=ing["amount"])
+        amount = ing["amount"] * qty
+        got = _obtain(ing["item"], path, memo, needed=amount)
         unit = got["cost"]
         if unit is None:
             missing.append(ing["item"])
-            lines.append({"item": ing["item"], "amount": ing["amount"],
+            lines.append({"item": ing["item"], "amount": amount,
                           "unit": None, "line": None, "source": None})
         else:
-            lines.append({"item": ing["item"], "amount": ing["amount"],
-                          "unit": unit, "line": round(unit * ing["amount"]),
+            lines.append({"item": ing["item"], "amount": amount,
+                          "unit": unit, "line": round(unit * amount),
                           "source": got["source"], "disasm": got.get("disasm")})
-            total += unit * ing["amount"]
+            total += unit * amount
     # total при missing/чужой валюте — стоимость ПОКУПАЕМОЙ части, не полная
     return {"total": round(total) if not missing and not foreign else None,
             "partial": round(total), "missing": missing, "lines": lines,
@@ -169,6 +170,65 @@ def compute_top() -> dict:
     }
     _cache_ts = now
     return _cache
+
+
+def basket(items: list[dict]) -> dict:
+    """Корзина: суммарная стоимость набора бартеров, по лучшему офферу на предмет.
+
+    items: [{"id", "qty"}] -> постатейные строки + агрегированные ресурсы по всем
+    обменам + деньги торговцам по валютам. Лучший оффер — как в compute_top:
+    сперва полностью покупаемые, дальше дешевле.
+    """
+    memo: dict = {}
+    rows, agg = [], {}
+    money_by_cur: dict[str, float] = {}
+    want: set[str] = set()
+    for req in items:
+        iid, qty = req["id"], req["qty"]
+        best = None
+        for b in db.barter_by_result.get(iid, []):
+            for off in b["offers"]:
+                c = _offer_cost(off, (iid,), memo, qty=qty)
+                key = (bool(c["missing"]),
+                       c["total"] if c["total"] is not None else c["partial"])
+                if best is None or key < best[3]:
+                    best = (c, off, b, key)
+        if best is None:
+            rows.append({**_brief(iid), "qty": qty, "no_barter": True})
+            continue
+        cost, off, b = best[0], best[1], best[2]
+        cash = float(off["cost"] or 0) * qty
+        if cash:
+            money_by_cur[off["currency"]] = money_by_cur.get(off["currency"], 0.0) + cash
+        for line in cost["lines"]:
+            a = agg.get(line["item"])
+            if a is None:
+                a = agg[line["item"]] = {**_brief(line["item"]),
+                                         "amount": 0, "cost": 0, "farm": False}
+            a["amount"] += line["amount"]
+            if line["line"] is not None:
+                a["cost"] += line["line"]
+            else:
+                a["farm"] = True
+            want.add(line["item"])
+        rows.append({**_brief(iid), "qty": qty,
+                     "settlement_name": b["settlement_name"], "level": b["level"],
+                     "currency": off["currency"], "money": off["cost"],
+                     "cost": cost["total"], "cost_partial": cost["partial"],
+                     "missing": [_brief(m)["name"] for m in cost["missing"]]})
+    if want:
+        store.request(want)  # непосчитанное — воркеру вне очереди
+    resources = sorted(agg.values(), key=lambda r: -(r["cost"] or 0))
+    total = round(sum(r["cost"] for r in resources) + money_by_cur.get("money", 0.0))
+    return {
+        "items": rows,
+        "resources": resources,
+        "money": [{"currency": c, "name": CURRENCY_RU.get(c, c), "amount": round(v)}
+                  for c, v in sorted(money_by_cur.items())],
+        "total": total,
+        "has_farm": any(r["farm"] for r in resources),
+        "fee_pct": round(config.AUCTION_FEE * 100),
+    }
 
 
 def _expand_offer(off: dict, path: tuple, memo: dict, depth: int = 0) -> dict:

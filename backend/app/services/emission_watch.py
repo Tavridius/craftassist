@@ -64,7 +64,7 @@ class EmissionWatch:
         return {"current_start": self.current_start,
                 "previous_start": self.previous_start,
                 "previous_end": self.previous_end,
-                "history": self.history[:5],
+                "history": self.history[:15],
                 "checked_at": self.checked_at}
 
     async def loop(self) -> None:

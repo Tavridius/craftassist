@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app import config
-from app.db import chat, loader, mapobjects, market, news, users
+from app.db import chat, guides, loader, mapobjects, market, news, quests, users
 from app.db.index import db
 from app.routers.api import router as api_router
 from app.routers.auth import router as auth_router
@@ -42,6 +42,8 @@ async def startup() -> None:
     market.init()
     news.init()
     mapobjects.init()
+    guides.init()
+    quests.init()
     db.load()
     store.load()
     # цены: крафт-граф + бартер-граф; история продаж — результаты обоих
@@ -93,5 +95,8 @@ app.mount("/icons", StaticFiles(directory=str(config.ICONS_DIR)), name="icons")
 # зеркало картинок патчноутов (заполняет patch_watch в volume)
 config.NEWS_IMG_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/news-img", StaticFiles(directory=str(config.NEWS_IMG_DIR)), name="news_img")
+# картинки гайдов, загруженные админом (в volume) — префикс НЕ конфликтует с /guides/{slug}
+config.GUIDE_UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/guide-uploads", StaticFiles(directory=str(config.GUIDE_UPLOADS_DIR)), name="guide_uploads")
 if config.FRONTEND_DIR.exists():
     app.mount("/", StaticFiles(directory=str(config.FRONTEND_DIR), html=True), name="frontend")

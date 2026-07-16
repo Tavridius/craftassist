@@ -13,12 +13,14 @@ import html as _html
 import json
 import logging
 import re
+import secrets
 from functools import lru_cache
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
 
 from app import config
+from app.db import guides
 from app.db.index import db
 from app.services.price_store import store
 
@@ -47,6 +49,40 @@ def _asset_v(name: str) -> str:
 
 
 _V_JS, _V_CSS = _asset_v("app.js"), _asset_v("styles.css")
+_V_CSS_B = _asset_v("styles-b.css")
+
+# Краулеры/превью — всегда вариант A (стабильная индексация, чистота эксперимента:
+# бот-визиты не должны попадать в сплит и портить статистику вовлечённости).
+_BOT_RE = re.compile(
+    r"bot|crawl|spider|slurp|yandex|google|bing|baidu|duckduck|mail\.ru|"
+    r"facebookexternalhit|telegrambot|whatsapp|vkshare|twitterbot|discordbot|"
+    r"preview|headless|lighthouse|pingdom|uptime|semrush|ahrefs|petalbot",
+    re.I,
+)
+
+
+def _ab_variant(request: Request) -> tuple[str | None, bool, bool]:
+    """Вернуть (вариант 'A'|'B'|None, ставить_ли_split_cookie, это_предпросмотр).
+
+    Приоритет — админский форс-предпросмотр (cookie AB_TEST_FORCE_COOKIE): работает
+    ВСЕГДА, вне сплита, помечается предпросмотром (не идёт в статистику). Дальше —
+    обычный сплит, только если тест включён: бот → 'A'; иначе липкий вариант из
+    cookie, при первом визите монетка по AB_TEST_SPLIT + просьба поставить cookie.
+    None = тест выключен и форса нет → страница как обычный вариант A (без разметки).
+    """
+    force = request.cookies.get(config.AB_TEST_FORCE_COOKIE)
+    if force in ("A", "B"):
+        return force, False, True
+    if not config.AB_TEST_DESIGN:
+        return None, False, False
+    if _BOT_RE.search(request.headers.get("user-agent", "")):
+        return "A", False, False
+    cur = request.cookies.get(config.AB_TEST_COOKIE)
+    if cur in ("A", "B"):
+        return cur, False, False
+    # secrets.randbelow(10000)/10000 ∈ [0,1) — доля B задаётся AB_TEST_SPLIT
+    variant = "B" if secrets.randbelow(10000) < config.AB_TEST_SPLIT * 10000 else "A"
+    return variant, True, False
 
 
 def _base_url(request: Request) -> str:
@@ -60,7 +96,7 @@ def _sub(pattern: str, value: str, s: str) -> str:
 
 def render_index(request: Request, path: str, *, title: str | None = None,
                  desc: str | None = None, noindex: bool = False,
-                 jsonld: dict | None = None) -> HTMLResponse:
+                 jsonld: dict | None = None, image: str | None = None) -> HTMLResponse:
     title = title or DEF_TITLE
     desc = (desc or DEF_DESC).strip()
     if len(desc) > 300:
@@ -70,8 +106,10 @@ def render_index(request: Request, path: str, *, title: str | None = None,
                _html.escape(url, quote=True))
 
     s = _index_template()
-    s = s.replace('src="app.js"', f'src="app.js?v={_V_JS}"', 1)
-    s = s.replace('href="styles.css"', f'href="styles.css?v={_V_CSS}"', 1)
+    # пути к статике — АБСОЛЮТНЫЕ: относительные ломаются на подпутях
+    # (/quests/1 → браузер просил /quests/app.js и получал HTML вместо скрипта)
+    s = s.replace('src="app.js"', f'src="/app.js?v={_V_JS}"', 1)
+    s = s.replace('href="styles.css"', f'href="/styles.css?v={_V_CSS}"', 1)
     # _sub возвращает value через лямбду (без раскрытия \g<N>) — поэтому пишем полный тег
     s = _sub(r"<title>.*?</title>", f"<title>{t}</title>", s)
     s = _sub(r'<meta name="description" content="[^"]*">',
@@ -88,6 +126,16 @@ def render_index(request: Request, path: str, *, title: str | None = None,
              f'<meta name="twitter:title" content="{t}">', s)
     s = _sub(r'<meta name="twitter:description" content="[^"]*">',
              f'<meta name="twitter:description" content="{d}">', s)
+    if image:
+        # в шаблоне og:image нет — добавляем сами (обложка статьи для превью в
+        # мессенджерах/соцсетях) и апаем карточку Twitter до крупной
+        img = _html.escape(image if image.startswith("http")
+                           else _base_url(request) + "/" + image.lstrip("/"), quote=True)
+        s = _sub(r'<meta name="twitter:card" content="[^"]*">',
+                 '<meta name="twitter:card" content="summary_large_image">', s)
+        s = s.replace("</head>",
+                      f'  <meta property="og:image" content="{img}">\n'
+                      f'  <meta name="twitter:image" content="{img}">\n</head>', 1)
     if noindex:
         s = s.replace('<meta name="theme-color"',
                       '<meta name="robots" content="noindex,follow">\n  <meta name="theme-color"', 1)
@@ -96,10 +144,37 @@ def render_index(request: Request, path: str, *, title: str | None = None,
         block = json.dumps(jsonld, ensure_ascii=False).replace("</", "<\\/")
         s = s.replace("</head>",
                       f'  <script type="application/ld+json">{block}</script>\n</head>', 1)
+
+    # --- A/B-тест дизайна ---
+    variant, set_cookie, preview = _ab_variant(request)
+    if variant is not None:
+        # маркер на <html> — app.js прочитает и (кроме предпросмотра) отправит
+        # вариант в Метрику; заодно даёт CSS-хук html[data-ab="B"] для правок стилей.
+        attrs = f' data-ab="{variant}"' + (' data-ab-preview="1"' if preview else '')
+        s = s.replace('<html lang="ru">', f'<html lang="ru"{attrs}>', 1)
+        if variant == "B":
+            # styles-b.css подключается ПОСЛЕ базовой (перед </head>) → выше по
+            # каскаду, перекрывает нужное. Файла может не быть (v=0) — тогда B
+            # визуально = A, эксперимент безопасен.
+            s = s.replace(
+                "</head>",
+                f'  <link rel="stylesheet" href="/styles-b.css?v={_V_CSS_B}">\n</head>', 1)
+
     # HTML — точка входа, ссылается на app.js?v=<mtime>: сам НЕ кэшируем, иначе
     # браузер держит старый HTML со старой версией и до нового app.js не доходит
     # (эвристическое кэширование ответов без Cache-Control). no-cache = ревалидация.
-    return HTMLResponse(s, headers={"Cache-Control": "no-cache, must-revalidate"})
+    headers = {"Cache-Control": "no-cache, must-revalidate"}
+    if variant is not None:  # ответ зависит от cookie (важно, если появится кэш-слой)
+        headers["Vary"] = "Cookie"
+    resp = HTMLResponse(s, headers=headers)
+    if set_cookie:
+        resp.set_cookie(
+            config.AB_TEST_COOKIE, variant,
+            max_age=config.AB_TEST_TTL_DAYS * 86400,
+            path="/", httponly=True, samesite="lax",
+            secure=str(request.base_url).startswith("https"),
+        )
+    return resp
 
 
 def _product_jsonld(request: Request, it: dict, url: str, desc: str) -> dict | None:
@@ -296,8 +371,75 @@ async def map_territory_page(request: Request, territory_id: str):
 
 @router.get("/guides", response_class=HTMLResponse)
 async def guides_page(request: Request):
-    return render_index(request, "/guides",
-                        title=f"Гайды по STALZONE (Stalcraft) — {SITE}")
+    return render_index(
+        request, "/guides",
+        title="Гайды по STALZONE (Stalcraft) — задания, крафт, экономика и снаряжение",
+        desc="Разборы и гайды по STALZONE (ранее Stalcraft — Сталкрафт): загадочные "
+             "предметы и задания, крафт, экономика, снаряжение и события. Простым языком, "
+             "с картинками и ссылками на карточки предметов.")
+
+
+@router.get("/guides/{slug}", response_class=HTMLResponse)
+async def guide_page(request: Request, slug: str):
+    g = guides.get_guide(slug)
+    if not g:
+        return render_index(request, f"/guides/{slug}",
+                            title=f"Гайд не найден — {SITE}", noindex=True)
+    title = f"{g['title']} — STALZONE (Stalcraft)"
+    desc = g.get("description") or f"Гайд по STALZONE (Stalcraft): {g['title']}."
+    url = _base_url(request) + f"/guides/{slug}"
+    cover = g.get("cover")
+    jsonld = {
+        "@context": "https://schema.org",
+        "@type": "Article",
+        "headline": g["title"],
+        "description": desc,
+        "datePublished": g.get("created_at", ""),
+        "dateModified": g.get("updated_at") or g.get("created_at", ""),
+        "inLanguage": "ru",
+        "author": {"@type": "Organization", "name": SITE},
+        "publisher": {"@type": "Organization", "name": SITE},
+        "mainEntityOfPage": url,
+    }
+    if cover:
+        jsonld["image"] = (cover if cover.startswith("http")
+                           else _base_url(request) + "/" + cover.lstrip("/"))
+    return render_index(request, f"/guides/{slug}", title=title, desc=desc,
+                        jsonld=jsonld, image=cover)
+
+
+@router.get("/dev", response_class=HTMLResponse)
+@router.get("/dev/{_sub}", response_class=HTMLResponse)
+async def dev_pages(request: Request, _sub: str = ""):
+    """DEV-инструменты (SPA сам проверит права): раньше прямой заход/F5 давал 404."""
+    return render_index(request, "/dev", title=f"ДЕВ-инструменты — {SITE}", noindex=True)
+
+
+@router.get("/quests", response_class=HTMLResponse)
+async def quests_page(request: Request):
+    return render_index(
+        request, "/quests",
+        title="Квесты STALZONE (Stalcraft) — схема линеек и прохождение заданий",
+        desc="Все квесты STALZONE (ранее Stalcraft — Сталкрафт) на одной схеме: основные "
+             "и побочные задания сталкеров, бандитов и группировок (Завет, Заря, Долг, "
+             "Наёмники). Прохождение, награды и точки заданий на карте Зоны.")
+
+
+@router.get("/quests/{qid}", response_class=HTMLResponse)
+async def quest_page(request: Request, qid: str):
+    # отдельные квесты пока noindex,follow — включим индексацию точечно,
+    # когда наполнятся и появится подтверждённый спрос (см. политику SEO)
+    from app.db import quests
+    q = quests.get(int(qid)) if qid.isdigit() else None
+    if not q:
+        return render_index(request, f"/quests/{qid}",
+                            title=f"Квест не найден — {SITE}", noindex=True)
+    return render_index(
+        request, f"/quests/{qid}",
+        title=f"{q['title']} — прохождение квеста STALZONE (Stalcraft)",
+        desc=q.get("summary") or f"Прохождение квеста «{q['title']}» в STALZONE "
+             f"(ранее Stalcraft): что делать, награда и точки на карте.",
+        noindex=True)
 
 
 @router.get("/patches", response_class=HTMLResponse)
@@ -337,11 +479,20 @@ async def sitemap(request: Request):
     """Карта сайта: только осмысленные посадочные (без тысяч карточек — под спрос)."""
     base = _base_url(request)
     paths = ["/", "/craft", "/vygodno-kraftit", "/auction", "/market", "/builds",
-             "/barter", "/obmen", "/patches", "/map"]
+             "/barter", "/obmen", "/patches", "/guides", "/quests", "/map"]
     urls = "".join(
         f"<url><loc>{_html.escape(base + p, quote=True)}</loc>"
         f"<changefreq>{'daily' if p in ('/', '/craft', '/vygodno-kraftit', '/auction', '/market', '/barter', '/patches') else 'weekly'}</changefreq>"
         f"</url>" for p in paths)
+    # гайды — контентные посадочные под подтверждённый спрос («конверт с баксами» и т.п.)
+    try:
+        urls += "".join(
+            f"<url><loc>{_html.escape(base + f'/guides/{slug}', quote=True)}</loc>"
+            + (f"<lastmod>{_html.escape(mod[:10], quote=True)}</lastmod>" if mod else "")
+            + "<changefreq>weekly</changefreq></url>"
+            for slug, mod in guides.all_slugs())
+    except Exception:
+        logger.exception("sitemap: guides skipped")
     # патчноуты — контентные страницы под подтверждённый спрос («сталкрафт патчноут»)
     from app.db import news
     try:

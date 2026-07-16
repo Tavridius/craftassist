@@ -43,11 +43,50 @@ pavel (пн/чт 03:17) — `certbot renew` для ВСЕХ сертов сер�
 ```bash
 # с локальной машины: залить проект (без data/.venv/.wheels)
 cd "d:/stalzone craft"
-tar czf - --exclude=.venv --exclude=data --exclude=.wheels --exclude=__pycache__ --exclude='*.pyc' . \
+# ⚠️ ИСКЛЮЧАЕМ .env (локальный обрезан — затрёт боевые креды), .git и
+#    stalzone-database (569МБ, качается в volume при старте)
+tar czf - --exclude=.venv --exclude=data --exclude=.wheels --exclude=__pycache__ \
+  --exclude='*.pyc' --exclude=.env --exclude=.git --exclude=stalzone-database . \
   | ssh pavel@88.87.70.167 "tar xzf - -C /home/pavel/stalzone-craft"
 # пересобрать (данные в volume сохранятся)
 ssh pavel@88.87.70.167 "cd /home/pavel/stalzone-craft && docker compose up -d --build"
 ```
+
+## A/B-тест дизайна — запуск / остановка
+
+Вариант B = «Торговый терминал» (тёплая янтарная тема + тикер), `frontend/styles-b.css`.
+Механика: серверный cookie-сплит `sz_ab` (липкая, 90 дней), вариант уходит в
+Я.Метрику параметром визита `ab_design`. По умолчанию ВЫКЛ (`AB_TEST_DESIGN=0`).
+Флаг уже проброшен в docker-compose.yml (`AB_TEST_DESIGN=${AB_TEST_DESIGN:-0}`).
+
+```bash
+# 1) залить код (команда redeploy выше) — привезёт styles-b.css, app.js, pages.py, config.py
+# 2) включить тест в БОЕВОМ .env (создаём ручку, боевые креды не трогаем):
+ssh pavel@88.87.70.167 "cd /home/pavel/stalzone-craft && \
+  grep -q '^AB_TEST_DESIGN=' .env && sed -i 's/^AB_TEST_DESIGN=.*/AB_TEST_DESIGN=1/' .env \
+  || echo 'AB_TEST_DESIGN=1' >> .env"
+# 3) пересоздать контейнер с новой env (rebuild не обязателен, но не мешает):
+ssh pavel@88.87.70.167 "cd /home/pavel/stalzone-craft && docker compose up -d --build"
+```
+
+Проверка живьём (публично, без ssh):
+```bash
+curl -sI https://stalzone-helper.ru/ | grep -i 'set-cookie\|vary'          # есть Set-Cookie sz_ab, Vary: Cookie
+curl -s https://stalzone-helper.ru/ --cookie 'sz_ab=B' | grep -o 'data-ab="B"\|styles-b.css' | sort -u  # оба есть
+curl -s https://stalzone-helper.ru/ --cookie 'sz_ab=A' | grep -c styles-b.css   # = 0
+```
+
+Остановить / откатить (мгновенно все на вариант A):
+```bash
+ssh pavel@88.87.70.167 "cd /home/pavel/stalzone-craft && sed -i 's/^AB_TEST_DESIGN=.*/AB_TEST_DESIGN=0/' .env && docker compose up -d"
+```
+
+Смотреть результаты — Я.Метрика (счётчик 110585101):
+- параметр визита `ab_design` = `A` / `B` появляется в отчётах через несколько минут после первого A/B-трафика;
+- в любом отчёте вовлечённости (Посещаемость / глубина просмотра / время на сайте / отказы)
+  → **Сегментировать → Визиты, в которых → Параметры визита → ab_design**, или
+  «Сравнение сегментов»: `ab_design=A` против `ab_design=B`;
+- отдельную цель заводить НЕ надо — параметр цепляется ко всем отчётам.
 
 ## Реальные цены — ВКЛЮЧЕНЫ (10 июля 2026)
 

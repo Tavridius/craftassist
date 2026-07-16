@@ -1,0 +1,100 @@
+/* =====================================================================
+   ВАРИАНТ B — «Торговый терминал» (A/B-тест дизайна)
+   ---------------------------------------------------------------------
+   Источник: claude.ai/design «Вариант Б - Биржевой терминал» (собрал юзер).
+   Тёплая янтарно-золотая тема поверх текущей зелёной ПДА. Подключается
+   ПОВЕРХ styles.css, только когда включён AB_TEST_DESIGN и посетителю выпал
+   вариант B (cookie sz_ab=B; на <html> стоит data-ab="B"). Все правила
+   привязаны к html[data-ab="B"] — вариант A файл не задевает.
+
+   Механика перекраски: сайт построен на CSS-переменных из styles.css :root.
+   Здесь мы их переопределяем — этого хватает, чтобы перекрасить ~весь
+   интерфейс без дублирования правил.
+
+   ВАЖНО про акценты: в текущей теме var(--green) несёт ДВЕ роли —
+   «хром» (бренд/навигация/кнопки/фокус) И «прибыль» (вердикт, .pct.up).
+   В терминале хром = ЯНТАРЬ, а рост/выгода = отдельный зелёный. Поэтому:
+     • --green переопределён в ЯНТАРЬ → весь хром станет янтарным (надёжно,
+       ничего не пропустим — все зелёные хром-правила тянут var(--green));
+     • прибыльные элементы возвращаются в зелёный через --up (блок ниже).
+
+   ЕЩЁ НЕ ПЕРЕНЕСЕНО из макета (нужны разметка/JS, не только CSS):
+   бегущая биржевая строка-тикер сверху, свечные графики, стакан заявок
+   на /market. Это отдельная задача — здесь пока полноценный ре-скин.
+   ===================================================================== */
+
+html[data-ab="B"] {
+  /* --- тёплая база терминала --- */
+  --bg: #0b0906;
+  --panel: #14100a;
+  --panel-side: #0e0b07;
+  --panel-deep: #100d08;
+  --panel-main: #0d0a07;
+  --row-hover: #1a1410;
+  --row-sub: rgba(38, 31, 21, 0.5);
+  --bar-track: #1c1610;
+
+  --border: #33291c;
+  --border-dim: #261f15;
+  --border-deep: #1c1610;
+
+  --text: #d9cdb8;
+  --bright: #f4ead6;
+  --dim: #8f8069;
+  --dimmer: #5f5442;
+  --faint: #4a3f30;
+
+  /* хром-акцент = ЯНТАРЬ (var(--green) исторически = акцент интерфейса) */
+  --green: #ffab2e;
+  --green-border: #52401f;
+  --amber: #ffab2e;
+  --amber-border: #52401f;
+  --red: #ff5347;
+  --red-border: #4a2a20;
+
+  --glow: 0 0 12px rgba(255, 171, 46, 0.38);
+
+  /* рост/выгода/прибыль — отдельный «биржевой» зелёный (не хром) */
+  --up: #3fd96b;
+  --up-glow: 0 0 12px rgba(63, 217, 107, 0.35);
+
+  --r-legend: #ffab2e;  /* Легенда → янтарь, в тон терминалу */
+}
+
+/* тёплое выделение текста (в styles.css оно захардкожено зелёным) */
+html[data-ab="B"] ::selection { background: #4a3a20; color: var(--bright); }
+
+/* --- прибыльные элементы возвращаем из янтаря в зелёный --up --------------
+   (перечислены все места, где var(--green) означал «выгодно/рост», а не хром) */
+html[data-ab="B"] .pct.up,
+html[data-ab="B"] .tile .val.up,
+html[data-ab="B"] .bt-row.cost .v,
+html[data-ab="B"] .reqs-note .ok,
+html[data-ab="B"] .prof-msg.ok,
+html[data-ab="B"] .tool.have .mark,
+html[data-ab="B"] .perk-row .have.ok { color: var(--up); }
+
+html[data-ab="B"] .verdict.ok .v-main,
+html[data-ab="B"] .ttotal .craft {
+  color: var(--up); text-shadow: var(--up-glow);
+}
+html[data-ab="B"] .hp-val { color: var(--up); text-shadow: var(--up-glow); }
+
+html[data-ab="B"] .v-bar .fill.craft { background: var(--up); }
+html[data-ab="B"] .pip.on.ok { background: var(--up); border-color: var(--up); }
+html[data-ab="B"] .ttag.market { border-color: var(--up); color: var(--up); }
+
+/* --- фирменные «биржевые» кнопки: массивный низ + нажатие --------------- */
+html[data-ab="B"] .auth-login,
+html[data-ab="B"] .prof-save,
+html[data-ab="B"] .stub-back {
+  border-bottom: 3px solid var(--green-border);
+}
+html[data-ab="B"] .auth-login:active,
+html[data-ab="B"] .prof-save:active,
+html[data-ab="B"] .stub-back:active {
+  transform: translateY(2px); border-bottom-width: 1px;
+}
+
+/* сканлайны терминала чуть спокойнее тёплого фона */
+html[data-ab="B"] .fx-scan { opacity: 0.7; }
