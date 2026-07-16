@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app import config
-from app.db import chat, guides, loader, mapobjects, market, news, quests, users
+from app.db import chat, guides, loader, mapobjects, market, news, promos, quests, users
 from app.db.index import db
 from app.routers.api import router as api_router
 from app.routers.auth import router as auth_router
@@ -44,6 +44,7 @@ async def startup() -> None:
     mapobjects.init()
     guides.init()
     quests.init()
+    promos.init()
     db.load()
     store.load()
     # цены: крафт-граф + бартер-граф; история продаж — результаты обоих

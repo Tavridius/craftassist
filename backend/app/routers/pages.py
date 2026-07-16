@@ -408,6 +408,16 @@ async def guide_page(request: Request, slug: str):
                         jsonld=jsonld, image=cover)
 
 
+@router.get("/promo", response_class=HTMLResponse)
+async def promo_page(request: Request):
+    return render_index(
+        request, "/promo",
+        title="Промокоды STALZONE (Stalcraft) — актуальные рабочие коды",
+        desc="Все актуальные промокоды STALZONE (ранее Stalcraft — Сталкрафт) в одном "
+             "месте: что даёт код, до какого числа действует, копирование в один клик. "
+             "Истёкшие промокоды убираются автоматически — только рабочие.")
+
+
 @router.get("/dev", response_class=HTMLResponse)
 @router.get("/dev/{_sub}", response_class=HTMLResponse)
 async def dev_pages(request: Request, _sub: str = ""):
@@ -479,10 +489,10 @@ async def sitemap(request: Request):
     """Карта сайта: только осмысленные посадочные (без тысяч карточек — под спрос)."""
     base = _base_url(request)
     paths = ["/", "/craft", "/vygodno-kraftit", "/auction", "/market", "/builds",
-             "/barter", "/obmen", "/patches", "/guides", "/quests", "/map"]
+             "/barter", "/obmen", "/patches", "/guides", "/quests", "/map", "/promo"]
     urls = "".join(
         f"<url><loc>{_html.escape(base + p, quote=True)}</loc>"
-        f"<changefreq>{'daily' if p in ('/', '/craft', '/vygodno-kraftit', '/auction', '/market', '/barter', '/patches') else 'weekly'}</changefreq>"
+        f"<changefreq>{'daily' if p in ('/', '/craft', '/vygodno-kraftit', '/auction', '/market', '/barter', '/patches', '/promo') else 'weekly'}</changefreq>"
         f"</url>" for p in paths)
     # гайды — контентные посадочные под подтверждённый спрос («конверт с баксами» и т.п.)
     try:

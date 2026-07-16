@@ -16,7 +16,7 @@ from fastapi import APIRouter, Body, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
 from app import config
-from app.db import chat, guides, mapobjects, market, news, quests, users
+from app.db import chat, guides, mapobjects, market, news, promos, quests, users
 from app.db.index import db
 from app.routers.auth import current_user, is_admin
 from app.services import (auction, barter, builds, craft, exchange,
@@ -458,6 +458,63 @@ async def admin_guide_image(request: Request, payload: dict = Body(...)):
     config.GUIDE_UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
     (config.GUIDE_UPLOADS_DIR / name).write_bytes(blob)
     return {"url": f"/guide-uploads/{name}"}
+
+
+# ---------- промокоды: модуль на главной + страница /promo (см. db/promos) ----------
+
+@router.get("/promos")
+async def promos_list():
+    """Активные промокоды: реферальный первым, истёкшие удалены (по дате МСК)."""
+    items = promos.list_promos()
+    return {"items": items, "total": len(items)}
+
+
+def _clean_promo(payload: dict) -> dict:
+    """Санитайз/валидация промокода из DEV-редактора (форма шлёт объект целиком)."""
+    title = str(payload.get("title") or "").strip()
+    if not title:
+        raise HTTPException(422, "нужно название")
+    code = " ".join(str(payload.get("code") or "").split())
+    if not code:
+        raise HTTPException(422, "нужен сам промокод")
+    expires = str(payload.get("expires_at") or "").strip()[:16]
+    if expires:
+        if re.match(r"^\d{4}-\d{2}-\d{2}$", expires):
+            expires += "T23:59"     # дата без времени = до конца дня включительно
+        elif not re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$", expires):
+            raise HTTPException(422, "срок: YYYY-MM-DD или YYYY-MM-DDTHH:MM (МСК)")
+    # описание — доверенный HTML (пишут админы), рендерится в карточке на /promo
+    return {
+        "title": title[:200], "code": code[:64],
+        "description": str(payload.get("description") or "").strip()[:8000],
+        "image": str(payload.get("image") or "").strip()[:400],
+        "expires_at": expires,
+        "is_ref": bool(payload.get("is_ref")),
+    }
+
+
+@router.post("/admin/promos")
+async def admin_promo_save(request: Request, payload: dict = Body(...)):
+    """Создать (без id) или сохранить (с id) промокод — только админ."""
+    _require_admin(request)
+    pid = payload.get("id")
+    try:
+        pid = int(pid) if pid is not None else None
+    except (TypeError, ValueError):
+        raise HTTPException(422, "id: число")
+    saved = promos.save(pid, _clean_promo(payload))
+    if not saved:
+        raise HTTPException(404, "promo not found")
+    return saved
+
+
+@router.delete("/admin/promos/{pid}")
+async def admin_promo_delete(request: Request, pid: int):
+    """Удалить промокод (только админ)."""
+    _require_admin(request)
+    if not promos.delete(pid):
+        raise HTTPException(404, "promo not found")
+    return {"ok": True}
 
 
 # ---------- квесты: блок-схемы линеек + прохождение (см. db/quests) ----------

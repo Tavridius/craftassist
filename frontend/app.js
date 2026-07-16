@@ -875,7 +875,7 @@ async function loadDashboard() {
       && home.dataset.ts && Date.now() - +home.dataset.ts < 60000) return;
   home.innerHTML = `<div class="spinner">// ЗАГРУЗКА ГЛАВНОЙ</div>`;
   try {
-    const [top, art, watch, em, sales, fuelTop, patches, daily] = await Promise.all([
+    const [top, art, watch, em, sales, fuelTop, patches, daily, promos] = await Promise.all([
       fetch(api(`/top${availParam("?")}`)).then((r) => r.json()).catch(() => null),
       fetch(api("/artmarket/top?window=24h")).then((r) => r.json()).catch(() => null),
       fetch(api("/watch")).then((r) => r.json()).catch(() => null),
@@ -884,10 +884,11 @@ async function loadDashboard() {
       fetch(api("/fuel/top?n=20")).then((r) => r.json()).catch(() => null),
       fetch(api("/patches?limit=5")).then((r) => r.json()).catch(() => null),
       fetch(api("/build/daily")).then((r) => r.json()).catch(() => null),
+      fetch(api("/promos")).then((r) => r.json()).catch(() => null),
     ]);
     home.dataset.ts = Date.now();
     home.dataset.view = "dash";
-    renderDashboard(top, art, watch, em, sales, fuelTop, patches, daily);
+    renderDashboard(top, art, watch, em, sales, fuelTop, patches, daily, promos);
   } catch (e) {
     home.innerHTML = `<div class="empty">[!] НЕ УДАЛОСЬ ЗАГРУЗИТЬ ГЛАВНУЮ</div>`;
   }
@@ -1056,7 +1057,27 @@ function dailyBuildBody(d) {
     <div class="db-cost">АРТЕФАКТЫ <b>${fmt(b.totals.cost)} ₽</b> <span class="db-of">/ ${fmtBudgetShort(d.budget)} БЮДЖЕТ</span></div>`;
 }
 
-function renderDashboard(top, art, watch, em, sales, fuelTop, patches, daily) {
+// модуль промокодов на главной: код (клик копирует) + срок; реферальный — сверху
+function promoDashBody(p) {
+  const items = (p && p.items) || [];
+  if (!items.length)
+    return `<div class="empty-sm">АКТУАЛЬНЫХ ПРОМОКОДОВ СЕЙЧАС НЕТ.</div>`;
+  const short = (d) => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}:\d{2})$/.exec(d || "");
+    if (!m) return "БЕССРОЧНЫЙ";
+    return `ДО ${m[3]}.${m[2]}${m[4] === "23:59" ? "" : ` · ${m[4]} МСК`}`;
+  };
+  const row = (x) => `<div class="dash-promo${x.is_ref ? " ref" : ""}">
+      ${promoCodeBtn(x)}
+      <div class="dash-promo-m">
+        ${x.is_ref ? `<span class="dash-promo-ref">★ РЕФЕРАЛЬНЫЙ</span>` : ""}
+        <span class="dash-promo-exp">${short(x.expires_at)}</span>
+      </div>
+    </div>`;
+  return items.slice(0, 6).map(row).join("");
+}
+
+function renderDashboard(top, art, watch, em, sales, fuelTop, patches, daily, promos) {
   const card = (title, note, body, link, linkText) => `<section class="dash-card">
     <div class="side-head">
       <div class="side-title">▸ ${title}</div>
@@ -1124,6 +1145,7 @@ function renderDashboard(top, art, watch, em, sales, fuelTop, patches, daily) {
       <div class="dash-hero-s">Крафт, аукцион, сборки артефактов и карта Зоны — живые данные аукциона RU.</div>
     </div>
     <div class="dash-grid">
+      ${card("ПРОМОКОДЫ", "КЛИК ПО КОДУ — КОПИРУЕТ", promoDashBody(promos), "/promo", "ВСЕ ПРОМОКОДЫ")}
       ${card("КРАФТЫ ДНЯ", "ВЫГОДА В ₽ · ЛИКВИДНОСТЬ · СПРОС", crafts, "/craft", "В РАЗДЕЛ КРАФТА")}
       ${card("САМОЕ ПРОДАВАЕМОЕ", "ТОП-12 ПО ТЕМПУ ПРОДАЖ", salesBody(sales), "/market", "НА АУКЦИОН")}
       ${card("ТРЕНДЫ БИРЖИ АРТЕФАКТОВ", "ЦЕНА ЗА СУТКИ", trends, "/auction", "НА БИРЖУ")}
@@ -1136,6 +1158,7 @@ function renderDashboard(top, art, watch, em, sales, fuelTop, patches, daily) {
   </div>`;
   home.querySelectorAll("[data-nav]").forEach((el) =>
     el.addEventListener("click", () => { navigate(el.dataset.nav); }));
+  bindPromoCopy(home);
   home.querySelectorAll(".stab").forEach((b) => b.addEventListener("click", () => {
     home.querySelectorAll(".stab").forEach((x) => x.classList.toggle("on", x === b));
     home.querySelectorAll(".sales-view").forEach((v) =>
@@ -2402,6 +2425,101 @@ async function openGuide(slug) {
   </div>`;
   $("guideBack").addEventListener("click", () => { navigate("/guides"); });
   renderComments(`guide:${slug}`);
+}
+
+// ---------- промокоды: страница /promo + модуль на главной ----------
+// Клик по коду копирует его в буфер; истёкшие коды бэкенд удаляет сам.
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch (e) {  // http / старый браузер — фолбэк через скрытый textarea
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.cssText = "position:fixed;opacity:0";
+    document.body.appendChild(ta);
+    ta.select();
+    try { return document.execCommand("copy"); }
+    catch (e2) { return false; }
+    finally { ta.remove(); }
+  }
+}
+
+// повесить копирование на все кнопки-коды внутри root (страница, дашборд)
+function bindPromoCopy(root) {
+  root.querySelectorAll(".promo-code[data-code]").forEach((el) =>
+    el.addEventListener("click", async (ev) => {
+      ev.stopPropagation();
+      const ok = await copyText(el.dataset.code);
+      el.classList.add("copied");
+      const hint = el.querySelector(".pc-hint");
+      if (hint) hint.textContent = ok ? "СКОПИРОВАНО ✓" : "НЕ СКОПИРОВАЛОСЬ";
+      setTimeout(() => {
+        el.classList.remove("copied");
+        if (hint) hint.textContent = "КОПИРОВАТЬ";
+      }, 1600);
+    }));
+}
+
+const promoCodeBtn = (p) => `<button type="button" class="promo-code" data-code="${escapeHtml(p.code)}"
+    title="Нажми — код скопируется">
+    <span class="pc-code">${escapeHtml(p.code)}</span>
+    <span class="pc-hint">КОПИРОВАТЬ</span></button>`;
+
+// expires_at: "YYYY-MM-DDTHH:MM" МСК; T23:59 = «весь день включительно»
+const promoExpiry = (p) => {
+  const m = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})$/.exec(p.expires_at || "");
+  if (!m) return "БЕЗ СРОКА ДЕЙСТВИЯ";
+  const date = fmtPatchDate(m[1]).toUpperCase();
+  return m[2] === "23:59" ? `ДЕЙСТВУЕТ ДО ${date} ВКЛЮЧИТЕЛЬНО`
+                          : `ДЕЙСТВУЕТ ДО ${date}, ${m[2]} МСК`;
+};
+
+function promoCard(p) {
+  // description — доверенный HTML из DEV-редактора (как тела гайдов/квестов)
+  return `<article class="promo-card${p.is_ref ? " promo-ref" : ""}">
+    <div class="promo-b">
+      ${p.is_ref ? `<div class="promo-ref-badge">★ РЕФЕРАЛЬНЫЙ ПРОМОКОД САЙТА</div>` : ""}
+      <div class="promo-t">${escapeHtml(p.title)}</div>
+      ${promoCodeBtn(p)}
+      ${p.description ? `<div class="promo-d patch-body">${p.description}</div>` : ""}
+      <div class="promo-exp">${promoExpiry(p)}</div>
+    </div>
+    ${p.image ? `<img class="promo-img" loading="lazy" src="${escapeHtml(p.image)}" alt="">` : ""}
+  </article>`;
+}
+
+async function openPromo() {
+  home.classList.add("hidden");
+  detail.classList.add("hidden");
+  results.innerHTML = "";
+  page.classList.remove("hidden");
+  page.innerHTML = `<div class="spinner">// ЗАГРУЗКА ПРОМОКОДОВ</div>`;
+  window.scrollTo(0, 0);
+  let d;
+  try {
+    d = await fetch(api("/promos")).then((r) => r.json());
+  } catch (e) {
+    page.innerHTML = `<div class="empty">[!] ОШИБКА СЕТИ</div>`;
+    return;
+  }
+  if (location.pathname !== "/promo") return;
+  const items = d.items || [];
+  const ref = items.find((p) => p.is_ref);           // место сверху — под реферальный
+  const rest = items.filter((p) => !p.is_ref);
+  page.innerHTML = `<div class="btmod">
+    <div class="section-head">
+      <div class="section-title">▸ ПРОМОКОДЫ STALZONE</div>
+      <div class="section-note">КЛИК ПО КОДУ — КОПИРУЕТ · ИСТЁКШИЕ УБИРАЮТСЯ АВТОМАТИЧЕСКИ</div>
+    </div>
+    <div class="promo-list">
+      ${ref ? promoCard(ref) : ""}
+      ${rest.map(promoCard).join("")
+        || (!ref ? `<div class="empty-sm">АКТУАЛЬНЫХ ПРОМОКОДОВ СЕЙЧАС НЕТ — ЗАГЛЯНИ ПОЗЖЕ.</div>` : "")}
+    </div>
+  </div>`;
+  bindPromoCopy(page);
 }
 
 // ---------- комментарии под статьями ----------
@@ -4096,6 +4214,7 @@ const devSubnav = (on) => `<div class="dev-subnav">
   <a href="/dev/ab"${on === "ab" ? ' class="on"' : ""}>A/B-ТЕСТ</a>
   <a href="/dev/guides"${on === "guides" ? ' class="on"' : ""}>ГАЙДЫ</a>
   <a href="/dev/quests"${on === "quests" ? ' class="on"' : ""}>КВЕСТЫ</a>
+  <a href="/dev/promo"${on === "promo" ? ' class="on"' : ""}>ПРОМОКОДЫ</a>
 </div>`;
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
@@ -4270,6 +4389,159 @@ async function renderDevGuideForm(slug) {
       if (!r.ok) { msg.textContent = j.detail || "ошибка сохранения"; $("gfSave").disabled = false; return; }
       renderDevGuidesList();
     } catch (e) { msg.textContent = "ошибка сети"; $("gfSave").disabled = false; }
+  });
+}
+
+// ---------- ДЕВ · редактор промокодов (только админ) ----------
+async function openDevPromos() {
+  if (!devGate()) return;
+  await renderDevPromosList();
+}
+
+async function renderDevPromosList() {
+  page.innerHTML = `<div class="mapmod"><div class="spinner">// ЗАГРУЗКА ПРОМОКОДОВ</div></div>`;
+  let d;
+  try { d = await fetch(api("/promos")).then((r) => r.json()); }
+  catch (e) { page.innerHTML = `<div class="empty">[!] ОШИБКА СЕТИ</div>`; return; }
+  if (location.pathname !== "/dev/promo") return;
+  const items = d.items || [];
+  const rows = items.map((p) => `
+    <div class="gadm-row">
+      <div class="gadm-row-i">
+        <div class="gadm-row-t">${p.is_ref ? `<span class="dash-promo-ref">★ РЕФ</span> ` : ""}${escapeHtml(p.title)}
+          · <b>${escapeHtml(p.code)}</b></div>
+        <div class="gadm-row-s">${p.expires_at
+          ? `до ${escapeHtml(p.expires_at.replace("T", " "))} МСК (потом удалится сам)` : "бессрочный"}</div>
+      </div>
+      <div class="gadm-row-a">
+        <button class="gadm-btn" data-edit="${p.id}">РЕД.</button>
+        <button class="gadm-btn gadm-del" data-del="${p.id}" title="Удалить">✕</button>
+      </div>
+    </div>`).join("");
+  page.innerHTML = `<div class="mapmod">
+    <div class="section-head">
+      <div class="section-title">▸ ДЕВ · ПРОМОКОДЫ</div>
+      <div class="section-note">Модуль на главной + страница /promo. Истёкшие удаляются автоматически
+        (по дате МСК). «Реферальный» — всегда один и закреплён сверху.</div>
+    </div>
+    ${devSubnav("promo")}
+    <button class="gadm-new" id="padmNew">＋ НОВЫЙ ПРОМОКОД</button>
+    <div class="gadm-list">${rows || `<div class="empty-sm">ПРОМОКОДОВ ПОКА НЕТ.</div>`}</div>
+  </div>`;
+  $("padmNew").addEventListener("click", () => renderDevPromoForm(null));
+  page.querySelectorAll("[data-edit]").forEach((b) =>
+    b.addEventListener("click", () =>
+      renderDevPromoForm(items.find((p) => p.id === +b.dataset.edit) || null)));
+  page.querySelectorAll("[data-del]").forEach((b) =>
+    b.addEventListener("click", async () => {
+      if (!confirm("Удалить промокод? Он уйдёт с главной и со страницы /promo.")) return;
+      await fetch(api(`/admin/promos/${b.dataset.del}`), { method: "DELETE" }).catch(() => {});
+      renderDevPromosList();
+    }));
+}
+
+function renderDevPromoForm(p) {
+  const isNew = !p;
+  p = p || { title: "", code: "", description: "", image: "", expires_at: "", is_ref: false };
+  // expires_at "YYYY-MM-DDTHH:MM" → инпуты даты и времени (23:59 = «весь день», время пустое)
+  const em = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})$/.exec(p.expires_at || "");
+  const expDate = em ? em[1] : "", expTime = em && em[2] !== "23:59" ? em[2] : "";
+  page.innerHTML = `<div class="mapmod">
+    <div class="section-head">
+      <div class="section-title">▸ ДЕВ · ПРОМОКОДЫ · ${isNew ? "НОВЫЙ" : "РЕДАКТИРОВАНИЕ"}</div>
+    </div>
+    ${devSubnav("promo")}
+    <div class="gform">
+      <label class="gform-l">НАЗВАНИЕ · что даёт промокод
+        <input id="pfTitle" value="${escapeHtml(p.title)}" placeholder="Промокод ко дню рождения STALCRAFT"></label>
+      <label class="gform-l">ПРОМОКОД
+        <input id="pfCode" value="${escapeHtml(p.code)}" placeholder="STALZONE2026" autocomplete="off"></label>
+      <div class="gform-l">ОПИСАНИЕ · HTML-новость для страницы /promo (на главной не показывается)
+        <div id="pfBar"></div>
+        <textarea id="pfDesc" rows="10" class="gform-html" spellcheck="false">${escapeHtml(p.description)}</textarea></div>
+      <div class="gform-upload">
+        <input type="file" id="pfImg" accept="image/png,image/jpeg,image/webp,image/gif">
+        <button type="button" class="gadm-btn" id="pfUpload">ЗАГРУЗИТЬ И ВСТАВИТЬ В ОПИСАНИЕ</button>
+        <span id="pfUpMsg" class="gform-msg"></span>
+      </div>
+      <label class="gform-l">КАРТИНКА КАРТОЧКИ · URL (не обязательно, справа от текста)
+        <input id="pfImage" value="${escapeHtml(p.image)}" placeholder="/guide-uploads/… или /guide-img/…"></label>
+      <div class="gform-cover"><img id="pfImageImg" alt="" src="${escapeHtml(p.image || "")}" ${p.image ? "" : 'style="display:none"'}></div>
+      <div class="gform-row">
+        <label class="gform-l">ДЕЙСТВУЕТ ДО · дата (пусто = бессрочный)
+          <input id="pfExp" type="date" value="${escapeHtml(expDate)}"></label>
+        <label class="gform-l">ВРЕМЯ МСК · пусто = весь день включительно
+          <input id="pfExpT" type="time" value="${escapeHtml(expTime)}"></label>
+        <label class="gform-chk"><input id="pfRef" type="checkbox" ${p.is_ref ? "checked" : ""}>
+          РЕФЕРАЛЬНЫЙ · закрепить сверху (единственный)</label>
+      </div>
+      <div class="gform-actions">
+        <button type="button" class="gadm-save" id="pfSave">СОХРАНИТЬ</button>
+        <button type="button" class="gadm-btn" id="pfPrevBtn">ОБНОВИТЬ ПРЕДПРОСМОТР ⟳</button>
+        <button type="button" class="gadm-btn" id="pfCancel">◂ К СПИСКУ</button>
+        <span id="pfMsg" class="gform-msg"></span>
+      </div>
+      <div class="gform-prev-h">ПРЕДПРОСМОТР ОПИСАНИЯ</div>
+      <article class="patch-article"><div class="patch-body gform-prev" id="pfPrev"></div></article>
+    </div>
+  </div>`;
+
+  $("pfCancel").addEventListener("click", () => renderDevPromosList());
+  $("pfImage").addEventListener("input", () => {
+    const im = $("pfImageImg"), v = $("pfImage").value.trim();
+    im.src = v; im.style.display = v ? "" : "none";
+  });
+  const renderPrev = () => { $("pfPrev").innerHTML = $("pfDesc").value; };
+  fmtToolbar($("pfBar"), $("pfDesc"), renderPrev);
+  $("pfPrevBtn").addEventListener("click", renderPrev);
+  renderPrev();
+
+  // загрузка картинки — тем же аплоадом, что у гайдов (кладёт в /guide-uploads);
+  // тег <img> вставляется в конец описания
+  $("pfUpload").addEventListener("click", () => {
+    const f = $("pfImg").files[0], msg = $("pfUpMsg");
+    if (!f) { msg.textContent = "выбери файл"; return; }
+    const rd = new FileReader();
+    rd.onload = async () => {
+      msg.textContent = "загрузка…";
+      try {
+        const r = await fetch(api("/admin/guides/image"), {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ data: rd.result, filename: f.name }),
+        });
+        const j = await r.json();
+        if (!r.ok) { msg.textContent = j.detail || "ошибка загрузки"; return; }
+        const ta = $("pfDesc");
+        ta.value = `${ta.value}\n<img src="${j.url}" alt="">\n`;
+        msg.innerHTML = `готово, вставлено в описание: <b>${escapeHtml(j.url)}</b>`;
+        renderPrev();
+      } catch (e) { msg.textContent = "ошибка сети"; }
+    };
+    rd.readAsDataURL(f);
+  });
+
+  $("pfSave").addEventListener("click", async () => {
+    const msg = $("pfMsg");
+    if (!$("pfTitle").value.trim()) { msg.textContent = "нужно название"; return; }
+    if (!$("pfCode").value.trim()) { msg.textContent = "нужен сам промокод"; return; }
+    const expD = $("pfExp").value, expT = $("pfExpT").value;
+    const body = {
+      id: isNew ? undefined : p.id,
+      title: $("pfTitle").value.trim(), code: $("pfCode").value.trim(),
+      description: $("pfDesc").value.trim(), image: $("pfImage").value.trim(),
+      expires_at: expD ? (expT ? `${expD}T${expT}` : expD) : "",
+      is_ref: $("pfRef").checked,
+    };
+    $("pfSave").disabled = true; msg.textContent = "сохранение…";
+    try {
+      const r = await fetch(api("/admin/promos"), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const j = await r.json();
+      if (!r.ok) { msg.textContent = j.detail || "ошибка сохранения"; $("pfSave").disabled = false; return; }
+      renderDevPromosList();
+    } catch (e) { msg.textContent = "ошибка сети"; $("pfSave").disabled = false; }
   });
 }
 
@@ -5006,6 +5278,10 @@ function route() {
     strip.classList.add("hidden");
     setNav("dev"); openDevQuests(); return;
   }
+  if (path === "/dev/promo") {
+    strip.classList.add("hidden");
+    setNav("dev"); openDevPromos(); return;
+  }
   if ((mm = path.match(/^\/map(?:\/([a-z0-9_-]+))?$/))) {
     strip.classList.add("hidden");
     setNav("map"); openMap(mm[1] || null); return;
@@ -5034,6 +5310,10 @@ function route() {
   if ((mm = path.match(/^\/quests(?:\/(\d+))?$/))) {
     strip.classList.add("hidden"); detail.classList.add("hidden");
     setNav("quests"); openQuests(mm[1] ? +mm[1] : null); return;
+  }
+  if (path === "/promo") {
+    strip.classList.add("hidden"); detail.classList.add("hidden");
+    setNav("promo"); openPromo(); return;
   }
   if (path === "/guides") {
     strip.classList.add("hidden"); detail.classList.add("hidden");
