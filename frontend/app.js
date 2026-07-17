@@ -2451,6 +2451,7 @@ function bindPromoCopy(root) {
   root.querySelectorAll(".promo-code[data-code]").forEach((el) =>
     el.addEventListener("click", async (ev) => {
       ev.stopPropagation();
+      if (el.dataset.ref) ymGoal("promo_ref_click");   // цель Я.Метрики: клик по реферальному промокоду
       const ok = await copyText(el.dataset.code);
       el.classList.add("copied");
       const hint = el.querySelector(".pc-hint");
@@ -2462,7 +2463,7 @@ function bindPromoCopy(root) {
     }));
 }
 
-const promoCodeBtn = (p) => `<button type="button" class="promo-code" data-code="${escapeHtml(p.code)}"
+const promoCodeBtn = (p) => `<button type="button" class="promo-code" data-code="${escapeHtml(p.code)}"${p.is_ref ? ' data-ref="1"' : ''}
     title="Нажми — код скопируется">
     <span class="pc-code">${escapeHtml(p.code)}</span>
     <span class="pc-hint">КОПИРОВАТЬ</span></button>`;
