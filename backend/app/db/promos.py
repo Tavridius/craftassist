@@ -76,8 +76,11 @@ def _purge_expired_locked() -> None:
     now = datetime.now(MSK).strftime("%Y-%m-%dT%H:%M")
     cur = _conn.execute(
         "DELETE FROM promos WHERE expires_at != '' AND expires_at < ?", (now,))
+    # коммит ВСЕГДА: DELETE даже без удалённых строк открывает неявную транзакцию,
+    # и без commit соединение держит write-lock — внешние писатели (docker exec,
+    # скрипты) ловят «database is locked»
+    _conn.commit()
     if cur.rowcount:
-        _conn.commit()
         logger.info("promos: purged %d expired", cur.rowcount)
 
 
