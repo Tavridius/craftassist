@@ -109,6 +109,10 @@ ART_WATCH_HOURS = sorted({int(h) for h in os.getenv("ART_WATCH_HOURS", "1,7,13,1
 ART_WATCH_MAX_PAGES = int(os.getenv("ART_WATCH_MAX_PAGES", "3"))  # страниц истории (по 200) на артефакт за снапшот
 ART_MIN_SALES = int(os.getenv("ART_MIN_SALES", "5"))   # мин. продаж в окне, чтобы верить средней
 ART_KEEP_DAYS = int(os.getenv("ART_KEEP_DAYS", "35"))  # ретенция агрегатов, дней
+# Отсечка завышенных продаж: сделку дороже ART_OUTLIER_FACTOR × (мин. цены
+# корзины в снапшоте) в агрегаты не берём. Так «продажи за 50 цен» (перевод
+# валюты через аук) не задирают среднюю. Минимум манипулировать нельзя.
+ART_OUTLIER_FACTOR = float(os.getenv("ART_OUTLIER_FACTOR", "6"))
 
 # --- Живые лоты артефактов (цены сборок до накопления недели истории) ---
 ART_LOTS_ENABLED = os.getenv("ART_LOTS_ENABLED", "1") not in ("0", "false", "False")

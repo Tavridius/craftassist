@@ -32,8 +32,10 @@ def _parse_time(t) -> datetime | None:
         return None
 
 
-def bucket_page(prices: list, floor: datetime, buckets: dict) -> tuple[datetime | None, bool]:
-    """Раскладывает страницу истории (новые → старые) по корзинам (qlt, ptn).
+def bucket_page(prices: list, floor: datetime, raw: dict) -> tuple[datetime | None, bool]:
+    """Раскладывает страницу истории (новые → старые) по корзинам (qlt, ptn),
+    собирая сырые цены за 1 шт в raw[(qlt, ptn)]. Отсечку выбросов и агрегаты
+    считает finalize_buckets по всей выборке снапшота (нужен минимум корзины).
 
     Учитываются только продажи новее floor и в новом формате (есть qlt);
     legacy-записи (до ~2020: art_type/stats_random) пропускаются.
@@ -53,14 +55,23 @@ def bucket_page(prices: list, floor: datetime, buckets: dict) -> tuple[datetime 
         price, amount = e.get("price"), e.get("amount") or 1
         if qlt is None or not price or amount <= 0:
             continue
-        unit = price / amount
-        key = (int(qlt), int(a.get("ptn") or 0))
-        b = buckets.setdefault(key, {"n": 0, "sum": 0.0, "min": unit, "max": unit})
-        b["n"] += 1
-        b["sum"] += unit
-        b["min"] = min(b["min"], unit)
-        b["max"] = max(b["max"], unit)
+        raw.setdefault((int(qlt), int(a.get("ptn") or 0)), []).append(price / amount)
     return newest, False
+
+
+def finalize_buckets(raw: dict) -> dict:
+    """Сырые цены корзин {(qlt, ptn): [цена/шт]} → агрегаты {n, sum, min, max},
+    отсекая завышенные выбросы: продажу дороже ART_OUTLIER_FACTOR × (мин. цены
+    корзины в снапшоте) отбрасываем. Так перевод валюты через продажу «за 50
+    цен» не задирает среднюю. Минимум корзины манипулировать нельзя — завышенная
+    сделка его не двигает; при n=1 сравнивать не с чем, точку оставляем как есть.
+    """
+    out = {}
+    for key, units in raw.items():
+        cap = min(units) * config.ART_OUTLIER_FACTOR
+        kept = [u for u in units if u <= cap]  # минимум всегда проходит — kept непуст
+        out[key] = {"n": len(kept), "sum": sum(kept), "min": min(kept), "max": max(kept)}
+    return out
 
 
 class ArtefactWatch:
@@ -103,7 +114,7 @@ class ArtefactWatch:
             step_h = 24 / max(len(config.ART_WATCH_HOURS), 1)
             floor = datetime.now(timezone.utc) - timedelta(hours=step_h)
 
-        buckets: dict = {}
+        raw: dict = {}              # (qlt, ptn) -> [цена/шт]; фильтр — в finalize_buckets
         all_prices: list = []       # все страницы — в sales_log (годовой график)
         newest_all: datetime | None = None
         offset = 0
@@ -116,7 +127,7 @@ class ArtefactWatch:
             if not prices:
                 break
             all_prices.extend(prices)
-            newest, reached_floor = bucket_page(prices, floor, buckets)
+            newest, reached_floor = bucket_page(prices, floor, raw)
             if newest and (newest_all is None or newest > newest_all):
                 newest_all = newest
             if reached_floor or len(prices) < 200:
@@ -124,6 +135,7 @@ class ArtefactWatch:
             offset += len(prices)
         # у sales_log своя граница sale_ts — страницы передаём одним вызовом
         sales_log.record(iid, all_prices)
+        buckets = finalize_buckets(raw)
 
         # границу двигаем только ВПЕРЁД: без новых продаж newest со страницы старее floor
         new_ts = newest_all.isoformat() if newest_all and newest_all > floor else None

@@ -194,7 +194,11 @@ async def fetch_history(client: httpx.AsyncClient, item_id: str) -> dict:
             units.append(unit)
             if t:
                 dated.append((t, unit))
-    avg = round(sum(units) / len(units)) if units else None
+    # медиана, а не среднее: одна продажа «за 50 цен» (перевод валюты через
+    # аук) не должна задирать цену продажи. Медианные recent/last ниже и так
+    # устойчивы — выравниваем и «среднюю».
+    su = sorted(units)
+    avg = round(su[len(su) // 2]) if su else None
 
     # реальная цена продажи: последняя сделка + медиана 10 свежих сделок
     # (мин. выкуп — цена ХОТЕЛОК продавцов; фактические сделки обычно ниже)
