@@ -22,6 +22,12 @@ from app.services.market_scan import scan
 
 logger = logging.getLogger(__name__)
 
+# версия формата записи истории: при добавлении поля поднять — записи прошлого
+# формата считаются просроченными и перечитываются в первом же круге, не ждя
+# TTL (у неликвида это 6 часов, и всё, что считает по новому полю, столько же
+# показывало бы «данных нет»). 2 — добавлен last_sale_ts (возраст цены продажи).
+HIST_FMT = 2
+
 
 class PriceStore:
     def __init__(self) -> None:
@@ -138,7 +144,8 @@ class PriceStore:
         них интервал сокращаем так, чтобы успевать до вытеснения окна.
         """
         h = self.history.get(iid)
-        if not h or not h.get("ts") or h.get("recent_sales") is None:
+        if not h or not h.get("ts") or h.get("recent_sales") is None \
+                or h.get("hfmt") != HIST_FMT:
             return True   # ещё не снимали (или старый формат кэша) — снять сейчас
         ttl = config.SCAN_HIST_TTL_MIN * 60
         sph = h.get("sales_per_hour") or 0.0
@@ -222,6 +229,7 @@ class PriceStore:
                                  "recent_units": r.get("recent_units") or [],
                                  "recent_sales": r.get("recent_sales") or [],
                                  "last_sale_ts": r.get("last_sale_ts"),
+                                 "hfmt": HIST_FMT,
                                  "ts": time.time()}
             scan.on_history(iid)   # ДЕВ-сканер: свежая история → пересчёт сделки
         self._save_ctr += 1
