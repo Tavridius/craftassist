@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <title>Калькулятор крафта STALZONE (Stalcraft) — цены аукциона и выгода</title>
+  <title>Калькулятор крафта STALZONE (Сталкрафт) — цены аукциона и выгода</title>
   <meta name="description" content="Помощник крафта STALZONE (ранее Stalcraft — Сталкрафт): дерево крафта, живые цены аукциона RU и вердикт — выгодно ли крафтить или дешевле купить. 2000+ предметов, 350+ рецептов верстака.">
   <meta name="keywords" content="stalzone, stalcraft, сталкрафт, крафт stalzone, калькулятор крафта сталкрафт, рецепты верстака, цены аукциона stalcraft, выгода крафта, stalzone helper">
   <link rel="canonical" href="https://stalzone-helper.ru/">
@@ -12,12 +12,12 @@
 
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="StalZone Helper">
-  <meta property="og:title" content="Калькулятор крафта STALZONE (Stalcraft) — цены аукциона и выгода">
+  <meta property="og:title" content="Калькулятор крафта STALZONE (Сталкрафт) — цены аукциона и выгода">
   <meta property="og:description" content="Дерево крафта, живые цены аукциона и вердикт: скрафтить или купить. 2000+ предметов, 350+ рецептов верстака.">
   <meta property="og:url" content="https://stalzone-helper.ru/">
   <meta property="og:locale" content="ru_RU">
   <meta name="twitter:card" content="summary">
-  <meta name="twitter:title" content="Калькулятор крафта STALZONE (Stalcraft)">
+  <meta name="twitter:title" content="Калькулятор крафта STALZONE (Сталкрафт)">
   <meta name="twitter:description" content="Дерево крафта, живые цены аукциона и вердикт: скрафтить или купить.">
 
   <script type="application/ld+json">
@@ -35,9 +35,11 @@
   }
   </script>
 
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&display=swap" rel="stylesheet">
+  <!-- Шрифт свой (frontend/fonts, @font-face в styles.css) — Google Fonts из
+       критического пути убран. Подмножества для русского интерфейса греем
+       заранее: иначе браузер узнает о них только разобрав styles.css. -->
+  <link rel="preload" href="/fonts/jetbrains-mono-cyrillic.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/fonts/jetbrains-mono-latin.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="styles.css">
 
   <!-- Yandex.Metrika counter -->
@@ -49,7 +51,12 @@
           k=e.createElement(t),a=e.getElementsByTagName(t)[0],k.async=1,k.src=r,a.parentNode.insertBefore(k,a)
       })(window, document,'script','https://mc.yandex.ru/metrika/tag.js?id=110585101', 'ym');
 
-      ym(110585101, 'init', {ssr:true, webvisor:true, clickmap:true, ecommerce:"dataLayer", referrer: document.referrer, url: location.href, accurateTrackBounce:true, trackLinks:true, trackHash:true});
+      // webvisor выключен: запись сессий писала DOM-мутации ровно во время загрузки
+      // (а чат обновляет DOM каждые 5 с) — самый тяжёлый чужой скрипт на странице.
+      // Понадобятся записи сессий — вернуть webvisor:true. Остальное не трогаем:
+      // clickmap дешёвый, а accurateTrackBounce задаёт правило отказа (15 с) —
+      // менять его нельзя, иначе прошлые данные станут несравнимы.
+      ym(110585101, 'init', {ssr:true, webvisor:false, clickmap:true, ecommerce:"dataLayer", referrer: document.referrer, url: location.href, accurateTrackBounce:true, trackLinks:true, trackHash:true});
   </script>
   <noscript><div><img src="https://mc.yandex.ru/watch/110585101" style="position:absolute; left:-9999px;" alt="" /></div></noscript>
   <!-- /Yandex.Metrika counter -->
@@ -75,12 +82,14 @@
 
   <nav class="topnav" id="topnav" aria-label="Разделы">
     <a href="/" data-sec="home">ГЛАВНАЯ</a>
+    <a href="/items" data-sec="itemdb">БАЗА</a>
     <a href="/market" data-sec="market">АУКЦИОН</a>
     <a href="/auction" data-sec="auction">БИРЖА</a>
     <a href="/craft" data-sec="craft">КРАФТ</a>
     <a href="/barter" data-sec="barter">БАРТЕР</a>
     <a href="/obmen" data-sec="obmen">ОБМЕНКИ</a>
     <a href="/builds" data-sec="builds">СБОРКИ</a>
+    <a href="/operations" data-sec="operations">ОПЕРАЦИИ</a>
     <a href="/patches" data-sec="patches">ПАТЧИ</a>
     <a href="/map" data-sec="map">КАРТА <span class="nav-dev">DEV</span></a>
     <a href="/quests" data-sec="quests">КВЕСТЫ <span class="nav-dev">DEV</span></a>
@@ -105,6 +114,9 @@
     <section id="detail" class="detail hidden"></section>
     <section id="page" class="page hidden"></section>
     <section id="home" class="home"></section>
+    <!-- серверный SEO-контент под инструментом: заполняется per-route в pages.py,
+         прячется во фронте (route()) при уходе с целевого пути -->
+    <section id="seoProse" class="seo-prose" hidden></section>
   </main>
 
   <footer class="page-footer">
@@ -117,6 +129,14 @@
       <a href="/auction">Биржа артефактов</a> ·
       <a href="/builds">Калькулятор сборок</a>
     </p>
+    <p class="foot-legal">
+      <span class="age-badge" title="Материалы предназначены для лиц старше 18 лет">18+</span>
+      <a href="/privacy">Политика конфиденциальности</a> ·
+      <a href="/terms">Пользовательское соглашение</a>
+    </p>
+    <p class="foot-disclaimer">Неофициальный фанатский проект. Не связан с EXBO
+    (AABB&nbsp;Games) и разработчиками игры STALCRAFT / STALZONE. Все товарные знаки и
+    игровые материалы принадлежат их правообладателям. Данные носят справочный характер.</p>
   </footer>
 
   <noscript>

@@ -6,14 +6,22 @@
     obtain(вход)     = min( купить на ауке , собрать бартером ) — рекурсивно,
                        т.к. входы бывают трейд-ином прошлого тира (броня/оружие)
 
-Вход без лотов и без своей бартер-цепочки — «фарм» (флешки, жетоны, растения):
+Вход без лотов и без своей бартер-цепочки — «фарм» (флешки, растения, квестовые):
 он не участвует в деньгах, оффер помечается missing и в рейтинг «чисто за
-деньги» не попадает. Выгода — как в крафте: реальная цена продажи (медиана
-свежих сделок, fallback мин. выкуп) минус комиссия аука против стоимости.
+деньги» не попадает. Валюты активности (жетоны/талоны, `db.farm_currency`) —
+фарм ВСЕГДА: лоты на ауке у них бывают, но по этим ценам их никто не закупает.
+
+Выгода — как в крафте: реальная цена продажи минус комиссия аука против
+стоимости, но считаем её только там, где цене продажи можно верить: нужна
+сделка не старше BARTER_SELL_FRESH_DAYS. Половина результатов бартера — оружие
+и снаряга, которые на ауке почти не ходят, а последние «сделки» по ним — перевод
+валюты между аккаунтами (стартовый ПМ за 700 тыс. ₽). Устаревшая цена продажи
+давала +271329% на предмете, который продали один раз три месяца назад.
 """
 import math
 import os
 import time
+from datetime import datetime, timezone
 
 from app import config
 from app.db.index import db
@@ -22,6 +30,15 @@ from app.services.price_store import store
 
 BARTER_TTL = int(os.getenv("BARTER_TTL", "60"))          # кэш рейтинга, сек
 BARTER_MAX_DEPTH = int(os.getenv("BARTER_MAX_DEPTH", "6"))  # глубина трейд-ин цепочек
+# выгоду считаем только по цене, подтверждённой недавней сделкой: у неликвида
+# «медиана 10 свежих продаж» бывает медианой за два года (Тюльпан — 2109 дней)
+BARTER_SELL_FRESH_DAYS = float(os.getenv("BARTER_SELL_FRESH_DAYS", "14"))
+# перевод валюты через аук: предмет отдают за копейки, а на ауке он «стоит» в
+# сотни раз больше (ПМ — бартер за 340 ₽, лоты от 500 тыс. ₽). Порог по цене
+# бартера, а не по одному отношению: дорогие обмены с большим множителем
+# бывают настоящими (детектор «Свеча» — 127 тыс. ₽ входов против 5 млн лота)
+BARTER_JUNK_COST = float(os.getenv("BARTER_JUNK_COST", "5000"))
+BARTER_JUNK_RATIO = float(os.getenv("BARTER_JUNK_RATIO", "100"))
 
 _cache: dict | None = None
 _cache_ts = 0.0
@@ -43,6 +60,13 @@ def _obtain(iid: str, path: tuple, memo: dict, needed: int = 1) -> dict:
     key = (iid, needed)
     if key in memo:
         return memo[key]
+    # валюта активности (жетоны/талоны) — всегда фарм, даже если на ауке есть лоты:
+    # «Боевой жетон» там 4 000 ₽/шт, и вход «1000 жетонов» давал 4 млн ₽
+    # себестоимости. Зарабатывают их в боях, а не покупают.
+    if iid in db.farm_currency:
+        res = {"cost": None, "source": None, "disasm": None}
+        memo[key] = res
+        return res
     market = craft.unit_buy_price(iid, needed) if store.get(iid)["available"] else None
     best, source, disasm = market, ("market" if market is not None else None), None
     # разбор родителя с аука (напр. блок данных «Гамма» -> 20 фрагментов):
@@ -102,16 +126,47 @@ def _offer_cost(off: dict, path: tuple, memo: dict, qty: int = 1) -> dict:
             "foreign": foreign}
 
 
+def _sale_age_days(ts: str | None) -> float | None:
+    """Сколько дней прошло с последней сделки (None — время неизвестно)."""
+    if not ts:
+        return None
+    try:
+        t = datetime.fromisoformat(ts)
+    except ValueError:
+        return None
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - t).total_seconds() / 86400
+
+
 def _sell_side(iid: str) -> dict:
-    """Цена продажи результата: реальные сделки, fallback мин. выкуп."""
+    """Цена продажи результата: реальные сделки, fallback мин. выкуп.
+
+    sell_fresh — цена подтверждена сделкой не старше BARTER_SELL_FRESH_DAYS.
+    Без времени последней сделки (история ещё не перечитана после обновления)
+    считаем несвежей: воркер добавит время на следующем обходе.
+    """
     sp = craft.sell_price(iid)
     buyout = (store.prices.get(iid) or {}).get("min_buyout")
     base = sp if sp is not None else buyout
+    age = _sale_age_days((store.history.get(iid) or {}).get("last_sale_ts"))
     return {
         "sell_price": sp, "min_buyout": buyout,
         "sell_basis": "sales" if sp is not None else ("buyout" if buyout else None),
         "sell_net": round(base * (1 - config.AUCTION_FEE)) if base else None,
+        "sale_age_days": round(age, 1) if age is not None else None,
+        "sell_fresh": age is not None and age <= BARTER_SELL_FRESH_DAYS,
     }
+
+
+def _trust(cost: float, sell: dict) -> str:
+    """Можно ли верить выгоде строки: ok | stale (цена продажи без свежих сделок)
+    | transfer (рынок предмета — перевод валюты между аккаунтами)."""
+    if not sell["sell_fresh"]:
+        return "stale"
+    if cost <= BARTER_JUNK_COST and (sell["sell_net"] or 0) > cost * BARTER_JUNK_RATIO:
+        return "transfer"
+    return "ok"
 
 
 def _brief(iid: str) -> dict:
@@ -139,9 +194,10 @@ def compute_top() -> dict:
                                           e[0]["total"] if e[0]["total"] is not None
                                           else e[0]["partial"]))
             cost, off = evaluated[0]
-            pct = None
+            pct, trust = None, None
             if cost["total"] and sell["sell_net"] and cost["total"] > 0:
                 pct = round((sell["sell_net"] - cost["total"]) / cost["total"] * 100)
+                trust = _trust(cost["total"], sell)
             rows.append({
                 **_brief(iid),
                 "category": _category(iid),
@@ -157,9 +213,12 @@ def compute_top() -> dict:
                 "n_offers": len(b["offers"]),
                 **sell,
                 "pct": pct,
+                "trust": trust,
                 "sales_per_hour": hist.get("sales_per_hour"),
             })
-    rows.sort(key=lambda r: (r["pct"] is None, -(r["pct"] or 0)))
+    # сперва выгода, которой можно верить: без этого верх рейтинга занимали
+    # неликвид с ценой двухлетней давности и стартовый хлам «за 500 тысяч»
+    rows.sort(key=lambda r: (r["trust"] != "ok", r["pct"] is None, -(r["pct"] or 0)))
     _cache = {
         "rows": rows,
         "settlements": [{"key": k, "name": v} for k, v in

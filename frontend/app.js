@@ -10,6 +10,22 @@ function ymGoal(name) {
   try { if (window.ym) ym(YM_ID, "reachGoal", name); } catch (e) { /* счётчик не загрузился */ }
 }
 
+// SPA-переходы Метрика сама не видит: navigate() меняет URL через pushState, а
+// счётчик считает хит только на загрузке документа. Без этого «глубина просмотра»
+// показывала число серверных загрузок, а не поведение — переходы между разделами
+// внутри страницы просто не попадали в отчёты.
+// Дедуп по pathname: route() зовут и без смены адреса (тумблер режима, сброс
+// фильтров), а поиск правит только query — хит на каждую букву не нужен.
+let ymLastPath = location.pathname;   // первый хит уже отправил init в <head>
+function ymHit() {
+  if (location.pathname === ymLastPath) return;
+  const referer = location.origin + ymLastPath;
+  ymLastPath = location.pathname;
+  try {
+    if (window.ym) ym(YM_ID, "hit", location.pathname + location.search, { referer });
+  } catch (e) { /* счётчик не загрузился */ }
+}
+
 // A/B-тест дизайна: сервер проставил вариант в <html data-ab="A|B"> (только когда
 // тест включён). Шлём его параметром визита — в Метрике все отчёты (глубина, время,
 // отказы) сегментируются условием «Параметры визита → ab_design = A/B».
@@ -171,7 +187,7 @@ async function loadAuth() {
   } catch (e) { ME = null; authBox.innerHTML = ""; }
   renderModeToggle();
   renderOnboard();
-  chatDockRender();   // форма чата зависит от авторизации
+  chatAuthChanged();  // форма чата зависит от авторизации (лента уже загружена)
   // DEV-вкладка (редактор карты) — только админам (ADMIN_USER_IDS)
   document.querySelectorAll(".nav-adm").forEach((el) =>
     el.classList.toggle("hidden", !(ME && ME.is_admin)));
@@ -281,9 +297,18 @@ function authModalHtml(tab) {
         <input name="password" type="password" autocomplete="new-password" required minlength="8"></label>
       <label>ПОВТОР ПАРОЛЯ
         <input name="password2" type="password" autocomplete="new-password" required minlength="8"></label>
+      <label class="auth-consent">
+        <input name="consent" type="checkbox" required>
+        <span>Я принимаю <a href="/terms" target="_blank" rel="noopener">Пользовательское
+        соглашение</a> и даю согласие на обработку персональных данных в соответствии
+        с <a href="/privacy" target="_blank" rel="noopener">Политикой конфиденциальности</a>.
+        Мне есть 18 лет.</span></label>
       <div class="auth-err" data-err></div>
       <button type="submit" class="auth-submit">СОЗДАТЬ АККАУНТ</button>
       ${exboBlock("РЕГИСТРАЦИЯ ЧЕРЕЗ EXBO")}
+      <div class="auth-legal-note">Продолжая через EXBO, вы принимаете
+        <a href="/terms" target="_blank" rel="noopener">Соглашение</a> и
+        <a href="/privacy" target="_blank" rel="noopener">Политику конфиденциальности</a>.</div>
     </form>
 
     <form class="auth-pane" data-pane="reset" autocomplete="on">
@@ -369,8 +394,14 @@ async function onAuthSubmit(e) {
   if (pane === "signin") {
     url = "/auth/signin"; payload = { ident: val("ident"), password: val("password") }; goal = "login";
   } else if (pane === "register") {
+    const consent = (form.querySelector('[name="consent"]') || {}).checked;
+    if (!consent) {
+      errEl.textContent = "Нужно принять соглашение и согласие на обработку данных";
+      return;
+    }
     url = "/auth/register";
-    payload = { email: val("email"), login: val("login"), password: val("password") };
+    payload = { email: val("email"), login: val("login"),
+                password: val("password"), consent: true };
     goal = "signup";
   } else if (pane === "reset") {
     url = "/auth/reset"; payload = { email: val("email") };
@@ -585,6 +616,10 @@ function tilesBlock(d, chosen) {
   const fuelTile = f && f.enabled ? `
     <div class="tile"><div class="lbl">ТОПЛИВО / ШТ</div>
       <div class="val amber">${f.unit_fuel_cost != null ? fmt(f.unit_fuel_cost) + " ₽" : "—"}</div></div>` : "";
+  // энергия всего дерева: операция корня + дробные операции крафтимых компонентов
+  const treeE = chosen ? Math.round(calcTreeEnergy(chosen)) : null;
+  const eSub = treeE != null && chosen.energy != null && treeE !== Math.round(chosen.energy)
+    ? `<div class="tile-sub" title="С учётом крафта компонентов дерева (на 1 крафт-операцию)">ВСЁ ДЕРЕВО ~${fmt(treeE)}</div>` : "";
   return `<div class="tiles ${fuelTile ? "five" : ""}">
     <div class="tile"><div class="lbl">СЕБЕСТОИМОСТЬ${fuelTile ? " +⛽" : ""}</div>
       <div class="val">${d.craft_cost != null ? fmt(d.craft_cost) + " ₽" : "—"}</div></div>
@@ -593,12 +628,70 @@ function tilesBlock(d, chosen) {
     <div class="tile"><div class="lbl">МАРЖА / ШТ</div>
       <div class="val ${diffCls}">${diffVal}</div></div>
     <div class="tile"><div class="lbl">ЭНЕРГИЯ ВЕРСТАКА</div>
-      <div class="val amber">${chosen && chosen.energy != null ? fmt(chosen.energy) : "—"}</div></div>
+      <div class="val amber">${chosen && chosen.energy != null ? fmt(chosen.energy) : "—"}</div>${eSub}</div>
     ${fuelTile}
   </div>`;
 }
 
-// плоский список строк дерева с ASCII-префиксами ├─ / └─
+// ---- пересчёт дерева на клиенте (замены «крафт → аук», без похода на бэк) ----
+// TREE_BUY — id компонентов, переключённых на закупку. Живёт только в текущей
+// карточке: renderDetail() всегда начинает с чистого листа (стандартное дерево).
+let DETAIL_D = null;
+let TREE_BUY = new Set();
+
+function calcEffUnit(n) {
+  // цена получения 1 шт с учётом замен (зеркало craft.py: min(аук, крафт))
+  if (n.recipe && !TREE_BUY.has(n.id)) {
+    const cu = calcRecipeUnit(n.recipe);
+    if (cu != null) return cu;
+  }
+  if (TREE_BUY.has(n.id) && n.market_price != null) return n.market_price;
+  return n.best_cost;
+}
+
+function calcRecipeUnit(rec) {
+  let total = 0;
+  for (const ing of rec.ingredients || []) {
+    const u = calcEffUnit(ing.node);
+    if (u == null) return null;
+    total += u * ing.amount;
+  }
+  const mult = rec.bonus ? rec.bonus.mult : 1;   // матожидание бонусного крафта
+  return Math.round((total + (rec.fuel_cost || 0)) / ((rec.result_amount || 1) * mult));
+}
+
+function calcTreeEnergy(rec) {
+  // энергия на 1 крафт-операцию с учётом крафта компонентов (дробные операции)
+  let e = rec.energy || 0;
+  for (const ing of rec.ingredients || []) {
+    const n = ing.node;
+    if (n && n.recipe && !TREE_BUY.has(n.id)) {
+      const mult = n.recipe.bonus ? n.recipe.bonus.mult : 1;
+      e += calcTreeEnergy(n.recipe) * (ing.amount / ((n.recipe.result_amount || 1) * mult));
+    }
+  }
+  return e;
+}
+
+function calcAdjusted(d) {
+  // d с пересчитанными себестоимостью и вердиктом; без замен — ответ бэка как есть
+  if (!TREE_BUY.size || !d.tree || !d.tree.recipe) return d;
+  const craft = calcRecipeUnit(d.tree.recipe);
+  if (craft == null) return d;
+  const v = { ...d.verdict, craft_cost: craft };
+  if (v.sell_net != null && (v.status === "profitable" || v.status === "unprofitable")) {
+    const diff = v.sell_net - craft;
+    const pct = craft > 0 ? Math.round((diff / craft) * 100) : 0;
+    Object.assign(v, {
+      status: diff > 0 ? "profitable" : "unprofitable",
+      text: `${diff > 0 ? "ВЫГОДНО" : "НЕВЫГОДНО"} ${pct >= 0 ? "+" + pct : pct}%`,
+      diff, pct,
+    });
+  }
+  return { ...d, craft_cost: craft, verdict: v };
+}
+
+// плоский список строк дерева с ASCII-префиксами ├─ / └─ (замены не раскрываем)
 function flattenTree(recipe, ancestors, rows, stats) {
   const ings = recipe.ingredients || [];
   ings.forEach((ing, i) => {
@@ -606,11 +699,13 @@ function flattenTree(recipe, ancestors, rows, stats) {
     const prefix = ancestors.map((more) => (more ? "│ " : "  ")).join("") + (last ? "└─" : "├─");
     rows.push({ ing, prefix, depth: ancestors.length });
     stats.depth = Math.max(stats.depth, ancestors.length + 1);
-    if (ing.node && ing.node.recipe) flattenTree(ing.node.recipe, ancestors.concat(!last), rows, stats);
+    if (ing.node && ing.node.recipe && !TREE_BUY.has(ing.node.id))
+      flattenTree(ing.node.recipe, ancestors.concat(!last), rows, stats);
   });
 }
 
 function srcTag(n) {
+  if (TREE_BUY.has(n.id)) return `<span class="ttag market">АУК</span>`;
   if (n.best_source === "craft") return `<span class="ttag craft">КРАФТ</span>`;
   if (n.best_source === "market") return `<span class="ttag market">АУК</span>`;
   if (n.craftable) return `<span class="ttag">ТОЛЬКО КРАФТ</span>`;
@@ -620,27 +715,60 @@ function srcTag(n) {
 function treeBlock(d, chosen) {
   const rows = [], stats = { depth: 0 };
   flattenTree(chosen, [], rows, stats);
+  const live = TREE_BUY.size > 0;   // есть замены — все числа считаем на клиенте
 
   let body = "";
   for (const r of rows) {
     const n = r.ing.node;
-    body += `<div class="trow ${r.depth ? "sub" : ""}">
+    const swapped = TREE_BUY.has(n.id);
+    const unit = live ? calcEffUnit(n) : n.best_cost;
+    const line = unit != null ? Math.round(unit * r.ing.amount) : null;
+    // подпись выгоды: у крафтимых — на сколько дешевле аука; у заменённых — цена крафта
+    let hint = "";
+    if (n.recipe && !swapped) {
+      const cu = live ? calcRecipeUnit(n.recipe) : n.best_cost;
+      if (n.market_price != null && cu != null) {
+        const pct = Math.round((1 - cu / n.market_price) * 100);
+        hint = pct > 0
+          ? `<span class="tsave" title="Крафт ${fmt(cu)} ₽ против ${fmt(n.market_price)} ₽ на ауке">ДЕШЕВЛЕ АУКА НА ${pct}%</span>`
+          : `<span class="tsave dim">≈ ЦЕНА АУКА</span>`;
+      } else if (n.market_price == null) {
+        hint = `<span class="tsave dim">НА АУКЕ НЕТ</span>`;
+      }
+      if (n.recipe.bonus)
+        hint += `<span class="tbonus" title="Бонусный крафт +${n.recipe.bonus.pct}% (навык выше требуемого на ${n.recipe.bonus.levels}) — учтён в цене">↑${n.recipe.bonus.pct}%</span>`;
+    } else if (swapped && n.craft_cost != null) {
+      hint = `<span class="tsave dim">КРАФТ: ${fmt(live ? calcRecipeUnit(n.recipe) ?? n.craft_cost : n.craft_cost)} ₽/ШТ</span>`;
+    }
+    if (n.craft_locked)
+      hint += `<span class="tsave lock" title="Рецепт есть, но прокачки не хватает — считаем закупку${n.locked_cost != null ? `. Крафт стоил бы ~${fmt(n.locked_cost)} ₽/шт` : ""}">🔒 НЕТ ПРОКАЧКИ</span>`;
+    const swapBtn = n.recipe && n.market_price != null
+      ? `<button class="tswap ${swapped ? "on" : ""}" data-tid="${n.id}"
+           title="${swapped ? "Вернуть крафт компонента" : "Покупать на ауке вместо крафта"}">⇄</button>`
+      : "";
+    body += `<div class="trow ${r.depth ? "sub" : ""} ${swapped ? "swapped" : ""}">
       <div class="tcomp">
         <span class="tprefix">${r.prefix}</span>
         <img loading="lazy" src="${asset(n.icon)}" alt="">
         <span class="tname ${r.depth ? "" : "top"}" data-id="${n.id}">${escapeHtml(n.name)}</span>
         <span class="x">×${r.ing.amount}</span>
+        ${hint}
       </div>
-      <div class="tunit">${fmt(n.best_cost)}</div>
-      <div class="tsrc">${srcTag(n)}</div>
-      <div class="tline">${r.ing.line_cost != null ? fmt(r.ing.line_cost) + " ₽" : "—"}</div>
+      <div class="tunit">${fmt(unit)}</div>
+      <div class="tsrc">${srcTag(n)}${swapBtn}</div>
+      <div class="tline">${line != null ? fmt(line) + " ₽" : "—"}</div>
     </div>`;
   }
 
-  const perOne = chosen.result_amount > 1 ? ` · ЗА 1 ШТ ИЗ ${chosen.result_amount}` : "";
+  let perOne = chosen.result_amount > 1 ? ` · ЗА 1 ШТ ИЗ ${chosen.result_amount}` : "";
+  if (chosen.bonus) perOne += ` · БОНУСНЫЙ КРАФТ +${chosen.bonus.pct}% УЧТЁН`;
   return `<div class="section-head">
-      <div class="section-title">▸ ДЕРЕВО КРАФТА · ОПТИМАЛЬНЫЙ ПУТЬ</div>
-      <div class="section-note">ГЛУБИНА ${stats.depth} · ВАРИАНТОВ ${d.tree.n_variants || 1}</div>
+      <div class="section-title">▸ ДЕРЕВО КРАФТА${TREE_BUY.size ? " · С ЗАМЕНАМИ" : " · ОПТИМАЛЬНЫЙ ПУТЬ"}</div>
+      <div class="tree-tools">
+        <button id="treeReset" class="tree-reset" ${TREE_BUY.size ? "" : "hidden"}
+          title="Вернуть стандартное дерево, рассчитанное калькулятором">⟲ СБРОС ЗАМЕН (${TREE_BUY.size})</button>
+        <div class="section-note">ГЛУБИНА ${stats.depth} · ВАРИАНТОВ ${d.tree.n_variants || 1}</div>
+      </div>
     </div>
     <div class="ttable"><div class="ttable-inner">
       <div class="thead">
@@ -664,7 +792,7 @@ function altsBlock(alts) {
     <div class="section-note">ВСЕГО ${alts.length}</div></div>`;
   for (const a of alts) {
     const cost = a.recipe_cost != null ? fmt(a.recipe_cost) + " ₽" : "ЦЕНА НЕИЗВЕСТНА";
-    h += `<details class="alt"><summary><b>${cost}</b> · ВЕРСТАК${a.result_amount > 1 ? " · ×" + a.result_amount : ""}</summary>`;
+    h += `<details class="alt"><summary><b>${cost}</b> · ВЕРСТАК${a.result_amount > 1 ? " · ×" + a.result_amount : ""}${a.req_ok === false ? ` · <span class="alt-lock" title="На этот вариант не хватает прокачки">✗ ПРОКАЧКА</span>` : ""}</summary>`;
     for (const i of a.ingredients)
       h += `<div class="alt-ing"><span class="ilink" data-id="${i.id}">${escapeHtml(i.name)}</span> <span class="x">×${i.amount}</span>${i.unit_price != null ? ` — ${fmt(i.unit_price)} ₽/ШТ` : ""}</div>`;
     h += `</details>`;
@@ -737,6 +865,10 @@ function reqsSections(chosen, rc, d) {
       <div class="pips">${pips}</div>
       <div class="pips-scale"><span>1</span><span>ТРЕБУЕМЫЙ ИЗ 10</span><span>10</span></div>`;
   }
+  const bn = chosen.bonus;
+  if (bn) perkHtml += `<div class="bonus-note"
+      title="Каждый уровень навыка выше требуемого рецептом даёт +75% бонусного крафта. Каждые полные 100% — гарантированная дополнительная партия результата, остаток — шанс ещё одной. Матожидание уже учтено в себестоимости.">
+      ⚡ БОНУСНЫЙ КРАФТ +${bn.pct}%${bn.guaranteed ? ` · ГАРАНТ. +${bn.guaranteed}` : ""}${bn.chance_pct ? ` · ШАНС ${bn.chance_pct}% ЕЩЁ +1` : ""}</div>`;
 
   let h = "";
   if (tools) h += `<div class="reqs-sec"><div class="reqs-lbl">СТАНКИ И ИНСТРУМЕНТЫ</div>${tools}</div>`;
@@ -761,6 +893,41 @@ function usedInSection(usedIn) {
   </div>`;
 }
 
+function treeReqsHtml(d) {
+  // сводка по ВСЕМУ дереву: максимум уровня каждого навыка + все станки
+  // крафтимых компонентов (заменённые на аук — не считаются)
+  const root = d.tree && d.tree.recipe;
+  if (!root) return "";
+  const perks = {}, feats = new Set();
+  const walk = (rec) => {
+    const rq = rec.requirements || {};
+    for (const [k, lvl] of Object.entries(rq.perks || {}))
+      perks[k] = Math.max(perks[k] || 0, lvl);
+    (rq.features || []).forEach((f) => feats.add(f));
+    for (const ing of rec.ingredients || []) {
+      const n = ing.node;
+      if (n && n.recipe && !TREE_BUY.has(n.id)) walk(n.recipe);
+    }
+  };
+  walk(root);
+  const prof = d.hideout_profile;
+  const row = (nm, need, have, ok) => `<div class="treq ${ok == null ? "" : ok ? "ok" : "bad"}">
+      <span class="nm">${nm}</span>
+      <span class="lv">${need}${have != null ? ` <span class="hv">/ ${have}</span>` : ""} ${ok == null ? "" : ok ? "✓" : "✗"}</span>
+    </div>`;
+  const perkRows = Object.entries(perks).map(([k, lvl]) => {
+    const have = prof ? (prof.perks[k] || 0) : null;
+    return row(escapeHtml(perkName(k)), `УР. ${lvl}`, have, have == null ? null : have >= lvl);
+  }).join("");
+  const featRows = [...feats].sort().map((f) => {
+    const ok = prof ? (prof.features || []).includes(f) : null;
+    return row(escapeHtml(featureName(f)), "", null, ok);
+  }).join("");
+  if (!perkRows && !featRows) return "";
+  return `<div class="reqs-lbl" title="Навыки и станки для крафта всех компонентов дерева (компоненты, переключённые на закупку, не считаются)">ВСЁ ДЕРЕВО · НАВЫКИ И СТАНКИ</div>
+    ${perkRows}${featRows}`;
+}
+
 function asideBlock(chosen, usedIn, rc, d) {
   const hasUsed = usedIn && usedIn.length;
   if (!chosen && !hasUsed) return "";
@@ -774,47 +941,21 @@ function asideBlock(chosen, usedIn, rc, d) {
       <div class="reqs-note">${note}</div>
     </div>
     ${chosen ? reqsSections(chosen, rc, d) : ""}
+    ${chosen ? `<div class="reqs-sec" id="treeReqs">${treeReqsHtml(d)}</div>` : ""}
     ${hasUsed ? usedInSection(usedIn) : ""}
   </aside>`;
 }
 
-function renderDetail(d) {
-  const it = d.item;
-  const rk = rank(it.color);
+function craftCalcHtml(d0) {
+  // вердикт + плитки + дерево: всё, что пересчитывается при заменах крафт/аук
+  const d = calcAdjusted(d0);
   const chosen = d.tree && d.tree.recipe;
-
-  let html = `<button class="back">◂ НАЗАД</button>`;
-
-  const crumbs = ["БАЗА"];
-  if (chosen && chosen.category) crumbs.push(escapeHtml(chosen.category));
-  if (chosen && chosen.subcategory) crumbs.push(escapeHtml(chosen.subcategory));
-  html += `<div class="crumbs">${crumbs.join(" ▸ ")} ▸ <span class="id">${escapeHtml(it.id)}</span></div>`;
-
-  html += `<div class="card-cols"><div class="card-main">`;
-
-  html += `<div class="item-head">
-    <div class="item-icon" style="border-color:${rk.color}"><img src="${asset(it.icon)}" alt=""></div>
-    <div class="head-info">
-      <div class="title">${escapeHtml(it.name)}</div>
-      <div class="head-chips">
-        ${it.name_en ? `<span class="sub">${escapeHtml(it.name_en)}</span>` : ""}
-        <span class="chip" style="border-color:${rk.color};color:${rk.color}">${rk.label}</span>
-        ${chosen ? `<span class="chip">${benchName(chosen.bench)}${chosen.category ? " · " + escapeHtml(chosen.category).toUpperCase() : ""}</span>` : ""}
-      </div>
-    </div>
-    <div class="head-liq">
-      <div class="lbl">ЛИКВИДНОСТЬ</div>
-      <div class="val">${fmtSales(d.sales_per_hour)} <span class="unit">ПРОД/Ч</span></div>
-    </div>
-  </div>`;
-
-  if (d.description)
-    html += `<div class="item-desc">${escapeHtml(d.description)}</div>`;
-
-  html += verdictBlock(d);
-
+  let html = verdictBlock(d);
   if (d.craftable) {
     html += tilesBlock(d, chosen);
+    if (chosen && chosen.req_ok === false)
+      html += `<div class="note-warn"><span class="mark">[!]</span>
+        НА ЭТОТ КРАФТ НЕ ХВАТАЕТ ПРОКАЧКИ — СМ. ТРЕБОВАНИЯ. ЦИФРЫ СПРАВЕДЛИВЫ ПОСЛЕ ПРОКАЧКИ.</div>`;
     if (chosen) {
       html += treeBlock(d, chosen);
       if (d.tree.alternatives && d.tree.alternatives.length)
@@ -826,6 +967,82 @@ function renderDetail(d) {
       html += `<div class="note-warn"><span class="mark">[!]</span>
         ДЕМО-РЕЖИМ: ЦЕНЫ АУКЦИОНА ТЕСТОВЫЕ. ДЛЯ РЕАЛЬНЫХ КОТИРОВОК НУЖЕН PROD-ТОКЕН API.</div>`;
   }
+  return html;
+}
+
+function recalcCraft() {
+  // риалтайм-пересчёт карточки после замены/сброса (без запроса на бэк)
+  const c = document.getElementById("craftCalc");
+  if (!c || !DETAIL_D) return;
+  c.innerHTML = craftCalcHtml(DETAIL_D);
+  const tr = document.getElementById("treeReqs");
+  if (tr) tr.innerHTML = treeReqsHtml(DETAIL_D);
+  wireCalc();
+}
+
+function wireCalc() {
+  const c = document.getElementById("craftCalc");
+  if (!c) return;
+  c.querySelectorAll(".tname[data-id], .ilink[data-id]").forEach((el) =>
+    el.addEventListener("click", () => { navigate(`/item/${el.dataset.id}`); }));
+  c.querySelectorAll(".tswap[data-tid]").forEach((b) =>
+    b.addEventListener("click", () => {
+      const id = b.dataset.tid;
+      if (TREE_BUY.has(id)) TREE_BUY.delete(id); else TREE_BUY.add(id);
+      recalcCraft();
+    }));
+  const rst = c.querySelector("#treeReset");
+  if (rst) rst.addEventListener("click", () => { TREE_BUY.clear(); recalcCraft(); });
+}
+
+function renderDetail(d) {
+  const it = d.item;
+  const rk = rank(it.color);
+  const chosen = d.tree && d.tree.recipe;
+  DETAIL_D = d;
+  TREE_BUY = new Set();   // замены не храним: новая карточка = стандартное дерево
+
+  let html = `<button class="back">◂ НАЗАД</button>`;
+
+  // хлебные крошки: предмет живёт в разделе «База предметов»
+  const crumbs = [`<a href="/items">БАЗА ПРЕДМЕТОВ</a>`];
+  const catName = IDB_CAT_RU[d.category];
+  if (catName) crumbs.push(escapeHtml(catName));
+  else if (chosen && chosen.category) crumbs.push(escapeHtml(chosen.category));
+  if (chosen && chosen.subcategory) crumbs.push(escapeHtml(chosen.subcategory));
+  html += `<div class="crumbs">${crumbs.join(" ▸ ")} ▸ <span class="id">${escapeHtml(it.id)}</span></div>`;
+
+  html += `<div class="card-cols"><div class="card-main">`;
+
+  // игровая карточка (оружие/броня/контейнеры/арты) — вид как в игре; для прочих
+  // предметов (ресурсы/крафт-компоненты) остаётся прежняя крафт-шапка
+  const hasChars = (d.characteristics || []).length > 0;
+  if (hasChars) {
+    html += gameCardHtml(d);
+  } else {
+    html += `<div class="item-head">
+      <div class="item-icon" style="border-color:${rk.color}"><img src="${asset(it.icon)}" alt=""></div>
+      <div class="head-info">
+        <div class="title">${escapeHtml(it.name)}</div>
+        <div class="head-chips">
+          ${it.name_en ? `<span class="sub">${escapeHtml(it.name_en)}</span>` : ""}
+          <span class="chip" style="border-color:${rk.color};color:${rk.color}">${rk.label}</span>
+          ${chosen ? `<span class="chip">${benchName(chosen.bench)}${chosen.category ? " · " + escapeHtml(chosen.category).toUpperCase() : ""}</span>` : ""}
+        </div>
+      </div>
+      <div class="head-liq">
+        <div class="lbl">ЛИКВИДНОСТЬ</div>
+        <div class="val">${fmtSales(d.sales_per_hour)} <span class="unit">ПРОД/Ч</span></div>
+      </div>
+    </div>`;
+  }
+
+  if (d.description)
+    html += `<div class="item-desc">${escapeHtml(d.description)}</div>`;
+
+  html += itemActionsHtml(d);            // строка действий: аук / крафт / сборка / бартер
+
+  html += `<div id="craftCalc">${craftCalcHtml(d)}</div>`;
 
   html += `<div id="barterBlocks"></div>`;  // заполняется loadBarterBlocks
   html += `</div>`;                      // /card-main
@@ -839,15 +1056,76 @@ function renderDetail(d) {
 function wireDetail() {
   const b = detail.querySelector(".back");
   if (b) b.addEventListener("click", () => {
-    navigate(lastQuery ? `/search?q=${encodeURIComponent(lastQuery)}` : "/craft");
+    // возврат туда, откуда пришли (поиск / каталог / операции); иначе — в базу
+    if (history.length > 1) history.back();
+    else navigate("/items");
   });
-  detail.querySelectorAll(".tname[data-id], .ilink[data-id], .use-row[data-id], .fuel-src[data-id]").forEach((el) =>
+  // ссылки внутри #craftCalc вешает wireCalc — он же перевешивает их при пересчёте
+  detail.querySelectorAll(".use-row[data-id], .fuel-src[data-id]").forEach((el) =>
     el.addEventListener("click", () => { navigate(`/item/${el.dataset.id}`); }));
+  // строка действий карточки: аук (модал), крафт/бартер (прокрутка к блоку)
+  detail.querySelectorAll(".item-act[data-act]").forEach((b) => b.addEventListener("click", () => {
+    const act = b.dataset.act;
+    if (act === "auction") { openMarketModal(DETAIL_D.item.id); return; }
+    const anchor = act === "craft" ? "craftCalc" : act === "barter" ? "barterBlocks" : null;
+    const el = anchor && document.getElementById(anchor);
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+  }));
+  wireCalc();
   const ft = detail.querySelector("#fuelToggle");
   if (ft) ft.addEventListener("click", () => {
     localStorage.setItem("sz_fuel", fuelMode() ? "0" : "1");
     openItem(ft.dataset.item);   // перечитать карточку с новым режимом
   });
+}
+
+// строка действий карточки предмета: аукцион всегда; крафт/сборка/бартер — по контексту
+function itemActionsHtml(d) {
+  const cat = d.category || "";
+  const acts = [`<button class="item-act" data-act="auction">▸ НА АУКЕ</button>`];
+  if (d.craftable) acts.push(`<button class="item-act" data-act="craft">▸ КРАФТ</button>`);
+  if (["armor", "artefact", "containers", "backpacks"].includes(cat))
+    acts.push(`<a class="item-act" href="/builds">▸ В СБОРКИ</a>`);
+  // кнопка «бартер» добавляется динамически в loadBarterBlocks, если предмет барется
+  return `<div class="item-acts" id="itemActs">${acts.join("")}</div>`;
+}
+
+// статус предмета из базы → русская подпись (как в игре)
+const ITEM_STATUS_RU = {
+  PERSONAL: "Персональный предмет",
+  PERSONAL_ON_USE: "Персональный предмет",
+  QUEST: "Квестовый предмет",
+};
+
+// игровая карточка предмета (оружие/броня/контейнеры/арты): шапка (иконка + имя +
+// статус) → инфо-блок (ранг/класс/вес/прочность) → «Итоговые характеристики» →
+// боевые статы. Ранг — цветом редкости, минусы — красным, значения с единицами.
+function gameCardHtml(d) {
+  const it = d.item, rk = rank(it.color);
+  const chars = d.characteristics || [];
+  const info = chars.filter((c) => c.group === "info");
+  const stats = chars.filter((c) => c.group === "stat");
+  const row = (c) => {
+    const v = `${escapeHtml(c.value)}${c.unit ? ` <span class="gc-u">${escapeHtml(c.unit)}</span>` : ""}`;
+    const style = c.rank ? ` style="color:${rk.color}"` : "";
+    return `<div class="gc-row${c.harmful ? " bad" : ""}">
+      <span class="gc-n">${escapeHtml(c.name)}</span>
+      <span class="gc-v"${style}>${v}</span></div>`;
+  };
+  const status = ITEM_STATUS_RU[it.status];
+  return `<div class="game-card" style="--rar:${rk.color}">
+    <div class="gc-head">
+      <div class="gc-art"><img src="${asset(it.icon)}" alt=""></div>
+      <div class="gc-title">
+        <div class="gc-name" style="color:${rk.color}">${escapeHtml(it.name)}</div>
+        ${it.name_en ? `<div class="gc-en">${escapeHtml(it.name_en)}</div>` : ""}
+        ${status ? `<div class="gc-status">🔒 ${escapeHtml(status)}</div>` : ""}
+      </div>
+    </div>
+    ${info.length ? `<div class="gc-info">${info.map(row).join("")}</div>` : ""}
+    ${stats.length ? `<div class="gc-div"><span>ИТОГОВЫЕ ХАРАКТЕРИСТИКИ</span></div>
+      <div class="gc-stats">${stats.map(row).join("")}</div>` : ""}
+  </div>`;
 }
 
 // ---------- раздел «Крафт»: биржа ингредиентов + подборки ----------
@@ -875,7 +1153,7 @@ async function loadDashboard() {
       && home.dataset.ts && Date.now() - +home.dataset.ts < 60000) return;
   home.innerHTML = `<div class="spinner">// ЗАГРУЗКА ГЛАВНОЙ</div>`;
   try {
-    const [top, art, watch, em, sales, fuelTop, patches, daily, promos] = await Promise.all([
+    const [top, art, watch, em, sales, fuelTop, patches, daily, promos, ops] = await Promise.all([
       fetch(api(`/top${availParam("?")}`)).then((r) => r.json()).catch(() => null),
       fetch(api("/artmarket/top?window=24h")).then((r) => r.json()).catch(() => null),
       fetch(api("/watch")).then((r) => r.json()).catch(() => null),
@@ -885,10 +1163,11 @@ async function loadDashboard() {
       fetch(api("/patches?limit=5")).then((r) => r.json()).catch(() => null),
       fetch(api("/build/daily")).then((r) => r.json()).catch(() => null),
       fetch(api("/promos")).then((r) => r.json()).catch(() => null),
+      fetch(api("/operations/overview")).then((r) => r.json()).catch(() => null),
     ]);
     home.dataset.ts = Date.now();
     home.dataset.view = "dash";
-    renderDashboard(top, art, watch, em, sales, fuelTop, patches, daily, promos);
+    renderDashboard(top, art, watch, em, sales, fuelTop, patches, daily, promos, ops);
   } catch (e) {
     home.innerHTML = `<div class="empty">[!] НЕ УДАЛОСЬ ЗАГРУЗИТЬ ГЛАВНУЮ</div>`;
   }
@@ -1049,7 +1328,7 @@ function dailyBuildBody(d) {
   const contam = (b.totals.contamination || [])
     .map((c) => statRow(c.name, c.net, c.over, c.limit != null ? `<span class="lim"> / ${c.limit}</span>` : ""))
     .join("");
-  const totalsHtml = `<div class="db-tt">ПАРАМЕТРЫ СБОРКИ · ДАЮТ АРТЕФАКТЫ</div>
+  const totalsHtml = `<div class="db-tt">ПАРАМЕТРЫ СБОРКИ · АРТЕФАКТЫ + КОНТЕЙНЕР</div>
     <div class="db-stats">${totals || `<div class="empty-sm">СТАТОВ НЕТ</div>`}</div>
     ${contam ? `<div class="db-tt sub">ЗАРАЖЕНИЕ (ПОСЛЕ ЗАЩИТЫ КОНТЕЙНЕРА)</div>
        <div class="db-stats">${contam}</div>` : ""}`;
@@ -1077,7 +1356,7 @@ function promoDashBody(p) {
   return items.slice(0, 6).map(row).join("");
 }
 
-function renderDashboard(top, art, watch, em, sales, fuelTop, patches, daily, promos) {
+function renderDashboard(top, art, watch, em, sales, fuelTop, patches, daily, promos, ops) {
   const card = (title, note, body, link, linkText) => `<section class="dash-card">
     <div class="side-head">
       <div class="side-title">▸ ${title}</div>
@@ -1153,6 +1432,7 @@ function renderDashboard(top, art, watch, em, sales, fuelTop, patches, daily, pr
       ${card("ЗАПРАВКА ГЕНЕРАТОРА", "ВСЕ ИСТОЧНИКИ · ₽ ЗА 1000 ЕД", fuelBody(fuelTop), "/profile", "ПРИСТРОЙКИ — В ПРОФИЛЕ")}
       ${card("ВЫБРОС", "ВРЕМЯ МСК · ЗАМЕР РАЗ В МИНУТУ", emissionBody(em))}
       ${card("СБОРКА ДНЯ", "БРОНЯ + КОНТЕЙНЕР + АРТЕФАКТЫ · РАЗ В СУТКИ", dailyBuildBody(daily), "/builds", "К КАЛЬКУЛЯТОРУ")}
+      ${card("МЕТА ОПЕРАЦИЙ", opsDashNote(ops), opsDashBody(ops), "/operations", "К СТАТИСТИКЕ ОПЕРАЦИЙ")}
       ${card("ПОСЛЕДНИЙ ПАТЧ", "ОБНОВЛЕНИЯ ИГРЫ", patchBody, "/patches", "ВСЕ ПАТЧИ")}
     </div>
   </div>`;
@@ -1167,23 +1447,76 @@ function renderDashboard(top, art, watch, em, sales, fuelTop, patches, daily, pr
   startEmTick();
 }
 
-// линия средней цены по снапшотам (2 замера/сутки)
+// линия средней цены по снапшотам (2 замера/сутки); класс spark — наведение
+// показывает значение в точке (общий тултип, обработчик ниже)
+const SPARK = { W: 200, H: 48, P: 5 };
 function chartSvg(series) {
-  const vals = series.map((e) => e.avg).filter((v) => v != null);
-  if (!vals.length) return `<div class="watch-nodata">НЕТ ДАННЫХ — ЖДЁМ ПЕРВЫЙ ЗАМЕР</div>`;
-  const pts = vals.length === 1 ? [vals[0], vals[0]] : vals;
-  const W = 200, H = 48, P = 5;
-  const min = Math.min(...pts), max = Math.max(...pts), r = max - min || 1;
-  const xy = pts.map((v, i) =>
-    `${(i / (pts.length - 1)) * W},${(P + (H - 2 * P) * (1 - (v - min) / r)).toFixed(1)}`);
+  const pts = (series || []).filter((e) => e && e.avg != null);
+  if (!pts.length) return `<div class="watch-nodata">НЕТ ДАННЫХ — ЖДЁМ ПЕРВЫЙ ЗАМЕР</div>`;
+  if (pts.length === 1) pts.push(pts[0]);
+  const vals = pts.map((e) => e.avg);
+  const { W, H, P } = SPARK;
+  const min = Math.min(...vals), max = Math.max(...vals), r = max - min || 1;
+  const xy = vals.map((v, i) =>
+    `${(i / (vals.length - 1)) * W},${(P + (H - 2 * P) * (1 - (v - min) / r)).toFixed(1)}`);
   const line = xy.join(" ");
-  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+  return `<svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"
+      data-vals="${vals.join(",")}" data-slots="${pts.map((e) => e.slot || "").join(",")}">
     <polyline points="0,${H * 2 / 3} ${W},${H * 2 / 3}" fill="none" stroke="var(--bar-track)" stroke-width="1"></polyline>
     <polyline points="0,${H / 3} ${W},${H / 3}" fill="none" stroke="var(--bar-track)" stroke-width="1"></polyline>
     <polygon points="0,${H} ${line} ${W},${H}" fill="rgba(124,230,142,0.08)"></polygon>
     <polyline points="${line}" fill="none" stroke="var(--green)" stroke-width="1.5"></polyline>
+    <line class="spark-x" x1="0" x2="0" y1="0" y2="${H}" stroke="var(--amber)" stroke-width="1"
+      vector-effect="non-scaling-stroke" opacity="0"></line>
+    <circle class="spark-pt" cx="0" cy="0" r="2.5" fill="var(--amber)" opacity="0"></circle>
   </svg>`;
 }
+
+// общий тултип спарклайнов: один элемент на страницу, следует за курсором
+let sparkTipEl = null, sparkHover = null;
+function sparkHide() {
+  if (sparkHover) {
+    sparkHover.querySelector(".spark-x").setAttribute("opacity", "0");
+    sparkHover.querySelector(".spark-pt").setAttribute("opacity", "0");
+    sparkHover = null;
+  }
+  if (sparkTipEl) sparkTipEl.classList.add("hidden");
+}
+document.addEventListener("pointermove", (e) => {
+  const t = e.target;
+  const svg = t && t.closest ? t.closest("svg.spark") : null;
+  if (!svg) { sparkHide(); return; }
+  if (sparkHover && sparkHover !== svg) sparkHide();
+  const vals = (svg.dataset.vals || "").split(",").map(Number);
+  if (vals.length < 2) return;
+  const slots = (svg.dataset.slots || "").split(",");
+  const rc = svg.getBoundingClientRect();
+  const i = Math.round(Math.max(0, Math.min(1, (e.clientX - rc.left) / rc.width)) * (vals.length - 1));
+  const { W, H, P } = SPARK;
+  const min = Math.min(...vals), max = Math.max(...vals), r = max - min || 1;
+  const x = (i / (vals.length - 1)) * W;
+  sparkHover = svg;
+  const cross = svg.querySelector(".spark-x"), dot = svg.querySelector(".spark-pt");
+  cross.setAttribute("x1", x); cross.setAttribute("x2", x); cross.setAttribute("opacity", "0.7");
+  dot.setAttribute("cx", x);
+  dot.setAttribute("cy", (P + (H - 2 * P) * (1 - (vals[i] - min) / r)).toFixed(1));
+  dot.setAttribute("opacity", "1");
+  if (!sparkTipEl) {
+    sparkTipEl = document.createElement("div");
+    sparkTipEl.className = "spark-tip hidden";
+    document.body.appendChild(sparkTipEl);
+  }
+  sparkTipEl.innerHTML = `<b>${fmt(vals[i])} ₽</b>${slots[i] ? `<span class="t">${fmtSlot(slots[i])}</span>` : ""}`;
+  sparkTipEl.classList.remove("hidden");
+  // position: fixed внутри зумленного body — координаты и размеры делим/умножаем на --zoom
+  const zf = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--zoom")) || 1;
+  const tw = sparkTipEl.offsetWidth * zf, th = sparkTipEl.offsetHeight * zf;
+  let vx = e.clientX + 12, vy = e.clientY - th - 12;
+  if (vx + tw > window.innerWidth - 8) vx = e.clientX - tw - 12;
+  if (vy < 8) vy = e.clientY + 16;
+  sparkTipEl.style.left = (vx / zf).toFixed(1) + "px";
+  sparkTipEl.style.top = (vy / zf).toFixed(1) + "px";
+});
 
 function watchCard(m) {
   const dp = m.delta_pct;
@@ -1293,7 +1626,45 @@ function renderHome(d, w) {
 const CHAT_ROOMS = [["general", "ОБЩИЙ"], ["bugs", "БАГИ/ИДЕИ"]];
 let chatRoom = localStorage.getItem("sz_chat_room") || "general";
 let chatOpen = localStorage.getItem("sz_chat_open") === "1";
-let chatLastId = 0, chatPollTimer = null, chatBusy = false;
+let chatLastId = 0, chatPollTimer = null, chatReq = null, chatAuthKnown = false;
+const CHAT_TIMEOUT = 10000;   // сеть молчит дольше — рвём запрос, иначе виджет заморожен
+
+// Форма зависит от авторизации, а /me отвечает позже, чем рисуется док, — поэтому
+// разметка формы и её обработчики живут отдельно от рендера всего виджета.
+function chatFormHtml() {
+  if (!chatAuthKnown) return "";     // /me ещё не ответил — не мигаем чужой формой
+  return ME && ME.authenticated
+    ? `<input id="chatInput" maxlength="500" autocomplete="off" placeholder="СООБЩЕНИЕ…"><button id="chatSend">▸</button>`
+    : `<a class="chat-login js-open-auth" href="${BASE}/auth/login">ВОЙТИ, ЧТОБЫ ПИСАТЬ</a>`;
+}
+
+function chatFormBind() {
+  const inp = $("chatInput");
+  if (!inp) return;                  // гость или авторизация ещё не подъехала
+  const send = async () => {
+    const text = inp.value.trim();
+    if (!text) return;
+    inp.value = "";
+    try {
+      const r = await fetch(api(`/chat/${chatRoom}`), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      if (r.status === 429) inp.placeholder = "НЕ ТАК БЫСТРО…";
+      chatRefresh();
+    } catch (e) { /* тихо */ }
+  };
+  $("chatSend").addEventListener("click", send);
+  inp.addEventListener("keydown", (e) => { if (e.key === "Enter") send(); });
+}
+
+// /me ответил: док уже нарисован — меняем только форму, ленту не перезагружаем.
+function chatAuthChanged() {
+  chatAuthKnown = true;
+  const form = document.querySelector(".chat-form");
+  if (chatOpen && form) { form.innerHTML = chatFormHtml(); chatFormBind(); }
+  else chatDockRender();
+}
 
 function chatDockRender() {
   const dock = $("chatDock");
@@ -1310,13 +1681,10 @@ function chatDockRender() {
   dock.className = "chat-dock open";
   const tabs = CHAT_ROOMS.map(([id, label]) =>
     `<button class="chat-tab ${id === chatRoom ? "on" : ""}" data-room="${id}">${label}</button>`).join("");
-  const canPost = ME && ME.authenticated;
   dock.innerHTML = `
     <div class="chat-head">${tabs}<button class="chat-min" id="chatMin" title="Свернуть">▼</button></div>
     <div class="chat-msgs" id="chatMsgs"><div class="spinner">// ЗАГРУЗКА</div></div>
-    <div class="chat-form">${canPost
-      ? `<input id="chatInput" maxlength="500" autocomplete="off" placeholder="СООБЩЕНИЕ…"><button id="chatSend">▸</button>`
-      : `<a class="chat-login js-open-auth" href="${BASE}/auth/login">ВОЙТИ, ЧТОБЫ ПИСАТЬ</a>`}</div>`;
+    <div class="chat-form">${chatFormHtml()}</div>`;
   dock.querySelectorAll(".chat-tab").forEach((b) => b.addEventListener("click", () => {
     if (b.dataset.room === chatRoom) return;
     chatRoom = b.dataset.room; localStorage.setItem("sz_chat_room", chatRoom);
@@ -1325,24 +1693,7 @@ function chatDockRender() {
   $("chatMin").addEventListener("click", () => {
     chatOpen = false; localStorage.setItem("sz_chat_open", "0"); chatDockRender();
   });
-  if (canPost) {
-    const send = async () => {
-      const inp = $("chatInput");
-      const text = inp.value.trim();
-      if (!text) return;
-      inp.value = "";
-      try {
-        const r = await fetch(api(`/chat/${chatRoom}`), {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text }),
-        });
-        if (r.status === 429) inp.placeholder = "НЕ ТАК БЫСТРО…";
-        chatRefresh();
-      } catch (e) { /* тихо */ }
-    };
-    $("chatSend").addEventListener("click", send);
-    $("chatInput").addEventListener("keydown", (e) => { if (e.key === "Enter") send(); });
-  }
+  chatFormBind();
   chatLastId = 0;
   chatRefresh(true);
   chatPollTimer = setInterval(() => chatRefresh(), 5000);
@@ -1353,26 +1704,55 @@ function chatMsgHtml(m) {
   return `<div class="chat-msg"><span class="t">${t}</span> <span class="u">${escapeHtml(m.login)}</span> ${escapeHtml(m.text)}</div>`;
 }
 
+// reset — первая загрузка комнаты (спиннер на экране), иначе догрузка по таймеру.
+// Висящий запрос НЕ должен глушить reset: иначе спиннер стоит до следующего тика,
+// а на свёрнутой вкладке браузер душит setInterval до минуты и больше.
 async function chatRefresh(reset = false) {
-  if (chatBusy) return;
-  chatBusy = true;
+  if (chatReq && !reset) return;                       // обычный опрос ждёт своей очереди
+  if (chatReq) chatReq.abort();                        // reset важнее висящего опроса
+  const ctl = new AbortController();
+  chatReq = ctl;
+  let timedOut = false;
+  const killer = setTimeout(() => { timedOut = true; ctl.abort(); }, CHAT_TIMEOUT);
+  const room = chatRoom, after = reset ? 0 : chatLastId;
+  let d = null;
   try {
-    const d = await fetch(api(`/chat/${chatRoom}?after=${reset ? 0 : chatLastId}`)).then((r) => r.json());
-    const box = $("chatMsgs");
-    if (!box) return;
-    if (reset) box.innerHTML = "";
-    if (d.messages && d.messages.length) {
-      const ph = box.querySelector(".chat-empty, .spinner");
-      if (ph) box.innerHTML = "";
-      const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
-      box.insertAdjacentHTML("beforeend", d.messages.map(chatMsgHtml).join(""));
-      chatLastId = d.last_id;
-      if (reset || atBottom) box.scrollTop = box.scrollHeight;
-    } else if (!box.children.length) {
-      box.innerHTML = `<div class="chat-empty">ПОКА ПУСТО — НАПИШИ ПЕРВЫМ.</div>`;
-    }
-  } catch (e) { /* тихо */ } finally { chatBusy = false; }
+    const r = await fetch(api(`/chat/${room}?after=${after}`), { signal: ctl.signal });
+    d = await r.json();
+  } catch (e) { /* обрыв, таймаут или не-JSON — покажем ниже, что связи нет */ }
+  clearTimeout(killer);
+  if (chatReq === ctl) chatReq = null;
+  // отменил более свежий запрос или сменилась комната — молча уходим;
+  // свой таймаут (timedOut) — наоборот, показываем, что связи нет
+  if ((ctl.signal.aborted && !timedOut) || room !== chatRoom) return;
+  const box = $("chatMsgs");
+  if (!box) return;
+  const hasMsgs = () => !!box.querySelector(".chat-msg");
+  if (!d || !Array.isArray(d.messages)) {              // не дошло — спиннер не оставляем
+    if (!hasMsgs()) box.innerHTML = `<div class="chat-empty">[!] НЕТ СВЯЗИ — ПОВТОР ЧЕРЕЗ 5 С</div>`;
+    return;
+  }
+  if (reset) box.innerHTML = "";
+  if (d.messages.length) {
+    box.querySelectorAll(".chat-empty, .spinner").forEach((el) => el.remove());
+    const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+    box.insertAdjacentHTML("beforeend", d.messages.map(chatMsgHtml).join(""));
+    chatLastId = d.last_id;
+    if (reset || atBottom) box.scrollTop = box.scrollHeight;
+  } else if (!hasMsgs()) {
+    box.innerHTML = `<div class="chat-empty">ПОКА ПУСТО — НАПИШИ ПЕРВЫМ.</div>`;
+  }
 }
+
+// Свёрнутую вкладку браузер тормозит (таймер раз в минуту и реже) — вернулись,
+// догружаем сразу, чтобы не смотреть ни на спиннер, ни на устаревшую ленту.
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && chatOpen && $("chatMsgs")) chatRefresh();
+});
+
+// Виджет рисуем сразу, не дожидаясь /me: сообщения читают все, форму дошлёт
+// chatAuthChanged() из loadAuth().
+chatDockRender();
 
 // ---------- полный аукцион: живые лоты и история продаж любого предмета ----------
 const marketState = { itemId: null };
@@ -1456,9 +1836,35 @@ function renderMarket(ov) {
 
 function mkModalClose() {
   const m = $("mkModal");
-  if (m) m.classList.add("hidden");
+  if (m) {
+    m.classList.add("hidden");
+    if (m.dataset.detached) m.remove();   // модал, созданный вне /market
+  }
   marketState.itemId = null;
   syncModalScroll();
+}
+
+// Модал карточки аука лежит в разметке /market. На других разделах (ДЕВ-сканер)
+// создаём такой же на body — карточка открывается поверх текущей страницы,
+// уходит при закрытии и при навигации (route → mkModalClose).
+function openMarketModal(id) {
+  if (!$("mkModal")) {
+    const m = document.createElement("div");
+    m.id = "mkModal";
+    m.className = "mk-modal hidden";
+    m.dataset.detached = "1";
+    m.setAttribute("aria-modal", "true");
+    m.setAttribute("role", "dialog");
+    m.innerHTML = `<div class="mk-modal-box">
+        <button class="mk-modal-x" title="Закрыть (Esc)">✕</button>
+        <div id="mkDetail"></div>
+      </div>`;
+    document.body.appendChild(m);
+    m.querySelector(".mk-modal-x").addEventListener("click", mkModalClose);
+    m.addEventListener("click", (e) => { if (e.target === m) mkModalClose(); });
+  }
+  marketState.itemId = id;
+  loadMarketItem(id);
 }
 
 // ---------- общий модал разделов (бартер, обменки, квесты) ----------
@@ -1534,18 +1940,8 @@ async function loadMarketItem(id) {
   }
   if (marketState.itemId !== id || !$("mkDetail")) return;
   const it = d.item || {};
-  const lots = (d.lots || []).slice(0, 20).map((l) => `<tr>
-      <td class="r">${l.unit != null ? fmt(l.unit) : "—"}</td>
-      <td class="r">${l.amount}</td>
-      <td class="r">${l.buyout != null ? fmt(l.buyout) : "—"}</td>
-      <td>${l.end ? fmtLotTime(l.end) : "—"}</td>
-    </tr>`).join("");
-  const sales = (d.sales || []).slice(0, 20).map((s) => `<tr>
-      <td>${s.time ? fmtLotTime(s.time) : "—"}</td>
-      <td class="r">${s.unit != null ? fmt(s.unit) : "—"}</td>
-      <td class="r">${s.amount}</td>
-      <td class="r">${s.price != null ? fmt(s.price) : "—"}</td>
-    </tr>`).join("");
+  mkItemData = d;
+  mkBucket = { qlt: null, ptn: null };   // новая карточка — фильтр сброшен
   box.innerHTML = `<div class="mk-item">
     <div class="mk-head">
       <img src="${asset(it.icon)}" alt="">
@@ -1553,26 +1949,106 @@ async function loadMarketItem(id) {
       <a class="mk-card" href="/item/${id}">КАРТОЧКА ПРЕДМЕТА ▸</a>
     </div>
     ${d.error ? `<div class="note-warn"><span class="mark">[!]</span> АУКЦИОН НЕ ОТВЕТИЛ (${escapeHtml(String(d.error))}) — ПОКАЗЫВАЮ ЧТО ЕСТЬ.</div>` : ""}
+    <div id="mkBuckets"></div>
     <div class="mk-chart-wrap">
-      <div class="dash-grp mkc-head"><span>ГРАФИК ПРОДАЖ · ЦЕНА/ШТ И ОБЪЁМ</span>
+      <div class="dash-grp mkc-head"><span>ГРАФИК ПРОДАЖ · ЦЕНА/ШТ И ОБЪЁМ${d.has_buckets ? " · ВСЕ КОРЗИНЫ" : ""}</span>
         <span class="mkc-ranges" id="mkcRanges"></span></div>
       <div class="mk-chart" id="mkChartBox"></div>
       <div class="mkc-note" id="mkChartNote"></div>
     </div>
-    <div class="mk-tables">
-      <div class="mk-tbl">
-        <div class="dash-grp">АКТИВНЫЕ ЛОТЫ${d.lots_total != null ? ` · ВСЕГО ${fmt(d.lots_total)}` : ""} (20 ДЕШЁВЫХ)</div>
-        ${lots ? `<table><thead><tr><th class="r">ЦЕНА/ШТ</th><th class="r">КОЛ-ВО</th><th class="r">ВЫКУП</th><th>ДО (МСК)</th></tr></thead><tbody>${lots}</tbody></table>`
-               : `<div class="empty-sm">АКТИВНЫХ ЛОТОВ НЕТ.</div>`}
-      </div>
-      <div class="mk-tbl">
-        <div class="dash-grp">ПОСЛЕДНИЕ ПРОДАЖИ</div>
-        ${sales ? `<table><thead><tr><th>ВРЕМЯ (МСК)</th><th class="r">ЦЕНА/ШТ</th><th class="r">КОЛ-ВО</th><th class="r">СУММА</th></tr></thead><tbody>${sales}</tbody></table>`
-                : `<div class="empty-sm">ПРОДАЖ НЕ НАЙДЕНО.</div>`}
-      </div>
-    </div>
+    <div class="mk-tables" id="mkTables"></div>
   </div>`;
+  renderMkBuckets();
+  renderMkTables();
   initSalesChart(id);
+}
+
+// ---------- карточка аука: корзины качество × заточка ----------
+// У артефактов и снаряжения цена зависит от качества и заточки в разы, поэтому
+// лоты и продажи считаются отдельно по корзинам. Заточка группируется как в игре:
+// +0–4 / +5–9 / +10–14 / +15 (см. market.ptn_bucket на бэке).
+let mkItemData = null;
+let mkBucket = { qlt: null, ptn: null };   // null — «все»
+
+// корзины заточки и имена качества — общие с биржей артефактов
+// (ptnBucket / ptnRange / qltLabel определены ниже по файлу, к вызову готовы)
+const mkBucketMatch = (x) =>
+  (mkBucket.qlt == null || (x.qlt || 0) === mkBucket.qlt)
+  && (mkBucket.ptn == null || ptnBucket(x.ptn) === mkBucket.ptn);
+
+function renderMkBuckets() {
+  const box = $("mkBuckets");
+  if (!box || !mkItemData) return;
+  if (!mkItemData.has_buckets) { box.innerHTML = ""; return; }
+  const all = [...(mkItemData.lots || []), ...(mkItemData.sales || [])];
+  const qlts = [...new Set(all.map((x) => x.qlt || 0))].sort((a, b) => a - b);
+  const ptns = [...new Set(all.map((x) => ptnBucket(x.ptn)))].sort((a, b) => a - b);
+  const chip = (kind, val, label, on) =>
+    `<button class="mkb-chip${on ? " on" : ""}" data-k="${kind}" data-v="${val == null ? "" : val}">${label}</button>`;
+  const qRow = qlts.length > 1 ? `<div class="mkb-row"><span class="mkb-l">КАЧЕСТВО</span>
+    ${chip("qlt", null, "ВСЕ", mkBucket.qlt == null)}
+    ${qlts.map((q) => chip("qlt", q, qltLabel(q), mkBucket.qlt === q)).join("")}</div>` : "";
+  const pRow = ptns.length > 1 || (ptns.length === 1 && ptns[0] !== 0)
+    ? `<div class="mkb-row"><span class="mkb-l">ЗАТОЧКА</span>
+      ${chip("ptn", null, "ВСЕ", mkBucket.ptn == null)}
+      ${PTN_LEVELS.filter((v) => ptns.includes(v))
+        .map((v) => chip("ptn", v, ptnRange(v), mkBucket.ptn === v)).join("")}</div>` : "";
+  box.innerHTML = qRow || pRow ? `<div class="mk-buckets">${qRow}${pRow}</div>` : "";
+  box.querySelectorAll(".mkb-chip").forEach((b) => b.addEventListener("click", () => {
+    mkBucket[b.dataset.k] = b.dataset.v === "" ? null : +b.dataset.v;
+    renderMkBuckets();
+    renderMkTables();
+  }));
+}
+
+function renderMkTables() {
+  const box = $("mkTables");
+  if (!box || !mkItemData) return;
+  const d = mkItemData;
+  const bk = d.has_buckets;
+  const fLots = (d.lots || []).filter(mkBucketMatch);
+  const fSales = (d.sales || []).filter(mkBucketMatch);
+  // сводка по выбранной корзине: за сколько реально купить и почём уходит
+  const sold = fSales.reduce((s, x) => s + (x.amount || 1), 0);
+  const soldSum = fSales.reduce((s, x) => s + (x.price || 0), 0);
+  const avgUnit = sold ? Math.round(soldSum / sold) : null;
+  const minUnit = fLots.length ? fLots[0].unit : null;
+  const bcell = (l, v, cls) => `<span class="mks-i">${l} <b class="${cls || ""}">${v}</b></span>`;
+  const summary = `<div class="mk-sum">
+    ${bcell("МИН. ВЫКУП", minUnit != null ? fmt(minUnit) + " ₽/ШТ" : "—")}
+    ${bcell("СРЕДНЯЯ ПРОДАЖА", avgUnit != null ? fmt(avgUnit) + " ₽/ШТ" : "—")}
+    ${bcell("ПРОДАНО", sold ? fmt(sold) + " ШТ" : "—")}
+    ${bk ? `<span class="mks-i mks-note">${mkBucket.qlt == null && mkBucket.ptn == null
+      ? "ПО ВСЕМ КОРЗИНАМ — ВЫБЕРИ КАЧЕСТВО/ЗАТОЧКУ ДЛЯ ТОЧНОЙ ЦЕНЫ"
+      : `КОРЗИНА: ${mkBucket.qlt == null ? "ЛЮБОЕ КАЧЕСТВО" : qltLabel(mkBucket.qlt)}${
+        mkBucket.ptn == null ? "" : " · ЗАТОЧКА " + ptnRange(mkBucket.ptn)}`}</span>` : ""}
+  </div>`;
+  const bcols = bk ? `<th class="r">КЧ</th><th class="r">ЗТЧ</th>` : "";
+  const bvals = (x) => bk ? `<td class="r">${x.qlt || 0}</td><td class="r">${x.ptn ? "+" + x.ptn : "—"}</td>` : "";
+  const lots = fLots.slice(0, 20).map((l) => `<tr>
+      <td class="r">${fmt(l.unit)}</td>
+      <td class="r">${l.amount}</td>${bvals(l)}
+      <td class="r">${fmt(l.buyout)}</td>
+      <td>${l.end ? fmtLotTime(l.end) : "—"}</td>
+    </tr>`).join("");
+  const sales = fSales.slice(0, 20).map((s) => `<tr>
+      <td>${s.time ? fmtLotTime(s.time) : "—"}</td>
+      <td class="r">${s.unit != null ? fmt(s.unit) : "—"}</td>
+      <td class="r">${s.amount}</td>${bvals(s)}
+      <td class="r">${s.price != null ? fmt(s.price) : "—"}</td>
+    </tr>`).join("");
+  box.innerHTML = `${summary}
+    <div class="mk-tbl">
+      <div class="dash-grp">АКТИВНЫЕ ЛОТЫ · С ВЫКУПОМ ${fmt(fLots.length)}${
+        d.lots_total != null ? ` ИЗ ${fmt(d.lots_total)}` : ""} (20 ДЕШЁВЫХ)</div>
+      ${lots ? `<table><thead><tr><th class="r">ЦЕНА/ШТ</th><th class="r">КОЛ-ВО</th>${bcols}<th class="r">ВЫКУП</th><th>ДО (МСК)</th></tr></thead><tbody>${lots}</tbody></table>`
+             : `<div class="empty-sm">ЛОТОВ С ВЫКУПОМ НЕТ${bk ? " В ЭТОЙ КОРЗИНЕ" : ""}.</div>`}
+    </div>
+    <div class="mk-tbl">
+      <div class="dash-grp">ПОСЛЕДНИЕ ПРОДАЖИ${fSales.length ? ` · ${fmt(fSales.length)}` : ""}</div>
+      ${sales ? `<table><thead><tr><th>ВРЕМЯ (МСК)</th><th class="r">ЦЕНА/ШТ</th><th class="r">КОЛ-ВО</th>${bcols}<th class="r">СУММА</th></tr></thead><tbody>${sales}</tbody></table>`
+              : `<div class="empty-sm">ПРОДАЖ НЕ НАЙДЕНО${bk ? " В ЭТОЙ КОРЗИНЕ" : ""}.</div>`}
+    </div>`;
 }
 
 // ---------- график продаж предмета: масштабируемый, данные копятся до года ----------
@@ -1728,16 +2204,21 @@ function drawSalesChart() {
     tip.innerHTML = `<b>${mkcFmtT(best.t, 0, d.granularity)}${d.granularity === "h" ? " МСК" : ""}</b><br>
       СР ${fmt(best.avg)} ₽<br>МИН ${fmt(best.min)} · МАКС ${fmt(best.max)}<br>ПРОДАНО ${fmt(best.n)} ШТ`;
     tip.classList.remove("hidden");
-    // позиция — во viewport-координатах: у правого/нижнего края экрана
-    // тултип переворачивается на другую сторону курсора, не уходя за экран
+    // Позиция тултипа — в ЛОКАЛЬНЫХ координатах бокса (он position:absolute внутри).
+    // getBoundingClientRect/clientX отдают вьюпортные пиксели, а left/top читаются
+    // как неотмасштабированные, поэтому делим на zoom (см. --zoom, body zoom 1.2).
+    // По горизонтали держимся внутри графика: модал скроллится (overflow-y:auto),
+    // и вылезший вправо тултип обрезался бы его краем — у края уходим влево от курсора.
+    const zf = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--zoom")) || 1;
     const wr = box.getBoundingClientRect();
-    const tw = tip.offsetWidth, th = tip.offsetHeight;
-    let vx = ev.clientX + 14;
-    if (vx + tw > window.innerWidth - 8) vx = ev.clientX - tw - 14;
-    let vy = ev.clientY + 14;
-    if (vy + th > window.innerHeight - 8) vy = ev.clientY - th - 12;
-    tip.style.left = Math.max(4 - wr.left, vx - wr.left) + "px";
-    tip.style.top = (vy - wr.top) + "px";
+    const bw = wr.width / zf, tw = tip.offsetWidth, th = tip.offsetHeight;
+    const lx = (ev.clientX - wr.left) / zf, ly = (ev.clientY - wr.top) / zf;
+    let x = lx + 14;
+    if (x + tw > bw - 4) x = lx - tw - 14;      // у правого края — влево от курсора
+    let y = ly + 14;
+    if (ev.clientY + (th + 22) * zf > window.innerHeight) y = ly - th - 12;
+    tip.style.left = Math.max(4, Math.min(x, bw - tw - 4)).toFixed(1) + "px";
+    tip.style.top = y.toFixed(1) + "px";
   });
   svg.addEventListener("pointerup", (ev) => {
     if (drag0 == null) return;
@@ -1836,12 +2317,18 @@ function btRows(rows) {
       ? `<span class="bt-miss" title="${escapeHtml(r.missing.join(", "))}">+${r.missing.length} ФАРМ</span>` : "";
     const places = r.n_places > 1
       ? ` <span class="bt-more-place" title="Доступно ещё в ${r.n_places - 1} — детали в обмене">+ ещё ${r.n_places - 1}</span>` : "";
+    // выгоду показываем только там, где цене продажи можно верить (trust=ok):
+    // у неликвида «последняя сделка» бывает двухлетней давности, а стартовый
+    // хлам на ауке «стоит» сотни тысяч — это перевод валюты, а не выгода
+    const roi = r.trust === "ok"
+      ? `<div class="bt-roi ${r.pct >= 0 ? "up" : "down"}" title="ПРОДАЖА ~${fmt(r.sell_net)} ₽ ЗА ВЫЧЕТОМ КОМИССИИ, ПОСЛЕДНЯЯ СДЕЛКА ${r.sale_age_days < 1 ? "СЕГОДНЯ" : Math.round(r.sale_age_days) + " ДН. НАЗАД"}">${r.pct > 0 ? "+" : ""}${fmt(r.pct)}%</div>`
+      : "";
     return `<tr class="brt-row" data-id="${r.id}">
       <td class="bt-selc"><input type="checkbox" class="bt-selbox" data-id="${r.id}" ${btSel.has(r.id) ? "checked" : ""}></td>
       <td><div class="bt-item"><img loading="lazy" src="${asset(r.icon)}" alt="">
         <span class="nm" style="color:${rank(r.color).color}">${escapeHtml(r.name)}</span>${missing}${cur}</div></td>
       <td class="bt-place">${escapeHtml(r.settlement_name)}${r.level ? ` <span class="lv">УР.${r.level}</span>` : ""}${places}</td>
-      <td class="r">${cost}</td>
+      <td class="r">${cost}${roi}</td>
     </tr>`;
   }).join("") || `<tr><td colspan="4" class="empty-sm">НИЧЕГО НЕ НАЙДЕНО ПО ФИЛЬТРАМ.</td></tr>`;
 }
@@ -1880,11 +2367,13 @@ function renderBarter(d) {
         <input id="btQ" type="search" autocomplete="off" placeholder="ФИЛЬТР ПО НАЗВАНИЮ…" value="${escapeHtml(btState.q)}"></div>
     </div>
     <div class="bt-note">СТОИМОСТЬ = ДЕНЬГИ ТОРГОВЦУ + ЗАКУПКА ВХОДОВ НА АУКЕ (ТРЕЙД-ИН РАСКРЫВАЕТСЯ РЕКУРСИВНО).
-      «ФАРМ» — ВХОДЫ, КОТОРЫХ НЕТ НА АУКЕ (КВЕСТОВЫЕ/ЖЕТОНЫ). КЛИК ПО СТРОКЕ — ДЕТАЛИ ОБМЕНА.
-      ГАЛОЧКА — В КОРЗИНУ: СУММАРНАЯ СТОИМОСТЬ НЕСКОЛЬКИХ ОБМЕНОВ СРАЗУ.</div>
+      «ФАРМ» — ВХОДЫ, КОТОРЫХ НЕТ В ПРОДАЖЕ: КВЕСТОВЫЕ, А ТАКЖЕ ЖЕТОНЫ И ТАЛОНЫ (ИХ ЗАРАБАТЫВАЮТ, А НЕ ПОКУПАЮТ).
+      ЗЕЛЁНЫМ ПОД СТОИМОСТЬЮ — ВЫГОДА ПЕРЕПРОДАЖИ, И ТОЛЬКО У ПРЕДМЕТОВ, КОТОРЫЕ РЕАЛЬНО ПРОДАВАЛИСЬ
+      В ПОСЛЕДНИЕ ДВЕ НЕДЕЛИ: ПО НЕЛИКВИДУ «ЦЕНА» НА АУКЕ БЫВАЕТ ДВУХЛЕТНЕЙ ДАВНОСТИ.
+      КЛИК ПО СТРОКЕ — ДЕТАЛИ ОБМЕНА. ГАЛОЧКА — В КОРЗИНУ: СУММАРНАЯ СТОИМОСТЬ НЕСКОЛЬКИХ ОБМЕНОВ СРАЗУ.</div>
     <div class="bt-wrap"><table class="bt-table">
       <thead><tr><th class="bt-selc" style="width:34px"></th><th style="width:46%">ПРЕДМЕТ</th>
-        <th style="width:30%">ГДЕ</th><th class="r" style="width:20%">СТОИМОСТЬ</th></tr></thead>
+        <th style="width:30%">ГДЕ</th><th class="r" style="width:20%">СТОИМОСТЬ · ВЫГОДА</th></tr></thead>
       <tbody id="btBody"></tbody>
     </table></div>
     <button id="btMore" class="bt-more hidden">ПОКАЗАТЬ ЕЩЁ</button>
@@ -2067,8 +2556,14 @@ async function openBarterModal(id) {
   const best = d.ways[0] && d.ways[0].offers[0];
   const stats = [];
   if (d.buy_price != null) stats.push(`КУПИТЬ НА АУКЕ: <b>${fmt(d.buy_price)} ₽</b>`);
-  if (d.sell_net != null)
-    stats.push(`ПРОДАЖА~ (НЕТТО): <b>${fmt(d.sell_net)} ₽</b>${d.sell_basis === "buyout" ? " <span class='unit'>ПО ВЫКУПУ</span>" : ""}`);
+  if (d.sell_net != null) {
+    // возраст последней сделки: без него «цена продажи» неликвида вводит в
+    // заблуждение — предмет мог продаваться последний раз год назад
+    const age = d.sale_age_days == null ? " <span class='unit'>СДЕЛОК НЕ ВИДНО</span>"
+      : d.sell_fresh ? ""
+      : ` <span class='unit warn'>ПОСЛЕДНЯЯ СДЕЛКА ${Math.round(d.sale_age_days)} ДН. НАЗАД</span>`;
+    stats.push(`ПРОДАЖА~ (НЕТТО): <b>${fmt(d.sell_net)} ₽</b>${d.sell_basis === "buyout" ? " <span class='unit'>ПО ВЫКУПУ</span>" : ""}${age}`);
+  }
   if (best && best.cost != null) {
     stats.push(`ЛУЧШИЙ БАРТЕР: <b>${fmt(best.cost)} ₽</b>`);
     if (d.buy_price != null)
@@ -2266,6 +2761,13 @@ async function loadBarterBlocks(id) {
   box.innerHTML = html;
   box.querySelectorAll(".ilink[data-id], .use-row[data-id]").forEach((el) =>
     el.addEventListener("click", () => { navigate(`/item/${el.dataset.id}`); }));
+  // предмет барется → добавить кнопку «бартер» в строку действий (прокрутка к блоку)
+  const acts = $("itemActs");
+  if (acts && !acts.querySelector("[data-act='barter']")) {
+    acts.insertAdjacentHTML("beforeend", `<button class="item-act" data-act="barter">▸ БАРТЕР</button>`);
+    acts.querySelector("[data-act='barter']").addEventListener("click", () =>
+      box.scrollIntoView({ behavior: "smooth", block: "start" }));
+  }
 }
 
 // ---------- патчноуты игры ----------
@@ -2326,7 +2828,15 @@ function appendPatches(d) {
   $("patchMore").classList.toggle("hidden", patchOffset >= d.total);
 }
 
+// серверный SEO-блок (тело патча/гайда/квеста) прячем — JS рисует интерактивную
+// версию в #page; краулеры без JS видят серверный текст
+function hideSeoBlock() {
+  const s = document.getElementById("seoProse");
+  if (s) s.hidden = true;
+}
+
 async function openPatch(pid) {
+  hideSeoBlock();
   home.classList.add("hidden");
   detail.classList.add("hidden");
   results.innerHTML = "";
@@ -2397,6 +2907,7 @@ async function openGuides() {
 }
 
 async function openGuide(slug) {
+  hideSeoBlock();
   home.classList.add("hidden");
   detail.classList.add("hidden");
   results.innerHTML = "";
@@ -2463,10 +2974,20 @@ function bindPromoCopy(root) {
     }));
 }
 
-const promoCodeBtn = (p) => `<button type="button" class="promo-code" data-code="${escapeHtml(p.code)}"${p.is_ref ? ' data-ref="1"' : ''}
+// код-промокод копируется по клику; промо-ссылка (Steam DLC и т.п.) — открывается
+const promoCodeBtn = (p) => {
+  if (p.url) {
+    const steam = /steampowered\.com|store\.steam/i.test(p.url);
+    return `<a class="promo-code promo-link" href="${escapeHtml(p.url)}" target="_blank" rel="noopener nofollow"
+      title="Открыть страницу и забрать">
+      <span class="pc-code">${steam ? "ЗАБРАТЬ В STEAM" : "ЗАБРАТЬ ПО ССЫЛКЕ"}</span>
+      <span class="pc-hint">ОТКРЫТЬ ▸</span></a>`;
+  }
+  return `<button type="button" class="promo-code" data-code="${escapeHtml(p.code)}"${p.is_ref ? ' data-ref="1"' : ''}
     title="Нажми — код скопируется">
     <span class="pc-code">${escapeHtml(p.code)}</span>
     <span class="pc-hint">КОПИРОВАТЬ</span></button>`;
+};
 
 // expires_at: "YYYY-MM-DDTHH:MM" МСК; T23:59 = «весь день включительно»
 const promoExpiry = (p) => {
@@ -2586,12 +3107,20 @@ let questData = null;                                  // кэш ответа /a
 let questFaction = localStorage.getItem("sz_quest_f") || "stalkers";
 let qmMapCleanup = null;                               // Leaflet-миникарта модала
 let qmEpoch = 0;                                       // гонки: модал переоткрыли/закрыли
+const _qLoadSet = (k) => { try { return new Set(JSON.parse(localStorage.getItem(k) || "[]")); } catch (e) { return new Set(); } };
+let questExpanded = _qLoadSet("sz_quest_exp");         // раскрытые группы (id)
+let questDone = _qLoadSet("sz_quest_done");            // выполненные квесты (id) — память игрока
 
 const questFactionOf = (id) =>
   (questData && questData.factions.find((f) => f.id === id))
   || { id, name: id, color: "#7ce68e" };
 
+// квест виден в линейке fid, если это его основная ИЛИ доп. линейка (общий квест)
+const questInFaction = (q, fid) =>
+  q.faction === fid || (q.factions || []).includes(fid);
+
 async function openQuests(selId) {
+  hideSeoBlock();
   home.classList.add("hidden");
   detail.classList.add("hidden");
   results.innerHTML = "";
@@ -2611,17 +3140,28 @@ async function openQuests(selId) {
     const q = d.items.find((x) => x.id === selId);
     if (q) questFaction = q.faction;
   }
-  if (!d.factions.some((f) => f.id === questFaction)) questFaction = d.factions[0].id;
+  // линейка по умолчанию — только из непустых (сохранённая в localStorage могла
+  // остаться от фракции, у которой квестов ещё нет)
+  const filled = questFilledFactions(d);
+  if (!filled.some((f) => f.id === questFaction))
+    questFaction = (filled[0] || d.factions[0] || {}).id;
   renderQuests();
   if (selId != null) openQuestModal(selId);
 }
 
+// фракции, у которых есть хотя бы один квест (админу видны и черновики).
+// Пустые табы не рисуем: заход из поиска попадал в «ЛИНЕЙКА ЕЩЁ ЗАПОЛНЯЕТСЯ»
+// и половина визитов закрывалась сразу (аудит Метрики, июль 2026).
+function questFilledFactions(d) {
+  return d.factions.filter((f) => d.items.some((q) => questInFaction(q, f.id)));
+}
+
 function renderQuests() {
   const d = questData;
-  const tabs = d.factions.map((f) => {
-    const n = d.items.filter((q) => q.faction === f.id).length;
+  const tabs = questFilledFactions(d).map((f) => {
+    const n = d.items.filter((q) => questInFaction(q, f.id)).length;
     return `<button class="qst-tab${f.id === questFaction ? " on" : ""}" data-f="${f.id}"
-      style="--fc:${f.color}">${escapeHtml(f.name.toUpperCase())}${n ? ` <span>${n}</span>` : ""}</button>`;
+      style="--fc:${f.color}">${escapeHtml(f.name.toUpperCase())} <span>${n}</span></button>`;
   }).join("");
   page.innerHTML = `<div class="btmod">
     <div class="section-head">
@@ -2630,91 +3170,460 @@ function renderQuests() {
     </div>
     <div class="qst-tabs">${tabs}</div>
     <div class="qst-wrap" id="qstWrap"></div>
-    <div class="map-legend">Стрелка — «открывается после». Блоки с
+    <div class="map-legend">Схема идёт сверху вниз, стрелка — «открывается после». Блоки с
       <b style="color:var(--amber)">янтарной</b> рамкой — основная линейка, серые — побочные.
-      📍 — у квеста есть точки на карте.${d.is_admin ? " Пунктирные — черновики (видны только админам)." : ""}</div>
+      📍 — у квеста есть точки на карте. Колесо — зум, тяни пустое поле — двигать схему.${d.is_admin
+        ? " Пунктирные — черновики (видны только админам). <b style=\"color:var(--green)\">Расставлять блоки и связи — в ДЕВ · КВЕСТЫ → КАРТА ЛИНЕЕК.</b>"
+        : ""}</div>
   </div>`;
   page.querySelectorAll(".qst-tab").forEach((b) => b.addEventListener("click", () => {
     questFaction = b.dataset.f;
     localStorage.setItem("sz_quest_f", questFaction);
     renderQuests();
   }));
-  renderQuestChart(d.items.filter((q) => q.faction === questFaction));
+  renderQuestChart(questFaction);
 }
 
-function renderQuestChart(items) {
-  const wrap = $("qstWrap");
+// публичная схема (read-only, клик → модал)
+function renderQuestChart(faction) {
+  renderQuestGraph($("qstWrap"), faction, { edit: false });
+}
+
+// pan/zoom-граф линейки. edit=false — публично (клик по блоку → модал);
+// edit=true — дев-карта: тянуть блоки, рисовать стрелки от точки снизу к
+// другому блоку, клик по стрелке — удалить связь. Колесо — зум, тянуть пустое
+// место — двигать полотно. Ручные позиции pos[faction] важнее авто-раскладки.
+function renderQuestGraph(host, faction, opts) {
+  const edit = !!(opts && opts.edit);
+  const items = questData.items.filter((q) => questInFaction(q, faction));
   if (!items.length) {
-    wrap.innerHTML = `<div class="empty-sm" style="padding:24px 10px">ЛИНЕЙКА ЕЩЁ ЗАПОЛНЯЕТСЯ — КВЕСТЫ ПОЯВЯТСЯ ПОЗЖЕ.</div>`;
+    host.innerHTML = `<div class="empty-sm" style="padding:24px 10px">ЛИНЕЙКА ЕЩЁ ЗАПОЛНЯЕТСЯ — КВЕСТЫ ПОЯВЯТСЯ ПОЗЖЕ.</div>`;
     return;
   }
   const byId = new Map(items.map((q) => [q.id, q]));
-  // уровень (колонка) = самая длинная цепочка родителей внутри линейки
-  const level = new Map();
-  const lvl = (q, stack) => {
-    if (level.has(q.id)) return level.get(q.id);
-    if (stack.has(q.id)) return 0;                    // защита от цикла в данных
-    stack.add(q.id);
-    const ps = (q.parents || []).filter((p) => byId.has(p));
-    const l = ps.length ? Math.max(...ps.map((p) => lvl(byId.get(p), stack))) + 1 : 0;
-    stack.delete(q.id);
-    level.set(q.id, l);
-    return l;
-  };
-  items.forEach((q) => lvl(q, new Set()));
-  // строка внутри колонки: sort админа, потом ближе к родителям, основные выше
-  const cols = [];
-  items.forEach((q) => (cols[level.get(q.id)] ||= []).push(q));
-  const row = new Map();
-  cols.forEach((col) => {
-    const pr = (q) => {
-      const ps = (q.parents || []).filter((p) => row.has(p));
-      return ps.length ? ps.reduce((s, p) => s + row.get(p), 0) / ps.length : 1e9;
-    };
-    col.sort((a, b) => (a.sort - b.sort) || (pr(a) - pr(b))
-      || (a.kind === "main" ? 0 : 1) - (b.kind === "main" ? 0 : 1) || (a.id - b.id));
-    col.forEach((q, i) => row.set(q.id, i));
-  });
 
-  const W = 190, H = 72, GX = 90, GY = 20, PAD = 10;
-  const pos = (q) => ({ x: PAD + level.get(q.id) * (W + GX),
-                        y: PAD + row.get(q.id) * (H + GY) });
-  const cw = PAD * 2 + cols.length * (W + GX) - GX;
-  const ch = PAD * 2 + Math.max(...cols.map((c) => c.length)) * (H + GY) - GY;
+  // --- группы: свёрнутая группа = один «модуль»-юнит, раскрытая = участники по одному
+  const groups = (questData.groups || []).filter((g) => items.some((q) => q.group_id === g.id));
+  const groupById = new Map(groups.map((g) => [g.id, g]));
+  const membersOf = new Map(groups.map((g) => [g.id, items.filter((q) => q.group_id === g.id)]));
+  const groupOfQ = new Map();
+  items.forEach((q) => { if (q.group_id && groupById.has(q.group_id)) groupOfQ.set(q.id, groupById.get(q.group_id)); });
+  const isCollapsed = (gid) => !questExpanded.has(gid);
+  const unitOfQ = (qid) => { const g = groupOfQ.get(qid); return (g && isCollapsed(g.id)) ? "g" + g.id : "q" + qid; };
+  const isGroupUnit = (u) => u[0] === "g";
+  const groupOfUnit = (u) => groupById.get(+u.slice(1));
+  const questOfUnit = (u) => byId.get(+u.slice(1));
 
-  let edges = "";
+  const unitIds = new Set();
+  items.forEach((q) => unitIds.add(unitOfQ(q.id)));
+  const uParents = new Map();
+  unitIds.forEach((u) => uParents.set(u, new Set()));
   items.forEach((q) => (q.parents || []).forEach((pid) => {
     if (!byId.has(pid)) return;
-    const a = pos(byId.get(pid)), b = pos(q);
-    const x1 = a.x + W, y1 = a.y + H / 2, x2 = b.x, y2 = b.y + H / 2;
-    const mx = (x1 + x2) / 2;
-    edges += `<path d="M${x1} ${y1} C${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}"
-      class="qst-edge${q.kind === "side" ? " is-side" : ""}"/>
-      <circle cx="${x2}" cy="${y2}" r="2.5" class="qst-dot${q.kind === "side" ? " is-side" : ""}"/>`;
+    const uq = unitOfQ(q.id), up = unitOfQ(pid);
+    if (uq !== up) uParents.get(uq).add(up);
   }));
 
-  const nodes = items.map((q) => {
-    const p = pos(q);
-    // родители из другой линейки — маленькая метка ⇠ с подсказкой
-    const ext = (q.parents || [])
-      .filter((pid) => !byId.has(pid))
-      .map((pid) => questData.items.find((x) => x.id === pid)).filter(Boolean);
-    const extHtml = ext.length
-      ? `<div class="qst-ext" title="После: ${escapeHtml(ext.map((x) =>
-          `${x.title} (${questFactionOf(x.faction).name})`).join(", "))}">⇠</div>` : "";
-    return `<div class="qst-node is-${q.kind}${q.published ? "" : " draft"}" data-id="${q.id}"
-      style="left:${p.x}px;top:${p.y}px;width:${W}px;height:${H}px"
-      title="${escapeHtml(q.summary || q.title)}">
-      <div class="qst-kind">${q.kind === "main" ? "ОСНОВНОЙ" : "ПОБОЧНЫЙ"}${q.published ? "" : " · ЧЕРНОВИК"}</div>
-      <div class="qst-name">${escapeHtml(q.title)}</div>
-      ${q.has_map ? `<div class="qst-map-i">📍</div>` : ""}${extHtml}
-    </div>`;
-  }).join("");
+  // глубина юнита по связям = ряд сверху вниз; авто-колонка внутри ряда
+  const depth = new Map();
+  const dep = (u, stack) => {
+    if (depth.has(u)) return depth.get(u);
+    if (stack.has(u)) return 0;
+    stack.add(u);
+    const ps = [...uParents.get(u)];
+    const dv = ps.length ? Math.max(...ps.map((p) => dep(p, stack))) + 1 : 0;
+    stack.delete(u); depth.set(u, dv); return dv;
+  };
+  unitIds.forEach((u) => dep(u, new Set()));
+  const uSort = (u) => isGroupUnit(u) ? -1 : (questOfUnit(u).sort || 0);
+  const uMain = (u) => isGroupUnit(u) || questOfUnit(u).kind === "main";
+  const bands = [];
+  unitIds.forEach((u) => (bands[depth.get(u)] ||= []).push(u));
+  const autoCol = new Map();
+  bands.forEach((band) => {
+    const near = (u) => {
+      const ps = [...uParents.get(u)].filter((p) => autoCol.has(p));
+      return ps.length ? ps.reduce((s, p) => s + autoCol.get(p), 0) / ps.length : 1e9;
+    };
+    band.sort((a, b) => (uSort(a) - uSort(b)) || (near(a) - near(b))
+      || (uMain(a) ? 0 : 1) - (uMain(b) ? 0 : 1) || (a < b ? -1 : 1));
+    band.forEach((u, i) => autoCol.set(u, i));
+  });
 
-  wrap.innerHTML = `<div class="qst-canvas" style="width:${cw}px;height:${ch}px">
-    <svg width="${cw}" height="${ch}" viewBox="0 0 ${cw} ${ch}">${edges}</svg>${nodes}</div>`;
-  wrap.querySelectorAll(".qst-node").forEach((n) =>
-    n.addEventListener("click", () => openQuestModal(+n.dataset.id)));
+  const W = 190, H = 72, cellW = 220, cellH = 118, PAD = 20;
+  const posOfUnit = (u) => {
+    const src = isGroupUnit(u) ? groupOfUnit(u) : questOfUnit(u);
+    const m = src && src.pos && src.pos[faction];
+    return (Array.isArray(m) && m.length === 2)
+      ? { col: Math.max(0, m[0]), row: Math.max(0, m[1]) }
+      : { col: autoCol.get(u), row: depth.get(u) };
+  };
+  const cell = new Map([...unitIds].map((u) => [u, posOfUnit(u)]));
+  const xOf = (u) => PAD + cell.get(u).col * cellW;
+  const yOf = (u) => PAD + cell.get(u).row * cellH;
+  const canvasSize = () => ({
+    cw: PAD * 2 + Math.max(0, ...[...unitIds].map((u) => cell.get(u).col)) * cellW + W,
+    ch: PAD * 2 + Math.max(0, ...[...unitIds].map((u) => cell.get(u).row)) * cellH + H + 34,
+  });
+
+  host.innerHTML = `<div class="qgraph${edit ? " is-edit" : ""}">
+    ${edit ? `<div class="qgraph-selbar"></div>` : ""}
+    <div class="qgraph-view"><div class="qgraph-stage"></div></div>
+    <div class="qgraph-ctl">
+      <button type="button" class="qgraph-zb" data-z="out" title="Отдалить">－</button>
+      <button type="button" class="qgraph-zb" data-z="fit" title="Уместить">⤢ по размеру</button>
+      <button type="button" class="qgraph-zb" data-z="in" title="Приблизить">＋</button>
+      ${edit ? `<span class="qgraph-hint">клик — выбрать · двойной клик — открыть · тяни блок — двигать · тяни точку снизу — связать · выбери 2+ блока и «сгруппировать»</span>` : ""}
+    </div>
+  </div>`;
+  const view = host.querySelector(".qgraph-view");
+  const stage = host.querySelector(".qgraph-stage");
+  const T = { s: 1, tx: 0, ty: 12 };
+  const applyT = () => { stage.style.transform = `translate(${T.tx}px,${T.ty}px) scale(${T.s})`; };
+  const curZoom = () => parseFloat(getComputedStyle(document.documentElement)
+    .getPropertyValue("--zoom")) || 1;
+  const toStage = (cx, cy) => {                       // клиентские px → координаты сцены
+    const r = view.getBoundingClientRect(), z = curZoom();
+    return { x: ((cx - r.left) / z - T.tx) / T.s, y: ((cy - r.top) / z - T.ty) / T.s };
+  };
+
+  const selected = new Set();                 // выбранные юниты (дев-карта)
+  let lastClick = { u: null, t: 0 };          // для различения клик/двойной клик
+  const savePos = (qid, col, row) => {
+    const q = byId.get(qid); if (q) { q.pos = q.pos || {}; q.pos[faction] = [col, row]; }
+    fetch(api(`/admin/quests/${qid}/pos`), { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ faction, col, row }) }).catch(() => {});
+  };
+  const saveGroupPos = (gid, col, row) => {
+    const g = groupById.get(gid); if (g) { g.pos = g.pos || {}; g.pos[faction] = [col, row]; }
+    fetch(api(`/admin/quest-groups/${gid}/pos`), { method: "POST",
+      headers: { "Content-Type": "application/json" }, body: JSON.stringify({ faction, col, row }) }).catch(() => {});
+  };
+  const saveParents = async (child) => {
+    try {
+      const r = await fetch(api(`/admin/quests/${child.id}/parents`), { method: "POST",
+        headers: { "Content-Type": "application/json" }, body: JSON.stringify({ parents: child.parents }) });
+      if (!r.ok) { const j = await r.json().catch(() => ({})); alert(j.detail || "не удалось изменить связь"); return false; }
+      return true;
+    } catch (e) { return false; }
+  };
+  // память игрока: отметить квест выполненным вместе с обязательными предшественниками
+  const ancestorsOf = (qid) => {
+    const res = new Set(), stack = [qid];
+    while (stack.length) {
+      const cq = questData.items.find((x) => x.id === stack.pop());
+      ((cq && cq.parents) || []).forEach((p) => { if (!res.has(p)) { res.add(p); stack.push(p); } });
+    }
+    return res;
+  };
+  const saveDone = () => { try { localStorage.setItem("sz_quest_done", JSON.stringify([...questDone])); } catch (e) {} };
+  const markDone = (qid) => { questDone.add(qid); ancestorsOf(qid).forEach((a) => questDone.add(a)); };
+  const groupIsDone = (g) => { const m = membersOf.get(g.id) || []; return m.length > 0 && m.every((q) => questDone.has(q.id)); };
+  const toggleExpand = (gid) => {
+    if (questExpanded.has(gid)) questExpanded.delete(gid); else questExpanded.add(gid);
+    try { localStorage.setItem("sz_quest_exp", JSON.stringify([...questExpanded])); } catch (e) {}
+    renderQuestGraph(host, faction, opts);    // юниты меняются — полный перестрой
+  };
+
+  const renderUnit = (u) => {
+    const pos = `left:${xOf(u)}px;top:${yOf(u)}px;width:${W}px;height:${H}px`;
+    const sel = edit && selected.has(u) ? " selected" : "";
+    if (isGroupUnit(u)) {
+      const g = groupOfUnit(u), cnt = (membersOf.get(g.id) || []).length;
+      const done = !edit && groupIsDone(g) ? " done" : "";
+      return `<div class="qst-node qgraph-node qgraph-group${done}${sel}" data-unit="${u}" data-gid="${g.id}"
+        style="${pos}" title="Группа: ${escapeHtml(g.title)} (${cnt})">
+        <div class="qst-kind">ГРУППА · ${cnt} кв.</div>
+        <div class="qst-name">${escapeHtml(g.title)}</div>
+        <button type="button" class="qgraph-chev" data-expand="${g.id}" title="Раскрыть группу">▸</button>
+        ${!edit ? `<button type="button" class="qgraph-done" title="Отметить группу выполненной">✓</button>` : ""}
+      </div>`;
+    }
+    const q = questOfUnit(u);
+    const ext = (q.parents || []).filter((pid) => !byId.has(pid))
+      .map((pid) => questData.items.find((x) => x.id === pid)).filter(Boolean);
+    const extHtml = ext.length ? `<div class="qst-ext" title="После: ${escapeHtml(ext.map((x) =>
+      `${x.title} (${questFactionOf(x.faction).name})`).join(", "))}">⇠</div>` : "";
+    const shared = (q.factions || []).length ? `<div class="qst-shared" title="Также в линейках: ${escapeHtml(
+      (q.factions || []).map((fx) => questFactionOf(fx).name).join(", "))}">⇄</div>` : "";
+    const done = !edit && questDone.has(q.id) ? " done" : "";
+    return `<div class="qst-node qgraph-node is-${q.kind}${done}${sel}" data-unit="${u}" data-id="${q.id}"
+      style="${pos}" title="${escapeHtml(q.summary || q.title)}">
+      <div class="qst-kind">${q.kind === "main" ? "ОСНОВНОЙ" : "ПОБОЧНЫЙ"}</div>
+      <div class="qst-name">${escapeHtml(q.title)}</div>
+      ${q.has_map ? `<div class="qst-map-i">📍</div>` : ""}${extHtml}${shared}
+      ${!edit ? `<button type="button" class="qgraph-done" title="Отметить выполненным">✓</button>` : ""}
+      ${edit ? `<div class="qgraph-editbar" title="Открыть редактор квеста">✎</div><button type="button" class="qgraph-add" title="Добавить следующий квест">＋</button><div class="qgraph-handle" title="Потяни на другой квест, чтобы связать"></div>` : ""}
+    </div>`;
+  };
+
+  const paint = () => {
+    const { cw, ch } = canvasSize();
+    let edges = "";
+    unitIds.forEach((u) => uParents.get(u).forEach((pu) => {
+      const x1 = xOf(pu) + W / 2, y1 = yOf(pu) + H;
+      const x2 = xOf(u) + W / 2, y2 = yOf(u);
+      const my = (y1 + y2) / 2;
+      const d = `M${x1} ${y1} C${x1} ${my}, ${x2} ${my}, ${x2} ${y2}`;
+      const side = !isGroupUnit(u) && questOfUnit(u).kind === "side";
+      edges += `<path d="${d}" class="qst-edge${side ? " is-side" : ""}"/><circle cx="${x2}" cy="${y2}" r="3" class="qst-dot${side ? " is-side" : ""}"/>`;
+      if (edit && !isGroupUnit(u) && !isGroupUnit(pu))     // удалять можно только прямую связь
+        edges += `<path d="${d}" class="qgraph-edge-hit" data-child="${questOfUnit(u).id}" data-parent="${questOfUnit(pu).id}"/>`;
+    }));
+    let boxes = "", hdrs = "";
+    groups.forEach((g) => {
+      if (isCollapsed(g.id)) return;
+      const mem = (membersOf.get(g.id) || []).map((q) => "q" + q.id).filter((u) => unitIds.has(u));
+      if (!mem.length) return;
+      const xs = mem.map((u) => xOf(u)), ys = mem.map((u) => yOf(u));
+      const bx = Math.min(...xs) - 14, by = Math.min(...ys) - 30;
+      const bw = Math.max(...xs) - Math.min(...xs) + W + 28, bh = Math.max(...ys) - Math.min(...ys) + H + 44;
+      boxes += `<rect x="${bx}" y="${by}" width="${bw}" height="${bh}" rx="8" class="qgraph-groupbox"/>`;
+      hdrs += `<div class="qgraph-boxhdr" style="left:${bx}px;top:${by}px;max-width:${bw}px">
+        <span class="qgraph-chev" data-collapse="${g.id}" title="Свернуть группу">▾</span>
+        <b>${escapeHtml(g.title)}</b> · группа${edit ? ` <span class="qgraph-boxungroup" data-ungroup="${g.id}">разгруппировать</span>` : ""}</div>`;
+    });
+    const nodes = [...unitIds].map((u) => renderUnit(u)).join("");
+    stage.style.width = cw + "px"; stage.style.height = ch + "px";
+    stage.innerHTML = `<svg width="${cw}" height="${ch}" viewBox="0 0 ${cw} ${ch}">${boxes}${edges}<path class="qgraph-temp" d=""/></svg>${nodes}${hdrs}`;
+    wire();
+    updateSelbar();
+  };
+
+  const fit = () => {
+    const { cw, ch } = canvasSize();
+    const r = view.getBoundingClientRect(), z = curZoom();
+    const vw = r.width / z, vh = r.height / z;
+    T.s = Math.max(0.25, Math.min(1, Math.min(vw / cw, vh / ch)));
+    T.tx = Math.max(0, (vw - cw * T.s) / 2); T.ty = 12;
+    applyT();
+  };
+
+  const zoomAt = (cx, cy, factor) => {
+    const p = toStage(cx, cy);
+    const r = view.getBoundingClientRect(), z = curZoom();
+    const s2 = Math.max(0.25, Math.min(2, T.s * factor));
+    T.tx = (cx - r.left) / z - p.x * s2;
+    T.ty = (cy - r.top) / z - p.y * s2;
+    T.s = s2; applyT();
+  };
+
+  const toggleSelect = (u, n) => {
+    if (selected.has(u)) { selected.delete(u); if (n) n.classList.remove("selected"); }
+    else { selected.add(u); if (n) n.classList.add("selected"); }
+    updateSelbar();
+  };
+  const handleUnitClick = (n) => {              // клик = выбрать; двойной по группе = раскрыть
+    const u = n.dataset.unit, now = Date.now();
+    const dbl = lastClick.u === u && now - lastClick.t < 320;
+    lastClick = dbl ? { u: null, t: 0 } : { u, t: now };
+    if (dbl && n.dataset.gid) { toggleExpand(+n.dataset.gid); return; }
+    if (dbl) return;                            // квест: редактор открывается полоской слева
+    toggleSelect(u, n);
+  };
+  const doGroup = async (qUnits) => {
+    const ids = qUnits.map((u) => +u.slice(1));
+    const title = prompt("Название группы (как назвать модуль на схеме):", "Группа квестов");
+    if (title === null) return;
+    try {
+      const r = await fetch(api("/admin/quest-groups"), { method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ faction, title: title.trim() || "Группа квестов", members: ids }) });
+      const j = await r.json();
+      if (!r.ok) { alert(j.detail || "не удалось сгруппировать"); return; }
+      questData.groups.push(j);
+      ids.forEach((mid) => { const q = byId.get(mid); if (q) q.group_id = j.id; });
+      renderQuestGraph(host, faction, opts);
+    } catch (e) { alert("ошибка сети"); }
+  };
+  const doUngroup = async (gUnits) => {
+    if (!confirm("Разгруппировать? Квесты останутся, модуль исчезнет.")) return;
+    for (const u of gUnits) {
+      const gid = +u.slice(1);
+      try { await fetch(api(`/admin/quest-groups/${gid}`), { method: "DELETE" }); } catch (e) {}
+      questData.groups = questData.groups.filter((g) => g.id !== gid);
+      items.forEach((q) => { if (q.group_id === gid) q.group_id = null; });
+    }
+    renderQuestGraph(host, faction, opts);
+  };
+  const updateSelbar = () => {
+    const bar = host.querySelector(".qgraph-selbar");
+    if (!bar) return;
+    [...selected].forEach((u) => { if (!unitIds.has(u)) selected.delete(u); });
+    const sel = [...selected];
+    if (!sel.length) { bar.classList.remove("on"); bar.innerHTML = ""; return; }
+    const qU = sel.filter((u) => !isGroupUnit(u)), gU = sel.filter(isGroupUnit);
+    let btns = "";
+    if (qU.length >= 2 && !gU.length) btns += `<button type="button" class="qgraph-selb hot" data-a="group">СГРУППИРОВАТЬ (${qU.length})</button>`;
+    if (gU.length) btns += `<button type="button" class="qgraph-selb" data-a="ungroup">РАЗГРУППИРОВАТЬ (${gU.length})</button>`;
+    bar.classList.add("on");
+    bar.innerHTML = `<span class="qgraph-selc">Выбрано: ${sel.length}</span>${btns}<button type="button" class="qgraph-selb" data-a="clear">СНЯТЬ</button>`;
+    bar.querySelectorAll(".qgraph-selb").forEach((b) => b.addEventListener("click", () => {
+      const a = b.dataset.a;
+      if (a === "clear") { selected.clear(); paint(); applyT(); }
+      else if (a === "group") doGroup(qU);
+      else if (a === "ungroup") doUngroup(gU);
+    }));
+  };
+
+  function wire() {
+    // отметки «выполнено» (публично)
+    if (!edit) stage.querySelectorAll(".qgraph-done").forEach((btn) => {
+      btn.addEventListener("pointerdown", (e) => e.stopPropagation());
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const node = btn.closest(".qgraph-node");
+        if (node.dataset.gid) {
+          const mem = membersOf.get(+node.dataset.gid) || [];
+          const all = mem.length && mem.every((q) => questDone.has(q.id));
+          if (all) mem.forEach((q) => questDone.delete(q.id)); else mem.forEach((q) => markDone(q.id));
+        } else {
+          const id = +node.dataset.id;
+          if (questDone.has(id)) questDone.delete(id); else markDone(id);
+        }
+        saveDone(); paint(); applyT();
+      });
+    });
+
+    stage.querySelectorAll(".qgraph-node").forEach((n) => {
+      const isGrp = !!n.dataset.gid;
+      const chev = n.querySelector(".qgraph-chev");
+      if (chev) {
+        chev.addEventListener("pointerdown", (e) => e.stopPropagation());
+        chev.addEventListener("click", (e) => { e.stopPropagation(); toggleExpand(+chev.dataset.expand); });
+      }
+      if (!edit) {
+        n.addEventListener("click", (e) => {
+          if (e.target.closest(".qgraph-done") || e.target.closest(".qgraph-chev")) return;
+          if (isGrp) toggleExpand(+n.dataset.gid); else openQuestModal(+n.dataset.id);
+        });
+        return;
+      }
+      if (!isGrp) {
+        const addBtn = n.querySelector(".qgraph-add");
+        addBtn.addEventListener("pointerdown", (e) => e.stopPropagation());
+        addBtn.addEventListener("click", (e) => { e.stopPropagation(); renderDevQuestForm(null, { parent: +n.dataset.id, faction }); });
+        const editBar = n.querySelector(".qgraph-editbar");   // широкая полоска слева → редактор
+        editBar.addEventListener("pointerdown", (e) => e.stopPropagation());
+        editBar.addEventListener("click", (e) => { e.stopPropagation(); renderDevQuestForm(+n.dataset.id); });
+      }
+      // тянуть = двигать; короткий клик = выбрать (редактор — полоской слева)
+      n.addEventListener("pointerdown", (e) => {
+        if (e.button !== 0 || e.target.closest(".qgraph-handle") || e.target.closest(".qgraph-add")
+          || e.target.closest(".qgraph-chev") || e.target.closest(".qgraph-editbar")) return;
+        e.stopPropagation();
+        const z = curZoom(), sx = e.clientX, sy = e.clientY;
+        const ox = parseFloat(n.style.left), oy = parseFloat(n.style.top);
+        let moved = false;
+        n.setPointerCapture(e.pointerId);
+        const mv = (ev) => {
+          const dx = ev.clientX - sx, dy = ev.clientY - sy;
+          if (!moved && Math.hypot(dx, dy) < 5) return;
+          moved = true; n.classList.add("dragging");
+          n.style.left = Math.max(0, ox + dx / (z * T.s)) + "px";
+          n.style.top = Math.max(0, oy + dy / (z * T.s)) + "px";
+        };
+        const up = () => {
+          n.removeEventListener("pointermove", mv); n.removeEventListener("pointerup", up);
+          n.classList.remove("dragging");
+          if (!moved) { handleUnitClick(n); return; }
+          const col = Math.max(0, Math.round((parseFloat(n.style.left) - PAD) / cellW));
+          const row = Math.max(0, Math.round((parseFloat(n.style.top) - PAD) / cellH));
+          cell.set(n.dataset.unit, { col, row });
+          if (isGrp) saveGroupPos(+n.dataset.gid, col, row); else savePos(+n.dataset.id, col, row);
+          paint(); applyT();
+        };
+        n.addEventListener("pointermove", mv); n.addEventListener("pointerup", up);
+      });
+      if (isGrp) return;                        // стрелки тянем только между квестами
+      const id = +n.dataset.id;
+      const handle = n.querySelector(".qgraph-handle");
+      handle.addEventListener("pointerdown", (e) => {
+        if (e.button !== 0) return;
+        e.stopPropagation(); e.preventDefault();
+        const temp = stage.querySelector(".qgraph-temp");
+        const sx0 = xOf("q" + id) + W / 2, sy0 = yOf("q" + id) + H;
+        let target = null;
+        handle.setPointerCapture(e.pointerId);
+        const setTarget = (tid, tn) => {
+          if (target && target !== tid) {
+            const pn = stage.querySelector(`.qgraph-node[data-id="${target}"]`);
+            if (pn) pn.classList.remove("link-target");
+          }
+          target = tid;
+          if (tid && tn) tn.classList.add("link-target");
+        };
+        const mv = (ev) => {
+          const p = toStage(ev.clientX, ev.clientY);
+          temp.setAttribute("d", `M${sx0} ${sy0} C${sx0} ${(sy0 + p.y) / 2}, ${p.x} ${(sy0 + p.y) / 2}, ${p.x} ${p.y}`);
+          temp.classList.add("on");
+          const el = document.elementFromPoint(ev.clientX, ev.clientY);
+          const tn = el && el.closest(".qgraph-node");
+          const tid = tn && tn.dataset.id ? +tn.dataset.id : null;
+          setTarget(tid && tid !== id ? tid : null, tn);
+        };
+        const up = async () => {
+          handle.removeEventListener("pointermove", mv); handle.removeEventListener("pointerup", up);
+          temp.classList.remove("on"); temp.setAttribute("d", "");
+          const tid = target;
+          if (target) { const pn = stage.querySelector(`.qgraph-node[data-id="${target}"]`); if (pn) pn.classList.remove("link-target"); }
+          if (!tid) return;
+          const child = byId.get(tid);
+          if (!child || (child.parents || []).includes(id)) return;
+          const prev = (child.parents || []).slice();
+          child.parents = [...(child.parents || []), id];
+          if (!(await saveParents(child))) child.parents = prev;
+          paint(); applyT();
+        };
+        handle.addEventListener("pointermove", mv); handle.addEventListener("pointerup", up);
+      });
+    });
+
+    // заголовки раскрытых групп: свернуть / разгруппировать
+    stage.querySelectorAll(".qgraph-chev[data-collapse]").forEach((c) => {
+      c.addEventListener("pointerdown", (e) => e.stopPropagation());
+      c.addEventListener("click", (e) => { e.stopPropagation(); toggleExpand(+c.dataset.collapse); });
+    });
+    stage.querySelectorAll(".qgraph-boxungroup").forEach((c) => {
+      c.addEventListener("pointerdown", (e) => e.stopPropagation());
+      c.addEventListener("click", (e) => { e.stopPropagation(); doUngroup(["g" + c.dataset.ungroup]); });
+    });
+
+    if (edit) stage.querySelectorAll(".qgraph-edge-hit").forEach((p) =>
+      p.addEventListener("click", async (e) => {
+        e.stopPropagation();
+        const child = byId.get(+p.dataset.child), parent = +p.dataset.parent;
+        if (!child || !confirm("Удалить связь (стрелку)?")) return;
+        const prev = (child.parents || []).slice();
+        child.parents = (child.parents || []).filter((x) => x !== parent);
+        if (!(await saveParents(child))) child.parents = prev;
+        paint(); applyT();
+      }));
+  }
+
+  // пан полотна левой кнопкой по пустому месту
+  view.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0 || e.target.closest(".qgraph-node") || e.target.closest(".qgraph-edge-hit")
+      || e.target.closest(".qgraph-boxhdr")) return;
+    const z = curZoom(), sx = e.clientX, sy = e.clientY, tx0 = T.tx, ty0 = T.ty;
+    view.classList.add("panning");
+    view.setPointerCapture(e.pointerId);
+    const mv = (ev) => { T.tx = tx0 + (ev.clientX - sx) / z; T.ty = ty0 + (ev.clientY - sy) / z; applyT(); };
+    const up = () => { view.removeEventListener("pointermove", mv); view.removeEventListener("pointerup", up); view.classList.remove("panning"); };
+    view.addEventListener("pointermove", mv); view.addEventListener("pointerup", up);
+  });
+  view.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    zoomAt(e.clientX, e.clientY, e.deltaY < 0 ? 1.12 : 1 / 1.12);
+  }, { passive: false });
+  host.querySelectorAll(".qgraph-zb").forEach((b) => b.addEventListener("click", () => {
+    if (b.dataset.z === "fit") { fit(); return; }
+    const r = view.getBoundingClientRect();
+    zoomAt(r.left + r.width / 2, r.top + r.height / 2, b.dataset.z === "in" ? 1.2 : 1 / 1.2);
+  }));
+
+  paint();
+  fit();
 }
 
 // ---------- модал квеста: прохождение, награда, миникарта с точками ----------
@@ -2729,12 +3638,15 @@ async function openQuestModal(qid) {
   const f = questFactionOf(q.faction);
   const parents = (q.parents || [])
     .map((pid) => questData.items.find((x) => x.id === pid)).filter(Boolean);
+  // следующие квесты = те, у кого этот в родителях (кнопка «следующий квест»)
+  const children = questData.items
+    .filter((x) => (x.parents || []).includes(q.id))
+    .sort((a, b) => (a.sort - b.sort) || (a.id - b.id));
   const hasMap = q.map_layer && (q.map_points || []).length;
   gModalOpen(`<div class="qm">
     <div class="qm-badges">
       <span class="qm-badge" style="--fc:${f.color}">${escapeHtml(f.name.toUpperCase())}</span>
       <span class="qm-badge is-${q.kind}">${q.kind === "main" ? "ОСНОВНОЙ КВЕСТ" : "ПОБОЧНЫЙ КВЕСТ"}</span>
-      ${q.published ? "" : `<span class="qm-badge draft">ЧЕРНОВИК</span>`}
     </div>
     <h2 class="qm-title">${escapeHtml(q.title)}</h2>
     ${parents.length ? `<div class="qm-after">ОТКРЫВАЕТСЯ ПОСЛЕ: ${parents.map((p) =>
@@ -2743,6 +3655,11 @@ async function openQuestModal(qid) {
     <div class="patch-body qm-body">${q.html || `<p style="color:var(--dim)">Прохождение ещё пишется — загляни позже.</p>`}</div>
     ${hasMap ? `<div class="qm-map-h">ТОЧКИ КВЕСТА НА КАРТЕ · наведи на номер</div>
       <div class="qm-map" id="qmMap"></div>` : ""}
+    ${children.length ? `<div class="qm-next">
+      <span class="qm-next-h">${children.length > 1 ? "СЛЕДУЮЩИЕ КВЕСТЫ" : "СЛЕДУЮЩИЙ КВЕСТ"}</span>
+      ${children.map((c) => `<a class="qm-plink qm-nextbtn${c.published ? "" : " draft"}"
+        data-id="${c.id}" href="/quests/${c.id}">${escapeHtml(c.title)} →</a>`).join("")}
+    </div>` : ""}
     ${questData.is_admin ? `<div class="qm-admin"><a href="/dev/quests?edit=${q.id}">✎ РЕДАКТИРОВАТЬ КВЕСТ</a></div>` : ""}
   </div>`);
   if (location.pathname.startsWith("/quests"))
@@ -2939,6 +3856,10 @@ const QLT_RU = { 0: "ОБЫЧНЫЙ", 1: "НЕОБЫЧНЫЙ", 2: "ОСОБЫЙ"
 const qltLabel = (q) => QLT_RU[q] || `Q${q}`;
 const bucketBadge = (qlt, ptn) => `${QLT_RU[qlt] || "Q" + qlt} +${ptn}`;
 const PTN_LEVELS = [0, 5, 10, 15];  // уровни заточки в UI (решение: только эти)
+// котировки заточек — корзинами: 0-4 → +0, 5-9 → +5, 10-14 → +10, 15 → +15
+const ptnBucket = (p) => Math.min(p - (p % 5), 15);
+// подпись диапазона корзины: +0…+4, +5…+9, +10…+14, +15
+const ptnRange = (p) => (p >= 15 ? "+15" : `+${p}…+${p + 4}`);
 
 let artFilters = { window: "7d", qlt: -1, ptn: -1 };
 let artCardSel = null;  // предвыбор корзины при переходе из рейтинга {qlt, ptn}
@@ -3019,6 +3940,7 @@ function renderAuction(d) {
   }
   h += `<div class="side-foot">СРЕДНЯЯ ЦЕНА ПРОДАЖ ИЗ ИСТОРИИ АУКЦИОНА ПО КОРЗИНАМ
     КАЧЕСТВО (Q0 ОБЫЧНЫЙ … Q5 ЛЕГЕНДАРНЫЙ) × ЗАТОЧКА (+0/+5/+10/+15).
+    ПРОМЕЖУТОЧНЫЕ ЗАТОЧКИ ИДУТ В НИЖНЮЮ КОРЗИНУ (+7 → +5, +14 → +10).
     МОМЕНТАЛЬНЫЕ ЛОТЫ НЕ УЧИТЫВАЮТСЯ — ОНИ ЛЕГКО МАНИПУЛИРУЮТСЯ.</div>`;
 
   page.innerHTML = h;
@@ -3081,8 +4003,8 @@ function renderArtCard(d) {
   h += `<div class="section-head"><div class="section-title">▸ КОРЗИНЫ КАЧЕСТВО × ЗАТОЧКА</div>
     <div class="section-note">СР. ЦЕНА ЗА 7 ДНЕЙ · ПОРОГ ${d.min_sales} ПРОДАЖ</div></div>
     <div class="bucket-row">${bs.map((b) => `
-      <button class="bucket-chip ${b === sel ? "on" : ""} ${PTN_LEVELS.includes(b.ptn) ? "" : "offlevel"}"
-              data-q="${b.qlt}" data-p="${b.ptn}" title="${qltLabel(b.qlt)}, заточка +${b.ptn}">
+      <button class="bucket-chip ${b === sel ? "on" : ""}"
+              data-q="${b.qlt}" data-p="${b.ptn}" title="${qltLabel(b.qlt)}, заточка ${ptnRange(b.ptn)}">
         <span class="bb" style="color:${qltColor(b.qlt)}">${bucketBadge(b.qlt, b.ptn)}</span>
         <span class="bp">${b.avg7d != null ? fmt(b.avg7d) + " ₽"
           : b.price ? fmt(b.price.price) + " ₽ · ЛОТЫ" : "мало данных"}</span>
@@ -3119,7 +4041,8 @@ function renderArtCard(d) {
 let BUILD_DICT = null;   // /api/build/dict (кэш на сессию)
 let buildTab = "manual";
 const buildState = { container: null, slots: [] };  // слот: {id, ptn, m} | null
-const autoState = { budget: 500000, stats: [{ key: "", weight: 60 }], result: null };
+const autoState = { budget: 500000, stats: [{ key: "", weight: 60 }],
+                    exclude: [], noNeg: false, result: null };
 const hpState = { budget: 500000, armor: null, armorPtn: 15, result: null };
 const artPriceCache = {};  // itemId -> {"qlt:ptn": {avg7d, n7}}
 let pickerSlot = -1, pickerQuery = "";
@@ -3146,11 +4069,37 @@ const statVal = (st, m, ptn) => {
   }
   return statBase(st) * m * sharp(ptn);
 };
+// доп-свойства порогов заточки: значение фиксировано (base×M×заточка, как обычный
+// стат), рандомен только порядок разблокировки (+5 одно из пула, +10 второе, +15 третье)
+const bonusVal = (bp, m, ptn) => bp.base * m * sharp(ptn);
+const bonusUnlocked = (ptn, pool) => Math.min([5, 10, 15].filter((t) => ptn >= t).length, pool.length);
+// активные допы слота: на +15 обычного арта (пул ≤ 3 порогов) — весь пул,
+// ниже — отмеченные пользователем галочки (s.bx), не больше разблокированного
+function slotBonusActive(s, art) {
+  const pool = art.bonus || [];
+  const unlocked = bonusUnlocked(s.ptn, pool);
+  if (!unlocked) return [];
+  if (unlocked >= pool.length) return pool;
+  const sel = new Set((s.bx || []).slice(0, unlocked));
+  return pool.filter((b) => sel.has(b.key));
+}
 const fmtStat = (v) => (v > 0 ? "+" : "") + (Math.abs(v) >= 100 ? Math.round(v) : v.toFixed(2));
-// имя контейнера красится в цвет его качества (редкости)
-const contLabel = (c) =>
-  `<span style="color:${rank(c.color).color}">${escapeHtml(c.name)}</span>` +
-  ` · ${c.slots} СЛОТ${c.slots > 1 ? "А" : ""} · ЭФФ ${c.efficiency ?? "—"}% · ЗАЩИТА ${c.protection ?? "—"}%`;
+// контейнеры + рюкзаки со слотами под арты — равноправные «хранилища» сборки
+const STORAGES = () => [...(BUILD_DICT.containers || []), ...(BUILD_DICT.backpacks || [])];
+const KIND_LBL = { container: "КОНТЕЙНЕР", backpack: "РЮКЗАК" };
+const isContamKey = (k) => (BUILD_DICT.contamination || []).some((c) => c.key === k);
+// собственные полезные статы хранилища (кроме заражений) — короткой строкой в лейбл
+const selfBonusStr = (c) => (c.self_stats || [])
+  .filter((s) => !isContamKey(s.key))
+  .map((s) => `${fmtStat(s.val)} ${s.name}`).join(" · ");
+// имя хранилища красится в цвет редкости; тип + слоты/эфф/защита + собственные бонусы
+const contLabel = (c) => {
+  const bonus = selfBonusStr(c);
+  return `<span style="color:${rank(c.color).color}">${escapeHtml(c.name)}</span>` +
+    ` · ${KIND_LBL[c.kind] || "ХРАНИЛИЩЕ"} · ${c.slots} СЛОТ${c.slots > 1 ? "А" : ""}` +
+    ` · ЭФФ ${c.efficiency ?? "—"}% · ЗАЩ ${c.protection ?? "—"}%` +
+    (bonus ? ` · <span style="color:#5fd67a">${escapeHtml(bonus)}</span>` : "");
+};
 const FROST_KEY = "stalker.artefact_properties.factor.frost_accumulation";  // «холод» — защита не гасит
 
 // заражение сборки: эмиссия (красный) гасится защитой (кроме мороза), защита
@@ -3169,8 +4118,22 @@ function clientContam(slots, cont) {
       const val = statVal(st, s.m, s.ptn);
       if (st.harmful) emit += val; else protect += val * eff;
     }
+    for (const s of slots) {  // допы-защиты порогов заточки (отрицательные accumulation)
+      if (!s) continue;
+      const art = BUILD_DICT.artefacts.find((a) => a.id === s.id);
+      if (!art) continue;
+      for (const b of slotBonusActive(s, art)) {
+        if (b.key !== c.key) continue;
+        present = true;
+        const val = bonusVal(b, s.m, s.ptn);
+        if (val > 0) emit += val; else protect += val * eff;
+      }
+    }
+    // собственный вклад хранилища (эмиссия +, защита −) — без гашения защитой и ×эфф
+    const selfV = (cont.self_stats || []).reduce((a, s) => a + (s.key === c.key ? s.val : 0), 0);
+    if (selfV) present = true;
     if (!present) continue;
-    const net = emit * (c.key === FROST_KEY ? 1 : (1 - prot)) + protect;
+    const net = emit * (c.key === FROST_KEY ? 1 : (1 - prot)) + protect + selfV;
     out.push({ name: c.name, net: +net.toFixed(3), limit: c.limit,
                over: c.limit != null && net > c.limit + 1e-9 });
   }
@@ -3190,6 +4153,19 @@ function milestoneNote(ms) {
   return `<div class="bs-ms">+${ms.join(" · +")}: ещё ${ms.length}× случайный бонус за заточку</div>`;
 }
 
+// допы порогов на карточке результата: полное значение; в итогах учтено ×factor
+function bonusRowsRO(bonus) {
+  if (!bonus || !bonus.length) return "";
+  const f = bonus[0].factor;
+  const note = f >= 1 ? "ВСЕ АКТИВНЫ (+15)"
+    : f > 0 ? `АКТИВНО ${Math.round(f * bonus.length)} ИЗ ${bonus.length} (СЛУЧАЙНЫЙ ПОРЯДОК) — В ИТОГАХ МАТОЖИДАНИЕ`
+    : "ОТКРОЮТСЯ С ЗАТОЧКИ +5";
+  return `<div class="bs-ms">ДОП. СВОЙСТВА — ${note}</div>` + bonus.map((b) =>
+    `<div class="bstat bx ${f > 0 ? "" : "off"}">
+      <span class="sn">${escapeHtml(b.name)}</span>
+      <span class="sv">${fmtStat(b.val)}</span></div>`).join("");
+}
+
 async function openBuilds() {
   home.classList.add("hidden");
   detail.classList.add("hidden");
@@ -3203,7 +4179,7 @@ async function openBuilds() {
       page.innerHTML = `<div class="empty">[!] ОШИБКА СЕТИ</div>`;
       return;
     }
-    const first = BUILD_DICT.containers[0];
+    const first = STORAGES()[0];
     buildState.container = first ? first.id : null;
     buildState.slots = first ? Array(first.slots).fill(null) : [];
   }
@@ -3211,7 +4187,7 @@ async function openBuilds() {
 }
 
 function buildContainer() {
-  return BUILD_DICT.containers.find((c) => c.id === buildState.container);
+  return STORAGES().find((c) => c.id === buildState.container);
 }
 
 async function loadArtPrices(id) {
@@ -3225,9 +4201,10 @@ async function loadArtPrices(id) {
   renderBuilds();
 }
 
-// эффективная цена корзины: {price, n, src} или null (источник решает бэк)
+// эффективная цена корзины: {price, n, src} или null (источник решает бэк).
+// заточка котируется корзиной (+7 стоит как +5), статы — по точной заточке
 function slotPrice(s) {
-  return (artPriceCache[s.id] || {})[`${qltFromM(s.m)}:${s.ptn}`] || null;
+  return (artPriceCache[s.id] || {})[`${qltFromM(s.m)}:${ptnBucket(s.ptn)}`] || null;
 }
 
 const srcLabel = (src) => (src === "lots" ? `СР. 5 ДЕШЁВЫХ ЛОТОВ` : "СР. ЗА 7 ДНЕЙ");
@@ -3245,8 +4222,18 @@ function manualTotals(cont) {
       const t = stats[k] || (stats[k] = { name: st.name, harmful: st.harmful, total: 0 });
       t.total += st.harmful ? statVal(st, s.m, s.ptn) : statVal(st, s.m, s.ptn) * eff;
     }
+    for (const b of slotBonusActive(s, art)) {  // выбранные допы порогов — как полезные статы
+      if (isContamKey(b.key)) continue;         // допы-защиты заражений — в блоке contamination
+      const t = stats[b.key] || (stats[b.key] = { name: b.name, harmful: false, total: 0 });
+      t.total += bonusVal(b, s.m, s.ptn) * eff;
+    }
     const p = slotPrice(s);
     if (p) out.cost += p.price; else out.unpriced++;
+  }
+  for (const s of (cont.self_stats || [])) {  // собственные статы хранилища — плоско
+    if (isContamKey(s.key)) continue;         // заражения — в блоке contamination
+    const t = stats[s.key] || (stats[s.key] = { name: s.name, harmful: s.harmful, total: 0 });
+    t.total += s.val;
   }
   out.contamination = clientContam(buildState.slots, cont);
   return out;
@@ -3258,7 +4245,7 @@ function contamBlock(contam) {
       <span class="k">${escapeHtml(c.name)}${c.over ? " ⚠" : ""}</span>
       <span class="v">${fmtStat(c.net)}${c.limit != null ? ` <span class="lim">/ ${c.limit}</span>` : ""}</span>
     </div>`).join("");
-  return `<div class="reqs-lbl" style="margin-top:10px">ЗАРАЖЕНИЕ (после защиты контейнера)</div>${rows}`;
+  return `<div class="reqs-lbl" style="margin-top:10px">ЗАРАЖЕНИЕ (после защиты хранилища)</div>${rows}`;
 }
 
 function totalsBlock(t, cont, budget) {
@@ -3271,8 +4258,8 @@ function totalsBlock(t, cont, budget) {
     <div class="reqs-lbl">ИТОГО ПО СБОРКЕ</div>
     ${rows || `<div class="empty-sm">СЛОТЫ ПУСТЫ</div>`}
     ${contamBlock(t.contamination)}
-    <div class="bt-row"><span class="k">ВЕС (С КОНТЕЙНЕРОМ)</span><span class="v">${t.weight.toFixed(2)} КГ</span></div>
-    <div class="bt-row"><span class="k">ЗАЩИТА КОНТЕЙНЕРА</span><span class="v">${cont.protection ?? "—"}%</span></div>
+    <div class="bt-row"><span class="k">ВЕС (С ХРАНИЛИЩЕМ)</span><span class="v">${t.weight.toFixed(2)} КГ</span></div>
+    <div class="bt-row"><span class="k">ЗАЩИТА ${(KIND_LBL[cont.kind] || "ХРАНИЛИЩА").replace("КОНТЕЙНЕР", "КОНТЕЙНЕРА").replace("РЮКЗАК", "РЮКЗАКА")}</span><span class="v">${cont.protection ?? "—"}%</span></div>
     <div class="bt-row cost"><span class="k">СТОИМОСТЬ СБОРКИ</span>
       <span class="v">${fmt(t.cost)} ₽${t.unpriced ? ` <span class="warn">+ ${t.unpriced} БЕЗ ЦЕНЫ</span>` : ""}</span></div>
     ${budget != null ? `<div class="bt-row"><span class="k">БЮДЖЕТ</span><span class="v">${fmt(budget)} ₽</span></div>` : ""}
@@ -3308,6 +4295,21 @@ function manualSlotCard(s, idx) {
     `<div class="bstat ${st.harmful ? "bad" : ""}">
       <span class="sn">${escapeHtml(st.name)}</span>
       <span class="sv">${fmtStat(statVal(st, s.m, s.ptn))}</span></div>`).join("");
+  // доп-свойства порогов: на +15 обычного арта — все (без галочек), ниже —
+  // пользователь отмечает выпавшие (не больше разблокированных порогов)
+  const pool = art.bonus || [];
+  const unlocked = bonusUnlocked(s.ptn, pool);
+  const forced = unlocked > 0 && unlocked >= pool.length;
+  const active = new Set(slotBonusActive(s, art).map((b) => b.key));
+  const bonusRows = pool.map((b) => `<label class="bstat bx ${active.has(b.key) ? "" : "off"}">
+      <input type="checkbox" class="bs-bx" data-slot="${idx}" data-bx="${b.key}"
+        ${active.has(b.key) ? "checked" : ""} ${forced || !unlocked ? "disabled" : ""}>
+      <span class="sn">${escapeHtml(b.name)}</span>
+      <span class="sv">${fmtStat(bonusVal(b, s.m, s.ptn))}</span></label>`).join("");
+  const bonusHead = !pool.length ? "" :
+    `<div class="bs-ms">ДОП. СВОЙСТВА${!unlocked ? " — С ЗАТОЧКИ +5"
+      : forced ? " — ВСЕ АКТИВНЫ (+15)"
+      : ` — ОТМЕТЬТЕ ВЫПАВШИЕ (${active.size}/${unlocked})`}</div>`;
   return `<div class="bslot">
     <div class="bs-head">
       <img loading="lazy" src="${asset(art.icon)}" alt="">
@@ -3323,13 +4325,14 @@ function manualSlotCard(s, idx) {
       </label>
     </div>
     ${statRows}
+    ${bonusHead}${bonusRows}
     <div class="bs-price">${price ? `${fmt(price.price)} ₽ · ${srcLabel(price.src)}` : "НЕТ ЦЕНЫ (НЕТ ЛОТОВ И ИСТОРИИ)"}</div>
   </div>`;
 }
 
 function renderBuilds() {
   const cont = buildContainer();
-  if (!cont) { page.innerHTML = `<div class="empty">НЕТ ДАННЫХ КОНТЕЙНЕРОВ</div>`; return; }
+  if (!cont) { page.innerHTML = `<div class="empty">НЕТ ДАННЫХ ХРАНИЛИЩ</div>`; return; }
 
   let h = `<div class="section-head">
       <div class="section-title">▸ КАЛЬКУЛЯТОР СБОРОК АРТЕФАКТОВ</div>
@@ -3347,10 +4350,13 @@ function renderBuilds() {
   const footer = buildTab === "manual"
     ? `КАЧЕСТВО — РЕДКОСТЬ ИЛИ ПОЛЕ % (85–175%): ВЫХОД ЗА ТИР МЕНЯЕТ РЕДКОСТЬ. ЦВЕТ ИМЕНИ — РЕДКОСТЬ.
        ЭФФЕКТИВНОСТЬ КОНТЕЙНЕРА УСИЛИВАЕТ ПОЛОЖИТЕЛЬНЫЕ СТАТЫ; ВНУТР. ЗАЩИТА ГАСИТ ЗАРАЖЕНИЯ (КРОМЕ ХОЛОДА).
-       ЛИМИТЫ ИГРОКА: РАД/ТЕМП/БИО/ХОЛОД — 1.0, ПСИ — 3.0; МИНУС — ЗАПАС ЗАЩИТЫ, НЕ ВРЕДЕН.`
+       ЛИМИТЫ ИГРОКА: РАД/ТЕМП/БИО/ХОЛОД — 1.0, ПСИ — 3.0; МИНУС — ЗАПАС ЗАЩИТЫ, НЕ ВРЕДЕН.
+       ДОП. СВОЙСТВА ЗАТОЧКИ: +5/+10/+15 ОТКРЫВАЮТ ПО ОДНОМУ ИЗ ПУЛА АРТА В СЛУЧАЙНОМ ПОРЯДКЕ —
+       НА +15 АКТИВНЫ ВСЕ (УЧТУТСЯ САМИ), НИЖЕ — ОТМЕТЬТЕ ВЫПАВШИЕ ГАЛОЧКАМИ.`
     : `ПОЛОЖИТЕЛЬНЫЕ СТАТЫ АРТОВ × ЭФФЕКТИВНОСТЬ КОНТЕЙНЕРА; ЗАРАЖЕНИЯ ГАСЯТСЯ ВНУТР. ЗАЩИТОЙ (КРОМЕ ХОЛОДА).
        ЛИМИТЫ РАД/ТЕМП/БИО/ХОЛОД — 1.0, ПСИ — 3.0 — ЖЁСТКИЕ: СБОРКИ СВЕРХ ЛИМИТА НЕ ВЫДАЮТСЯ,
-       ПРИ НУЖДЕ ДОБАВЛЯЮТСЯ КОНТРАРТЫ. СЛУЧАЙНЫЕ ДОП-СВОЙСТВА ЗАТОЧКИ НЕ МОДЕЛИРУЮТСЯ.`;
+       ПРИ НУЖДЕ ДОБАВЛЯЮТСЯ КОНТРАРТЫ. ДОП. СВОЙСТВА ЗАТОЧКИ УЧТЕНЫ: НА +15 — ВСЕ (ДЕТЕРМИНИРОВАНО),
+       НА +5/+10 — МАТОЖИДАНИЕМ (ПОРЯДОК ВЫПАДЕНИЯ СЛУЧАЕН).`;
   h += `<div class="side-foot">${footer}</div>`;
   page.innerHTML = h;
   wireBuilds(cont);
@@ -3362,20 +4368,32 @@ function renderManual(cont) {
     ${totalsBlock(t, cont, null)}`;
 }
 
+// Обычные статы, встречающиеся хотя бы на одном артефакте в красной (вредной)
+// версии — кандидаты на исключение в автоподборе («не нужны эти минусы»).
+// Заражения (пси/рад/…) в список не входят: их держат лимиты и контрарты.
+function negStats() {
+  const seen = new Map();
+  for (const a of BUILD_DICT.artefacts)
+    for (const [k, st] of Object.entries(a.stats))
+      if (st.harmful && !isContamKey(k) && !seen.has(k)) seen.set(k, st.name);
+  return [...seen].map(([key, name]) => ({ key, name }))
+    .sort((a, b) => a.name.localeCompare(b.name, "ru"));
+}
+
 function renderAuto(cont) {
-  const beneficial = BUILD_DICT.stats.filter((s) => !s.harmful);
-  const rows = autoState.stats.map((row, i) => {
-    const used = autoState.stats.map((r) => r.key);
-    const opts = [`<option value="">— СТАТ —</option>`, ...beneficial
-      .filter((s) => s.key === row.key || !used.includes(s.key))
-      .map((s) => `<option value="${s.key}" ${row.key === s.key ? "selected" : ""}>${escapeHtml(s.name)}</option>`)];
-    return `<div class="arow">
-      <select class="aStat" data-i="${i}">${opts.join("")}</select>
+  const rows = autoState.stats.map((row, i) => `<div class="arow">
+      <div class="isel aStatSel" data-i="${i}"></div>
       <input class="aW" data-i="${i}" type="range" min="0" max="100" value="${row.weight}">
       <span class="aWv">${row.weight}</span>
       ${autoState.stats.length > 1 ? `<button class="bs-x" data-rmstat="${i}">✕</button>` : ""}
-    </div>`;
-  }).join("");
+    </div>`).join("");
+  const negs = negStats();
+  const chips = autoState.noNeg
+    ? `<button class="xchip" data-nonegoff title="Убрать исключение">БЕЗ ВСЕХ ОТРИЦАТЕЛЬНЫХ ЭФФЕКТОВ ✕</button>`
+    : autoState.exclude.map((k) => {
+        const s = negs.find((n) => n.key === k);
+        return `<button class="xchip" data-unx="${k}" title="Убрать исключение">${escapeHtml(s ? s.name : k)} ✕</button>`;
+      }).join("");
   let res = "";
   const r = autoState.result;
   if (r && r.error)
@@ -3386,6 +4404,11 @@ function renderAuto(cont) {
       <label class="albl">БЮДЖЕТ, ₽ <input id="aBudget" type="text" inputmode="numeric" value="${fmt(autoState.budget)}"></label>
       ${rows}
       ${autoState.stats.length < 3 ? `<button id="aAdd" class="awin">+ СТАТ</button>` : ""}
+      <div class="aexc" title="Итог сборки по этим статам не уйдёт в минус: арты с минусом допускаются, если его перекрывает плюс других артов. Заражения (пси/рад и т.п.) не исключаются — их гасят лимиты и контрарты.">
+        <span class="albl">БЕЗ МИНУСА В ИТОГЕ:</span>
+        ${chips}
+        ${autoState.noNeg ? "" : `<div class="isel" id="aExcSel"></div>`}
+      </div>
       <button id="aGo" class="prof-save">РАССЧИТАТЬ СБОРКУ</button>
     </div>${res}`;
 }
@@ -3397,7 +4420,7 @@ function resultSlotCard(s) {
       <div class="bs-nm" style="color:${qltColor(s.qlt)}">${escapeHtml(s.name)}</div>
       <span class="bucket" style="border-color:${qltColor(s.qlt)};color:${qltColor(s.qlt)}">${bucketBadge(s.qlt, s.ptn)}</span></div>
     ${slotStatRows(s.stats)}
-    ${milestoneNote(s.milestones)}
+    ${s.bonus && s.bonus.length ? bonusRowsRO(s.bonus) : milestoneNote(s.milestones)}
     <div class="bs-price">${fmt(s.price)} ₽ · ${s.src === "lots" ? s.sales + " ЛОТ." : s.sales + " ПРОД/7Д"}</div>
   </div>`;
 }
@@ -3449,6 +4472,8 @@ function renderHPResult(r) {
     <div class="hp-break">
       <div class="bt-row"><span class="k">БРОНЯ <span style="color:${rank(arm.color).color}">${escapeHtml(arm.name)} +${arm.ptn}</span></span>
         <span class="v">ПУЛЕСТОЙ ${fmt(arm.bullet)}${arm.vitality ? ` · ЖИВУЧ +${arm.vitality}` : ""}</span></div>
+      ${(hp.container_bullet || hp.container_vitality) ? `<div class="bt-row"><span class="k">ХРАНИЛИЩЕ</span>
+        <span class="v">${hp.container_bullet ? `ПУЛЕСТОЙ ${fmtStat(hp.container_bullet)}` : ""}${hp.container_bullet && hp.container_vitality ? " · " : ""}${hp.container_vitality ? `ЖИВУЧ ${fmtStat(hp.container_vitality)}%` : ""}</span></div>` : ""}
       <div class="bt-row"><span class="k">АРТЕФАКТЫ</span>
         <span class="v">ПУЛЕСТОЙ ${fmtStat(hp.artefact_bullet)} · ЖИВУЧ ${fmtStat(hp.artefact_vitality)}%</span></div>
     </div>
@@ -3461,8 +4486,9 @@ function renderHPResult(r) {
   return h;
 }
 
-// кастомный выпадающий список с иконками (нативный <select> их не умеет):
+// кастомный выпадающий список (нативный <select> не умеет иконки и поиск):
 // сортировка по редкости (сверху крутое) + живой поиск по названию.
+// Иконка опциональна — списки статов идут без неё.
 function iconSelect(host, items, curId, onPick) {
   items = items.map((it, i) => ({ ...it, _i: i }))
     .sort((a, b) => (rankWeight(b.color) - rankWeight(a.color)) || (a._i - b._i));
@@ -3472,13 +4498,13 @@ function iconSelect(host, items, curId, onPick) {
   const searchOf = (it) => (it.search != null ? it.search
     : String(it.labelHtml || it.label || "").replace(/<[^>]*>/g, "")).toLowerCase();
   host.innerHTML = `<button type="button" class="isel-btn">
-      <img src="${asset(cur.icon)}" alt="">
+      ${cur.icon ? `<img src="${asset(cur.icon)}" alt="">` : ""}
       <span class="isel-lbl">${lbl(cur)}</span><span class="isel-arr">▾</span></button>
     <div class="isel-list hidden">
       <div class="isel-search"><input type="text" class="isel-q" placeholder="Поиск…" autocomplete="off"></div>
       <div class="isel-opts">${items.map((it) => `
         <div class="isel-opt${it.id === cur.id ? " on" : ""}" data-id="${it.id}" data-s="${escapeHtml(searchOf(it))}">
-          <img loading="lazy" src="${asset(it.icon)}" alt=""><span>${lbl(it)}</span>
+          ${it.icon ? `<img loading="lazy" src="${asset(it.icon)}" alt="">` : ""}<span>${lbl(it)}</span>
         </div>`).join("")}</div>
     </div>`;
   const list = host.querySelector(".isel-list");
@@ -3531,8 +4557,8 @@ function wireBuilds(cont) {
     renderBuilds();
   }));
   iconSelect($("bContSel"),
-    BUILD_DICT.containers.map((c) => ({ id: c.id, icon: c.icon, color: c.color,
-                                        search: c.name, labelHtml: contLabel(c) })),
+    STORAGES().map((c) => ({ id: c.id, icon: c.icon, color: c.color,
+                             search: `${c.name} ${KIND_LBL[c.kind] || ""}`, labelHtml: contLabel(c) })),
     buildState.container, (id) => {
       buildState.container = id;
       const c = buildContainer();
@@ -3543,10 +4569,41 @@ function wireBuilds(cont) {
 
   if (buildTab === "auto") {
     wireBudget($("aBudget"), (v) => { autoState.budget = v; });
-    page.querySelectorAll(".aStat").forEach((s) => s.addEventListener("change", () => {
-      autoState.stats[+s.dataset.i].key = s.value;
+    // выбор стата — выпадающий список с живым поиском (просьба юзеров)
+    const beneficial = BUILD_DICT.stats.filter((s) => !s.harmful);
+    page.querySelectorAll(".aStatSel").forEach((host) => {
+      const i = +host.dataset.i;
+      const used = autoState.stats.map((r) => r.key);
+      iconSelect(host,
+        [{ id: "", label: "— СТАТ —", search: "" }, ...beneficial
+          .filter((s) => s.key === autoState.stats[i].key || !used.includes(s.key))
+          .map((s) => ({ id: s.key, label: s.name, search: s.name }))],
+        autoState.stats[i].key,
+        (id) => { autoState.stats[i].key = id; renderBuilds(); });
+    });
+    // исключение минусов: адаптер-список добавляет чип, клик по чипу снимает;
+    // «без всех» — один пункт-выключатель вместо перечисления
+    const excHost = $("aExcSel");
+    if (excHost) iconSelect(excHost,
+      [{ id: "", label: "+ ИСКЛЮЧИТЬ МИНУС", search: "" },
+       { id: "__all__", label: "БЕЗ ВСЕХ ОТРИЦАТЕЛЬНЫХ ЭФФЕКТОВ",
+         search: "без всех отрицательных эффектов" },
+       ...negStats()
+        .filter((s) => !autoState.exclude.includes(s.key))
+        .map((s) => ({ id: s.key, label: s.name, search: s.name }))],
+      "", (id) => {
+        if (id === "__all__") { autoState.noNeg = true; renderBuilds(); }
+        else if (id) { autoState.exclude.push(id); renderBuilds(); }
+      });
+    page.querySelectorAll("[data-unx]").forEach((b) => b.addEventListener("click", () => {
+      autoState.exclude = autoState.exclude.filter((k) => k !== b.dataset.unx);
       renderBuilds();
     }));
+    const negOff = page.querySelector("[data-nonegoff]");
+    if (negOff) negOff.addEventListener("click", () => {
+      autoState.noNeg = false;
+      renderBuilds();
+    });
     page.querySelectorAll(".aW").forEach((s) => s.addEventListener("input", () => {
       autoState.stats[+s.dataset.i].weight = +s.value;
       s.nextElementSibling.textContent = s.value;
@@ -3567,7 +4624,9 @@ function wireBuilds(cont) {
       try {
         autoState.result = await fetch(api("/build/auto"), {
           method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ budget: autoState.budget, container: buildState.container, stats }),
+          body: JSON.stringify({ budget: autoState.budget, container: buildState.container,
+                                 stats, exclude: autoState.exclude,
+                                 no_negatives: autoState.noNeg }),
         }).then((r) => r.json());
       } catch (e) { autoState.result = { error: "no_priced_variants", hint: "ОШИБКА СЕТИ" }; }
       renderBuilds();
@@ -3630,7 +4689,28 @@ function wireBuilds(cont) {
     renderBuilds();
   }));
   page.querySelectorAll(".bs-ptn").forEach((el) => el.addEventListener("change", () => {
-    buildState.slots[+el.dataset.slot].ptn = +el.value;
+    const s = buildState.slots[+el.dataset.slot];
+    s.ptn = +el.value;
+    if (s.bx) {  // выбор допов не может превышать разблокированные пороги
+      const art = BUILD_DICT.artefacts.find((a) => a.id === s.id);
+      s.bx = s.bx.slice(0, bonusUnlocked(s.ptn, (art && art.bonus) || []));
+    }
+    renderBuilds();
+  }));
+  // галочки выпавших доп-свойств порогов (+5/+10 — какие именно, знает владелец)
+  page.querySelectorAll(".bs-bx").forEach((el) => el.addEventListener("change", () => {
+    const s = buildState.slots[+el.dataset.slot];
+    const art = BUILD_DICT.artefacts.find((a) => a.id === s.id);
+    const pool = (art && art.bonus) || [];
+    const unlocked = bonusUnlocked(s.ptn, pool);
+    let bx = (s.bx || []).filter((k) => pool.some((b) => b.key === k));
+    if (el.checked) {
+      if (!bx.includes(el.dataset.bx)) bx.push(el.dataset.bx);
+      if (bx.length > unlocked) bx = bx.slice(bx.length - unlocked);  // лишние — старейшие долой
+    } else {
+      bx = bx.filter((k) => k !== el.dataset.bx);
+    }
+    s.bx = bx;
     renderBuilds();
   }));
   // редкость: выбор тира → множитель на верх этого тира
@@ -4139,6 +5219,291 @@ function renderDevAb() {
   }));
 }
 
+// ---------- ДЕВ · сканер выгодных лотов аука ----------
+// Реалтайм по вебсокету /api/ws/dev/scan: бэкенд-обходчик цен пушит сделки
+// (лоты дешевле средней последних продаж у ликвидных предметов) и снимает их,
+// когда дешёвые лоты разобрали. Пороги правятся тут же и применяются на лету.
+let scanWs = null, scanPing = null, scanRetry = null, scanTick = null, scanBackoff = 1000;
+let scanState = null;   // {settings, deals: Map, stats} — живёт, пока открыт /dev/scan
+
+const SCAN_SORTS = {
+  margin_lot: ["МАРЖА ЗА ЛОТ", (a, b) => b.margin_lot - a.margin_lot],
+  margin_total: ["МАРЖА ∑ ПО ЛОТАМ", (a, b) => b.margin_total - a.margin_total],
+  margin: ["МАРЖА/ШТ", (a, b) => b.margin - a.margin],
+  discount: ["СКИДКА %", (a, b) => b.discount - a.discount],
+  sph: ["ПРОДАЖ/ЧАС", (a, b) => b.sph - a.sph],
+  found: ["НОВИЗНА", (a, b) => b.found_ts - a.found_ts],
+};
+const scanSortKey = () => localStorage.getItem("sz_scan_sort") || "margin_lot";
+
+function scanClose() {
+  if (scanPing) { clearInterval(scanPing); scanPing = null; }
+  if (scanRetry) { clearTimeout(scanRetry); scanRetry = null; }
+  if (scanTick) { clearInterval(scanTick); scanTick = null; }
+  if (scanWs) { const ws = scanWs; scanWs = null; try { ws.close(); } catch (e) {} }
+  scanState = null;
+}
+
+async function openDevScan() {
+  if (!devGate()) return;
+  page.innerHTML = `<div class="mapmod"><div class="spinner">// ЗАГРУЗКА СКАНЕРА</div></div>`;
+  let d;
+  try {
+    const r = await fetch(api("/admin/scan"));
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    d = await r.json();
+  } catch (e) {
+    page.innerHTML = `<div class="empty">[!] СКАНЕР НЕ ЗАГРУЗИЛСЯ (${escapeHtml(e.message)})</div>`;
+    return;
+  }
+  if (location.pathname !== "/dev/scan") return;
+  scanState = { settings: d.settings, stats: d.stats || {},
+                deals: new Map((d.deals || []).map((x) => [x.id, x])) };
+  renderScanFrame();
+  scanConnect();
+  scanTick = setInterval(scanRenderDeals, 15000);  // тикают «снято N мин назад»
+}
+
+function renderScanFrame() {
+  const s = scanState.settings;
+  const sortCur = scanSortKey();
+  const sortSel = Object.entries(SCAN_SORTS).map(([k, v]) =>
+    `<option value="${k}"${sortCur === k ? " selected" : ""}>${v[0]}</option>`).join("");
+  page.innerHTML = `<div class="mapmod">
+    <div class="section-head">
+      <div class="section-title">▸ ДЕВ · СКАНЕР ВЫГОДНЫХ ЛОТОВ</div>
+      <div class="section-note">Ловит на ауке лоты дешевле средней из последних продаж у ликвидных
+        предметов. Данные — от фонового обходчика цен: карточка появляется и уходит при его проходе
+        по предмету, сюда прилетает по вебсокету. Маржа — при перепродаже по средней, за вычетом
+        комиссии аука 5%.</div>
+    </div>
+    ${devSubnav("scan")}
+    <div class="scan-panel">
+      <label class="scan-f">ПРОДАЖ/ЧАС ≥ <input id="scF_sph" type="number" min="0" step="1" value="${s.min_sph}"></label>
+      <label class="scan-f" title="Броня, оружие, обвесы, контейнеры и рюкзаки продаются штучно — им нужен свой, низкий порог">
+        ⚔ БРОНЯ/ОРУЖИЕ/ОБВЕСЫ ≥ <input id="scF_sphg" type="number" min="0" step="0.1" value="${s.min_sph_gear}"> ПРОД/Ч</label>
+      <label class="scan-f">ДЕШЕВЛЕ СРЕДНЕЙ НА ≥ <input id="scF_disc" type="number" min="0" max="90" step="1" value="${s.discount_pct}"> %</label>
+      <label class="scan-f">СРЕДНЯЯ ИЗ ПОСЛЕДНИХ <input id="scF_n" type="number" min="1" max="20" step="1" value="${s.avg_n}"> ПРОДАЖ</label>
+      <label class="scan-f">МАРЖА ≥ <input id="scF_margin" type="number" min="0" step="1" value="${s.min_margin}"> ₽/ШТ</label>
+      <label class="scan-f" title="Сколько минут назад сняты лоты. Всё, что может стать сделкой, обновляется примерно раз в 2 минуты — старее значит лот, скорее всего, уже выкупили">
+        ⏱ ЛОТЫ НЕ СТАРШЕ <input id="scF_age" type="number" min="1" step="1" value="${s.max_age_min}"> МИН</label>
+      <label class="scan-chk" title="Выключен — сделки не ищутся и карточки не показываются">
+        <input id="scF_on" type="checkbox"${s.enabled ? " checked" : ""}> СКАНЕР ВКЛ</label>
+      <label class="scan-chk" title="Выключить — артефакты пропадут из выдачи и уйдут из обхода цен (их нет в крафт-графе, они там только ради сканера), бюджет запросов освободится">
+        <input id="scF_art" type="checkbox"${s.show_artefacts ? " checked" : ""}> 💎 АРТЕФАКТЫ</label>
+      <label class="scan-chk" title="История продаж снимается по ВСЕМ предметам крафт-графа — полное покрытие сканера, но цикл обходчика примерно вдвое длиннее">
+        <input id="scF_all" type="checkbox"${s.hist_all ? " checked" : ""}> ИСТОРИЯ ПО ВСЕМ ПРЕДМЕТАМ</label>
+      <button class="gadm-btn scan-apply" id="scApply">ПРИМЕНИТЬ</button>
+      <span class="gform-msg" id="scMsg"></span>
+    </div>
+    <div class="scan-status">
+      <span class="scan-dot off" id="scDot"></span><span id="scWsTxt">ПОДКЛЮЧЕНИЕ…</span>
+      <span class="scan-stats" id="scStats"></span>
+      <label class="scan-sort">СОРТИРОВКА <select id="scSort">${sortSel}</select></label>
+    </div>
+    <div class="scan-grid" id="scGrid"></div>
+  </div>`;
+  $("scApply").addEventListener("click", scanApplySettings);
+  $("scSort").addEventListener("change", () => {
+    localStorage.setItem("sz_scan_sort", $("scSort").value);
+    scanRenderDeals();
+  });
+  scanRenderStats();
+  scanRenderDeals();
+}
+
+async function scanApplySettings() {
+  const body = {
+    min_sph: +$("scF_sph").value,
+    min_sph_gear: +$("scF_sphg").value,
+    discount_pct: +$("scF_disc").value,
+    avg_n: +$("scF_n").value,
+    min_margin: +$("scF_margin").value,
+    max_age_min: +$("scF_age").value,
+    enabled: $("scF_on").checked,
+    show_artefacts: $("scF_art").checked,
+    hist_all: $("scF_all").checked,
+  };
+  $("scApply").disabled = true;
+  $("scMsg").textContent = "…";
+  try {
+    const r = await fetch(api("/admin/scan/settings"), {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const d = await r.json();       // сделки придут снапшотом по вебсокету
+    if (scanState) scanState.settings = d.settings;
+    scanSyncForm();
+    const m = $("scMsg");
+    if (m) {
+      m.textContent = "✓ СОХРАНЕНО";
+      setTimeout(() => { const x = $("scMsg"); if (x) x.textContent = ""; }, 2500);
+    }
+  } catch (e) {
+    const m = $("scMsg");
+    if (m) m.textContent = "[!] НЕ СОХРАНИЛОСЬ: " + e.message;
+  }
+  const b = $("scApply");
+  if (b) b.disabled = false;
+}
+
+function scanSyncForm() {
+  if (!scanState) return;
+  const s = scanState.settings;
+  const setv = (id, v) => { const el = $(id); if (el && document.activeElement !== el) el.value = v; };
+  const setc = (id, v) => { const el = $(id); if (el) el.checked = v; };
+  setv("scF_sph", s.min_sph); setv("scF_sphg", s.min_sph_gear);
+  setv("scF_disc", s.discount_pct);
+  setv("scF_n", s.avg_n); setv("scF_margin", s.min_margin);
+  setv("scF_age", s.max_age_min);
+  setc("scF_on", s.enabled); setc("scF_all", s.hist_all);
+  setc("scF_art", s.show_artefacts);
+}
+
+function scanSetWs(state, txt) {
+  const dot = $("scDot"), t = $("scWsTxt");
+  if (!dot || !t) return;
+  dot.className = "scan-dot " + state;
+  t.textContent = txt;
+}
+
+function scanConnect() {
+  if (!scanState || location.pathname !== "/dev/scan") return;
+  const ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://")
+    + location.host + "/api/ws/dev/scan");
+  scanWs = ws;
+  scanSetWs("off", "ПОДКЛЮЧЕНИЕ…");
+  ws.onopen = () => {
+    scanBackoff = 1000;
+    scanSetWs("on", "ОНЛАЙН");
+    scanPing = setInterval(() => { try { ws.send("ping"); } catch (e) {} }, 25000);
+  };
+  ws.onmessage = (ev) => {
+    if (!scanState) return;
+    let m;
+    try { m = JSON.parse(ev.data); } catch (e) { return; }
+    if (m.type === "snapshot") {
+      scanState.settings = m.settings;
+      scanState.stats = m.stats || {};
+      scanState.deals = new Map((m.deals || []).map((x) => [x.id, x]));
+      scanSyncForm(); scanRenderStats(); scanRenderDeals();
+    } else if (m.type === "deal") {
+      const old = scanState.deals.get(m.deal.id);
+      m.deal._flash = old ? old._flash : Date.now();   // подсветка только новых
+      scanState.deals.set(m.deal.id, m.deal);
+      scanRenderStats(); scanRenderDeals();
+    } else if (m.type === "remove") {
+      scanState.deals.delete(m.id);
+      scanRenderStats(); scanRenderDeals();
+    }
+  };
+  ws.onclose = () => {
+    if (scanPing) { clearInterval(scanPing); scanPing = null; }
+    if (scanWs !== ws) return;   // закрыли сами при уходе со страницы
+    scanSetWs("off", "ПЕРЕПОДКЛЮЧЕНИЕ…");
+    scanRetry = setTimeout(scanConnect, scanBackoff);
+    scanBackoff = Math.min(scanBackoff * 2, 15000);
+  };
+}
+
+function scanRenderStats() {
+  const el = $("scStats");
+  if (!el || !scanState) return;
+  const st = scanState.stats || {};
+  const round = st.hot_round_sec == null ? "СЧИТАЕТСЯ"
+    : st.hot_round_sec < 90 ? `${st.hot_round_sec} С` : `${(st.hot_round_sec / 60).toFixed(1)} МИН`;
+  el.textContent = `СДЕЛОК ${scanState.deals.size} · ЛИКВИДНЫХ В КРУГЕ ${fmt(st.hot)}`
+    + ` · КРУГ ${round} · ИСТОРИЯ ${fmt(st.hist_items)} ПРЕДМ.`;
+}
+
+const scanAge = (ts) => {
+  if (!ts) return "—";
+  const s = Math.max(0, Math.round(Date.now() / 1000 - ts));
+  if (s < 60) return `${s} с`;
+  if (s < 3600) return `${Math.floor(s / 60)} мин`;
+  return `${Math.floor(s / 3600)} ч ${Math.floor((s % 3600) / 60)} мин`;
+};
+
+// лоты на исходе актуальности (>60% лимита) — подсветить возраст: следующий
+// замер либо подтвердит сделку, либо снимет карточку
+const scanStale = (ts) => {
+  const lim = (scanState && scanState.settings.max_age_min) || 15;
+  return ts && Date.now() / 1000 - ts > lim * 60 * 0.6;
+};
+
+// маржа компактно: тысячи сокращаются до «т» (1500 → 1,5т; 23400 → 23т)
+const fmtT = (n) => {
+  if (n == null) return "—";
+  const v = Math.round(n);
+  if (Math.abs(v) < 1000) return v.toLocaleString("ru-RU");
+  const t = v / 1000;
+  return (Math.abs(t) >= 10 ? Math.round(t).toLocaleString("ru-RU")
+                            : t.toFixed(1).replace(".", ",").replace(",0", "")) + "т";
+};
+
+function scanRenderDeals() {
+  const grid = $("scGrid");
+  if (!grid || !scanState) return;
+  const deals = [...scanState.deals.values()];
+  if (!deals.length) {
+    grid.innerHTML = `<div class="empty-sm">${scanState.settings.enabled
+      ? "СДЕЛОК ПОКА НЕТ — карточки появляются по мере прохода обходчика по ауку (полный круг ~10–20 мин)."
+      : "СКАНЕР ВЫКЛЮЧЕН — включи галку выше и нажми ПРИМЕНИТЬ."}</div>`;
+    return;
+  }
+  deals.sort((SCAN_SORTS[scanSortKey()] || SCAN_SORTS.margin_lot)[1]);
+  // до 3 конкретных лотов на карточке: кол-во, маржа лота и цена лота целиком
+  // (по ней лот опознаётся в ауке — там видна цена выкупа).
+  // Маржа лота = (средняя×0.95 − цена/шт) × кол-во; avg×0.95 = d.margin + d.price.
+  const lotRows = (d) => {
+    const top = d.top_lots || [];
+    const rows = top.map(([u, a]) => `<div class="scan-lot">
+      <b>${fmt(a)} шт</b><span class="scan-lot-u">маржа ${fmtT((d.margin + d.price - u) * a)} ₽</span>
+      <span class="scan-lot-t">лот ${fmt(u * a)} ₽</span></div>`).join("");
+    const rest = d.lots - top.length;
+    return rows + (rest > 0
+      ? `<div class="scan-lot scan-lot-more">…ещё ${rest} лот${rest === 1 ? "" : rest < 5 ? "а" : "ов"} · всего ${fmt(d.qty)} шт ≤ порога</div>` : "");
+  };
+  grid.innerHTML = deals.map((d) => `
+    <div class="scan-card${Date.now() - (d._flash || 0) < 8000 ? " new" : ""}" data-id="${d.id}"
+      title="Открыть карточку аукциона: живые лоты, продажи и график">
+      <div class="scan-head">
+        <img loading="lazy" src="${asset(d.icon)}" alt="">
+        <span class="scan-name" style="color:${rank(d.color).color}">${escapeHtml(d.name)}</span>
+        <button class="scan-copy" data-copy="${escapeHtml(d.name)}"
+          title="Скопировать название — вбить в поиск аука в игре">⧉</button>
+      </div>
+      ${d.qlt || d.ptn ? `<div class="scan-bucket" title="Сравнение идёт только внутри этой корзины: у другого качества/заточки цена другая">
+        ${d.qlt ? `КАЧЕСТВО ${d.qlt}` : "БЕЗ КАЧЕСТВА"}${d.ptn ? ` · ЗАТОЧКА +${d.ptn}` : ""}</div>` : ""}
+      <div class="scan-lots">${lotRows(d)}</div>
+      <div class="scan-rows">
+        <span>${d.avg_src === "7д" ? "СРЕДНЯЯ ЗА НЕДЕЛЮ" : `СРЕДНЯЯ ${d.n} ПРОДАЖ`} <b>${fmt(d.avg)} ₽</b></span>
+        <span>ДЕШЕВЛЕ НА <b class="scan-disc">−${d.discount}%</b></span>
+        <span>ПРОДАЖ/ЧАС <b>${fmtSales(d.sph)}</b></span>
+        <span>МАРЖА/ШТ <b class="scan-m">${fmtT(d.margin)} ₽</b></span>
+        <span>ЛУЧШИЙ ЛОТ <b class="scan-m">${fmtT(d.margin_lot)} ₽</b></span>
+        <span>МАРЖА ∑ <b class="scan-m">${fmtT(d.margin_total)} ₽</b></span>
+      </div>
+      ${(d.recent_sales || []).length ? `<div class="scan-sales">ПОСЛЕДНИЕ ПРОДАЖИ ЭТОЙ КОРЗИНЫ:
+        ${d.recent_sales.map(([u, a]) => `<span class="scan-sale"><b>${fmt(a)} шт</b> за ${fmt(u * a)} ₽</span>`).join(" · ")}</div>` : ""}
+      <div class="scan-age${scanStale(d.ts) ? " old" : ""}">лоты сняты ${scanAge(d.ts)} назад · найдено ${scanAge(d.found_ts)} назад</div>
+    </div>`).join("");
+  grid.querySelectorAll(".scan-card[data-id]").forEach((c) =>
+    c.addEventListener("click", (e) => {
+      if (e.target.closest(".scan-copy")) return;   // кнопка копирования — не открывает
+      openMarketModal(c.dataset.id);
+    }));
+  grid.querySelectorAll(".scan-copy").forEach((b) =>
+    b.addEventListener("click", () => {
+      if (!navigator.clipboard) return;
+      navigator.clipboard.writeText(b.dataset.copy).then(() => {
+        b.textContent = "✓";
+        setTimeout(() => { b.textContent = "⧉"; }, 1200);
+      }).catch(() => {});
+    }));
+}
+
 // ---------- панель форматирования HTML-полей (гайды, квесты) ----------
 // Выделяешь текст в textarea → жмёшь кнопку → тег оборачивает выделенное.
 // Без выделения вставляется заготовка с выделенным плейсхолдером — сразу печатай.
@@ -4158,6 +5523,83 @@ const FMT_ACTIONS = [
 ];
 
 // host — контейнер кнопок, ta — textarea, onChange — колбэк (обновить предпросмотр)
+// ---------- картинки редактора: сжатие 4K-скринов + загрузка ----------
+// 4K-PNG весит десятки МБ — не влезает в лимит загрузки и забивает диск.
+// Перед отправкой ужимаем по большей стороне и перекодируем в WebP:
+// обычно выходит 100–300 КБ без заметной потери читаемости.
+const EDITOR_IMG_MAXDIM = 1920;
+const EDITOR_IMG_QUALITY = 0.85;
+
+function fileToDataURL(file) {
+  return new Promise((res, rej) => {
+    const rd = new FileReader();
+    rd.onload = () => res(rd.result);
+    rd.onerror = () => rej(new Error("не удалось прочитать файл"));
+    rd.readAsDataURL(file);
+  });
+}
+
+function loadImage(src) {
+  return new Promise((res, rej) => {
+    const im = new Image();
+    im.onload = () => res(im);
+    im.onerror = () => rej(new Error("не удалось декодировать картинку"));
+    im.src = src;
+  });
+}
+
+function blobToDataURL(blob) {
+  return new Promise((res, rej) => {
+    const rd = new FileReader();
+    rd.onload = () => res(rd.result);
+    rd.onerror = () => rej(new Error("не удалось прочитать blob"));
+    rd.readAsDataURL(blob);
+  });
+}
+
+// data-URL сжатой картинки (webp); gif и любые осечки отдаём как есть
+async function compressImageFile(file) {
+  const original = await fileToDataURL(file);
+  if (!file.type || !file.type.startsWith("image/") || file.type === "image/gif")
+    return original;                              // gif — canvas убьёт анимацию
+  try {
+    const img = await loadImage(original);
+    const big = Math.max(img.width, img.height) || 1;
+    const scale = Math.min(1, EDITOR_IMG_MAXDIM / big);
+    const w = Math.max(1, Math.round(img.width * scale));
+    const h = Math.max(1, Math.round(img.height * scale));
+    const cv = document.createElement("canvas");
+    cv.width = w; cv.height = h;
+    cv.getContext("2d").drawImage(img, 0, 0, w, h);
+    const blob = await new Promise((r) => cv.toBlob(r, "image/webp", EDITOR_IMG_QUALITY));
+    if (!blob) return original;                   // webp не поддержан браузером
+    if (blob.size >= file.size) return original;  // не помогло — не раздуваем
+    return await blobToDataURL(blob);
+  } catch (e) {
+    return original;                              // любая осечка — шлём оригинал
+  }
+}
+
+// сжать + отправить; вернуть URL в /guide-uploads или бросить ошибку
+async function uploadEditorImage(file) {
+  const data = await compressImageFile(file);
+  const r = await fetch(api("/admin/guides/image"), {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ data, filename: file.name || "paste.webp" }),
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.detail || "ошибка загрузки");
+  return j.url;
+}
+
+// вставить текст в позицию курсора (или в конец, если фокуса в поле нет)
+function insertAtCursor(ta, text) {
+  const len = ta.value.length;
+  const s = Number.isInteger(ta.selectionStart) ? ta.selectionStart : len;
+  const e = Number.isInteger(ta.selectionEnd) ? ta.selectionEnd : len;
+  ta.setRangeText(text, s, e, "end");
+}
+
 function fmtToolbar(host, ta, onChange) {
   const apply = (a) => {
     const s = ta.selectionStart, e = ta.selectionEnd;
@@ -4194,7 +5636,7 @@ function fmtToolbar(host, ta, onChange) {
   host.classList.add("fmt-bar");
   host.innerHTML = FMT_ACTIONS.map((a, i) =>
     `<button type="button" class="fmt-btn" data-i="${i}" title="${escapeHtml(a.hint)}">${a.label}</button>`).join("")
-    + `<span class="fmt-tip">выдели текст → кнопка обернёт его в тег</span>`;
+    + `<span class="fmt-tip">выдели текст → кнопка обернёт его в тег · Ctrl+V — вставить скриншот прямо в текст</span>`;
   host.addEventListener("click", (ev) => {
     const b = ev.target.closest(".fmt-btn");
     if (b) apply(FMT_ACTIONS[+b.dataset.i]);
@@ -4207,6 +5649,29 @@ function fmtToolbar(host, ta, onChange) {
       apply(FMT_ACTIONS.find((a) => a.t === k));
     }
   });
+  // Ctrl+V скриншотом: ловим картинку из буфера, сжимаем, грузим, вставляем
+  // <img> на месте курсора. Пока идёт загрузка — держим уникальный маркер.
+  ta.addEventListener("paste", (ev) => {
+    const items = ev.clipboardData && ev.clipboardData.items;
+    if (!items) return;
+    const it = [...items].find((x) => x.kind === "file" && x.type.startsWith("image/"));
+    if (!it) return;                              // не картинка — обычная вставка
+    const file = it.getAsFile();
+    if (!file) return;
+    ev.preventDefault();
+    const tok = `<!-- upl-${Math.random().toString(36).slice(2)} -->`;
+    insertAtCursor(ta, `\n${tok}\n`);
+    if (onChange) onChange();
+    (async () => {
+      try {
+        const url = await uploadEditorImage(file);
+        ta.value = ta.value.replace(tok, `<img src="${url}" alt="">`);
+      } catch (e) {
+        ta.value = ta.value.replace(tok, `<!-- не загрузилось: ${e.message} -->`);
+      }
+      if (onChange) onChange();
+    })();
+  });
 }
 
 // ---------- ДЕВ · редактор гайдов (только админ) ----------
@@ -4216,6 +5681,8 @@ const devSubnav = (on) => `<div class="dev-subnav">
   <a href="/dev/guides"${on === "guides" ? ' class="on"' : ""}>ГАЙДЫ</a>
   <a href="/dev/quests"${on === "quests" ? ' class="on"' : ""}>КВЕСТЫ</a>
   <a href="/dev/promo"${on === "promo" ? ' class="on"' : ""}>ПРОМОКОДЫ</a>
+  <a href="/dev/craft"${on === "craft" ? ' class="on"' : ""}>РЕЦЕПТЫ</a>
+  <a href="/dev/scan"${on === "scan" ? ' class="on"' : ""}>СКАНЕР</a>
 </div>`;
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
@@ -4317,7 +5784,7 @@ async function renderDevGuideForm(slug) {
       </div>
       <div class="gform-l">ТЕЛО ГАЙДА · HTML — выдели текст и жми кнопки форматирования
         <div id="gfBar"></div>
-        <textarea id="gfHtml" rows="18" class="gform-html" spellcheck="false">${escapeHtml(g.html)}</textarea></div>
+        <textarea id="gfHtml" rows="18" class="gform-html" spellcheck="true" lang="ru">${escapeHtml(g.html)}</textarea></div>
       <div class="gform-actions">
         <button type="button" class="gadm-save" id="gfSave">СОХРАНИТЬ</button>
         <button type="button" class="gadm-btn" id="gfPrevBtn">ОБНОВИТЬ ПРЕДПРОСМОТР ⟳</button>
@@ -4347,27 +5814,17 @@ async function renderDevGuideForm(slug) {
   renderPrev();
   $("gfCancel").addEventListener("click", () => renderDevGuidesList());
 
-  $("gfUpload").addEventListener("click", () => {
+  $("gfUpload").addEventListener("click", async () => {
     const f = $("gfImg").files[0], msg = $("gfUpMsg");
     if (!f) { msg.textContent = "выбери файл"; return; }
-    const rd = new FileReader();
-    rd.onload = async () => {
-      msg.textContent = "загрузка…";
-      try {
-        const r = await fetch(api("/admin/guides/image"), {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ data: rd.result, filename: f.name }),
-        });
-        const j = await r.json();
-        if (!r.ok) { msg.textContent = j.detail || "ошибка загрузки"; return; }
-        const ta = $("gfHtml");
-        ta.value = `${ta.value}\n<img src="${j.url}" alt="">\n`;
-        if (!$("gfCover").value.trim()) setCover(j.url);
-        msg.innerHTML = `готово, вставлено в тело: <b>${escapeHtml(j.url)}</b>`;
-        renderPrev();
-      } catch (e) { msg.textContent = "ошибка сети"; }
-    };
-    rd.readAsDataURL(f);
+    msg.textContent = "сжатие и загрузка…";
+    try {
+      const url = await uploadEditorImage(f);
+      insertAtCursor($("gfHtml"), `\n<img src="${url}" alt="">\n`);
+      if (!$("gfCover").value.trim()) setCover(url);
+      msg.innerHTML = `готово, вставлено в тело: <b>${escapeHtml(url)}</b>`;
+      renderPrev();
+    } catch (e) { msg.textContent = e.message || "ошибка сети"; }
   });
 
   $("gfSave").addEventListener("click", async () => {
@@ -4443,7 +5900,7 @@ async function renderDevPromosList() {
 
 function renderDevPromoForm(p) {
   const isNew = !p;
-  p = p || { title: "", code: "", description: "", image: "", expires_at: "", is_ref: false };
+  p = p || { title: "", code: "", url: "", description: "", image: "", expires_at: "", is_ref: false };
   // expires_at "YYYY-MM-DDTHH:MM" → инпуты даты и времени (23:59 = «весь день», время пустое)
   const em = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})$/.exec(p.expires_at || "");
   const expDate = em ? em[1] : "", expTime = em && em[2] !== "23:59" ? em[2] : "";
@@ -4455,11 +5912,13 @@ function renderDevPromoForm(p) {
     <div class="gform">
       <label class="gform-l">НАЗВАНИЕ · что даёт промокод
         <input id="pfTitle" value="${escapeHtml(p.title)}" placeholder="Промокод ко дню рождения STALCRAFT"></label>
-      <label class="gform-l">ПРОМОКОД
+      <label class="gform-l">ПРОМОКОД · оставь пустым, если это ссылка (Steam DLC)
         <input id="pfCode" value="${escapeHtml(p.code)}" placeholder="STALZONE2026" autocomplete="off"></label>
+      <label class="gform-l">ССЫЛКА · если задана — вместо кода будет кнопка «Забрать» (Steam DLC / внешняя)
+        <input id="pfUrl" value="${escapeHtml(p.url || "")}" placeholder="https://store.steampowered.com/app/…" autocomplete="off"></label>
       <div class="gform-l">ОПИСАНИЕ · HTML-новость для страницы /promo (на главной не показывается)
         <div id="pfBar"></div>
-        <textarea id="pfDesc" rows="10" class="gform-html" spellcheck="false">${escapeHtml(p.description)}</textarea></div>
+        <textarea id="pfDesc" rows="10" class="gform-html" spellcheck="true" lang="ru">${escapeHtml(p.description)}</textarea></div>
       <div class="gform-upload">
         <input type="file" id="pfImg" accept="image/png,image/jpeg,image/webp,image/gif">
         <button type="button" class="gadm-btn" id="pfUpload">ЗАГРУЗИТЬ И ВСТАВИТЬ В ОПИСАНИЕ</button>
@@ -4499,36 +5958,29 @@ function renderDevPromoForm(p) {
 
   // загрузка картинки — тем же аплоадом, что у гайдов (кладёт в /guide-uploads);
   // тег <img> вставляется в конец описания
-  $("pfUpload").addEventListener("click", () => {
+  $("pfUpload").addEventListener("click", async () => {
     const f = $("pfImg").files[0], msg = $("pfUpMsg");
     if (!f) { msg.textContent = "выбери файл"; return; }
-    const rd = new FileReader();
-    rd.onload = async () => {
-      msg.textContent = "загрузка…";
-      try {
-        const r = await fetch(api("/admin/guides/image"), {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ data: rd.result, filename: f.name }),
-        });
-        const j = await r.json();
-        if (!r.ok) { msg.textContent = j.detail || "ошибка загрузки"; return; }
-        const ta = $("pfDesc");
-        ta.value = `${ta.value}\n<img src="${j.url}" alt="">\n`;
-        msg.innerHTML = `готово, вставлено в описание: <b>${escapeHtml(j.url)}</b>`;
-        renderPrev();
-      } catch (e) { msg.textContent = "ошибка сети"; }
-    };
-    rd.readAsDataURL(f);
+    msg.textContent = "сжатие и загрузка…";
+    try {
+      const url = await uploadEditorImage(f);
+      insertAtCursor($("pfDesc"), `\n<img src="${url}" alt="">\n`);
+      msg.innerHTML = `готово, вставлено в описание: <b>${escapeHtml(url)}</b>`;
+      renderPrev();
+    } catch (e) { msg.textContent = e.message || "ошибка сети"; }
   });
 
   $("pfSave").addEventListener("click", async () => {
     const msg = $("pfMsg");
     if (!$("pfTitle").value.trim()) { msg.textContent = "нужно название"; return; }
-    if (!$("pfCode").value.trim()) { msg.textContent = "нужен сам промокод"; return; }
+    if (!$("pfCode").value.trim() && !$("pfUrl").value.trim()) {
+      msg.textContent = "нужен промокод или ссылка"; return;
+    }
     const expD = $("pfExp").value, expT = $("pfExpT").value;
     const body = {
       id: isNew ? undefined : p.id,
       title: $("pfTitle").value.trim(), code: $("pfCode").value.trim(),
+      url: $("pfUrl").value.trim(),
       description: $("pfDesc").value.trim(), image: $("pfImage").value.trim(),
       expires_at: expD ? (expT ? `${expD}T${expT}` : expD) : "",
       is_ref: $("pfRef").checked,
@@ -4546,23 +5998,198 @@ function renderDevPromoForm(p) {
   });
 }
 
+// ---------- ДЕВ · сверка рецептов верстака с игрой (только админ) ----------
+// Чек-лист «бонусный крафт есть/нет» (в базе EXBO этого признака нет) +
+// правка данных рецепта (энергия, выход, уровень навыка, количества входов).
+// Калькулятор применяет бонус ТОЛЬКО к рецептам с галкой «ЕСТЬ».
+let cadmData = null;   // {items, perk_names} — живёт, пока открыт /dev/craft
+
+async function openDevCraft() {
+  if (!devGate()) return;
+  page.innerHTML = `<div class="mapmod"><div class="spinner">// ЗАГРУЗКА РЕЦЕПТОВ</div></div>`;
+  try { cadmData = await fetch(api("/admin/craft/recipes")).then((r) => r.json()); }
+  catch (e) { page.innerHTML = `<div class="empty">[!] ОШИБКА СЕТИ</div>`; return; }
+  if (location.pathname !== "/dev/craft") return;
+  renderDevCraft();
+}
+
+function cadmRowHtml(it) {
+  const t = it.tuned || {};
+  const perk = Object.entries(it.perks)[0];   // у рецептов верстака навык один
+  const bonusBtn = (val, lbl, cls) => `<button class="cadm-b ${cls} ${it.bonus === val ? "on" : ""}"
+      data-bonus="${val === null ? "" : val}">${lbl}</button>`;
+  const ings = it.ingredients.map((i) => `
+      <span class="cadm-ing" title="${escapeHtml(i.name)} (EXBO: ×${i.amount})">
+        <img loading="lazy" src="${asset(i.icon)}" alt="">${escapeHtml(i.name)}
+        ×<input type="number" min="0" max="10000" data-ing="${i.id}" data-orig="${i.amount}"
+           value="${(t.ingredients || {})[i.id] ?? i.amount}">
+      </span>`).join("");
+  return `<div class="cadm-row ${it.bonus == null ? "" : "checked"}" data-key="${it.key}">
+    <div class="cadm-main">
+      <img loading="lazy" src="${asset(it.result.icon)}" alt="">
+      <span class="cadm-name" title="${it.key}">${escapeHtml(it.result.name)}</span>
+      <span class="x">×<input type="number" min="1" max="10000" data-f="result_amount"
+        data-orig="${it.result.amount}" value="${t.result_amount ?? it.result.amount}"
+        title="Выход за крафт (EXBO: ${it.result.amount})"></span>
+      ${perk ? `<span class="cadm-perk">${escapeHtml(perkName(perk[0]))} ур.
+        <input type="number" min="1" max="10" data-f="perk_level" data-orig="${perk[1]}"
+          value="${t.perk_level ?? perk[1]}" title="Требуемый уровень (EXBO: ${perk[1]})"></span>` : ""}
+      <span class="cadm-perk">⚡<input type="number" min="0" max="1000000" data-f="energy"
+        data-orig="${it.energy ?? ""}" value="${t.energy ?? it.energy ?? ""}"
+        title="Энергия крафта (EXBO: ${it.energy})"></span>
+      ${it.tuned ? `<span class="cadm-tag" title="Есть правки поверх данных EXBO">ПРАВКА</span>` : ""}
+    </div>
+    <div class="cadm-ings">${ings}</div>
+    <div class="cadm-act">
+      <span class="cadm-lbl" title="Есть ли у рецепта в игре шкала «Бонусный крафт»">БОНУС:</span>
+      ${bonusBtn(1, "ЕСТЬ", "yes")}${bonusBtn(0, "НЕТ", "no")}${bonusBtn(null, "?", "")}
+      <button class="cadm-b cadm-save" data-save hidden>💾 СОХР.</button>
+      <span class="cadm-msg"></span>
+    </div>
+  </div>`;
+}
+
+function renderDevCraft() {
+  const d = cadmData;
+  const q = (page.querySelector("#cadmQ") || {}).value || "";
+  const fp = (page.querySelector("#cadmPerk") || {}).value || "";
+  const fs = (page.querySelector("#cadmSt") || {}).value || "";
+  const items = (d.items || []).filter((it) => {
+    if (q && !it.result.name.toLowerCase().includes(q.toLowerCase())) return false;
+    const pk = Object.keys(it.perks)[0] || "";
+    if (fp && pk !== fp) return false;
+    if (fs === "un" && it.bonus != null) return false;
+    if (fs === "yes" && it.bonus !== 1) return false;
+    if (fs === "no" && it.bonus !== 0) return false;
+    if (fs === "tuned" && !it.tuned) return false;
+    return true;
+  });
+  const total = (d.items || []).length;
+  const checked = (d.items || []).filter((i) => i.bonus != null).length;
+  const perkOpts = Object.entries(d.perk_names || {}).map(([id, nm]) =>
+    `<option value="${id}" ${fp === id ? "selected" : ""}>${escapeHtml(nm)}</option>`).join("");
+  page.innerHTML = `<div class="mapmod">
+    <div class="section-head">
+      <div class="section-title">▸ ДЕВ · РЕЦЕПТЫ / БОНУСНЫЙ КРАФТ</div>
+      <div class="section-note">ПРОВЕРЕНО ${checked} / ${total}</div>
+    </div>
+    ${devSubnav("craft")}
+    <div class="cadm-note">Сверка с игрой. «БОНУС: ЕСТЬ/НЕТ» — есть ли у рецепта шкала бонусного
+      крафта (калькулятор учитывает бонус только при «ЕСТЬ», «?» = не проверено). Числа можно
+      править, если EXBO расходится с игрой — правка применяется к калькулятору сразу; вернуть
+      исходное значение = ввести число как в EXBO (подсказка в наведении).</div>
+    <div class="cadm-filters">
+      <input id="cadmQ" placeholder="ПОИСК ПО НАЗВАНИЮ…" value="${escapeHtml(q)}" autocomplete="off">
+      <select id="cadmPerk"><option value="">ВСЕ НАВЫКИ</option>${perkOpts}</select>
+      <select id="cadmSt">
+        <option value="">ВСЕ СТАТУСЫ</option>
+        <option value="un" ${fs === "un" ? "selected" : ""}>НЕ ПРОВЕРЕНО</option>
+        <option value="yes" ${fs === "yes" ? "selected" : ""}>БОНУС ЕСТЬ</option>
+        <option value="no" ${fs === "no" ? "selected" : ""}>БОНУСА НЕТ</option>
+        <option value="tuned" ${fs === "tuned" ? "selected" : ""}>С ПРАВКАМИ</option>
+      </select>
+    </div>
+    <div class="cadm-list">${items.map(cadmRowHtml).join("")
+      || `<div class="empty-sm">НИЧЕГО НЕ НАЙДЕНО.</div>`}</div>
+  </div>`;
+  $("cadmQ").addEventListener("input", () => renderDevCraftListOnly());
+  $("cadmPerk").addEventListener("change", () => renderDevCraftListOnly());
+  $("cadmSt").addEventListener("change", () => renderDevCraftListOnly());
+  wireDevCraftRows();
+}
+
+function renderDevCraftListOnly() {
+  // перерисовать только список, не трогая фокус в фильтрах
+  const q = $("cadmQ").value, fp = $("cadmPerk").value, fs = $("cadmSt").value;
+  const items = (cadmData.items || []).filter((it) => {
+    if (q && !it.result.name.toLowerCase().includes(q.toLowerCase())) return false;
+    const pk = Object.keys(it.perks)[0] || "";
+    if (fp && pk !== fp) return false;
+    if (fs === "un" && it.bonus != null) return false;
+    if (fs === "yes" && it.bonus !== 1) return false;
+    if (fs === "no" && it.bonus !== 0) return false;
+    if (fs === "tuned" && !it.tuned) return false;
+    return true;
+  });
+  page.querySelector(".cadm-list").innerHTML =
+    items.map(cadmRowHtml).join("") || `<div class="empty-sm">НИЧЕГО НЕ НАЙДЕНО.</div>`;
+  wireDevCraftRows();
+}
+
+async function cadmSaveRow(row, bonusOverride) {
+  const key = row.dataset.key;
+  const it = cadmData.items.find((i) => i.key === key);
+  const msg = row.querySelector(".cadm-msg");
+  const num = (inp) => {
+    const v = inp.value.trim();
+    return v === "" ? null : +v;
+  };
+  // поля шлём только если отличаются от EXBO-исходника (равно = снять правку)
+  const body = { bonus: bonusOverride !== undefined ? bonusOverride : it.bonus };
+  for (const inp of row.querySelectorAll("input[data-f]")) {
+    const v = num(inp);
+    body[inp.dataset.f] = v != null && String(v) !== inp.dataset.orig ? v : null;
+  }
+  const ings = {};
+  for (const inp of row.querySelectorAll("input[data-ing]")) {
+    const v = num(inp);
+    if (v != null && String(v) !== inp.dataset.orig) ings[inp.dataset.ing] = v;
+  }
+  if (Object.keys(ings).length) body.ingredients = ings;
+  msg.textContent = "…";
+  try {
+    const r = await fetch(api(`/admin/craft/recipes/${key}`), {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const j = await r.json();
+    if (!r.ok) { msg.textContent = j.detail || "ошибка"; return; }
+    it.bonus = j.bonus;
+    it.tuned = j.tuned;
+    msg.textContent = "✓";
+    setTimeout(() => { if (msg.isConnected) msg.textContent = ""; }, 1500);
+    row.classList.toggle("checked", it.bonus != null);
+    row.querySelectorAll("[data-bonus]").forEach((b) =>
+      b.classList.toggle("on", String(it.bonus ?? "") === b.dataset.bonus));
+    row.querySelector("[data-save]").hidden = true;
+    const noteEl = page.querySelector(".section-note");
+    if (noteEl) noteEl.textContent =
+      `ПРОВЕРЕНО ${cadmData.items.filter((i) => i.bonus != null).length} / ${cadmData.items.length}`;
+  } catch (e) { msg.textContent = "ошибка сети"; }
+}
+
+function wireDevCraftRows() {
+  page.querySelectorAll(".cadm-row").forEach((row) => {
+    row.querySelectorAll("[data-bonus]").forEach((b) =>
+      b.addEventListener("click", () =>
+        cadmSaveRow(row, b.dataset.bonus === "" ? null : +b.dataset.bonus)));
+    row.querySelectorAll("input[type=number]").forEach((inp) =>
+      inp.addEventListener("input", () => { row.querySelector("[data-save]").hidden = false; }));
+    row.querySelector("[data-save]").addEventListener("click", () => cadmSaveRow(row));
+  });
+}
+
 // ---------- ДЕВ · редактор квестов (только админ) ----------
 async function openDevQuests() {
   if (!devGate()) return;
-  const editId = new URLSearchParams(location.search).get("edit");
+  const sp = new URLSearchParams(location.search);
+  const editId = sp.get("edit");
   if (editId && /^\d+$/.test(editId)) { await renderDevQuestForm(+editId); return; }
-  await renderDevQuestsList();
+  if (sp.get("list")) { await renderDevQuestsList(); return; }
+  await renderDevQuestMap();               // карта линеек — основной экран дева
 }
 
-// уйти из формы: убить Leaflet формы и вернуть десктопный масштаб
+// уйти из формы: убить Leaflet формы, автосейв черновика и вернуть масштаб
+let qfAutosaveTimer = null;
 function qfCleanup() {
+  if (qfAutosaveTimer) { clearInterval(qfAutosaveTimer); qfAutosaveTimer = null; }
   if (mapCleanup) { mapCleanup(); mapCleanup = null; }
   document.documentElement.classList.remove("on-map");
 }
 
 async function renderDevQuestsList() {
   qfCleanup();
-  if (location.search) history.replaceState(null, "", "/dev/quests");
+  history.replaceState(null, "", "/dev/quests?list=1");
   page.innerHTML = `<div class="mapmod"><div class="spinner">// ЗАГРУЗКА КВЕСТОВ</div></div>`;
   let d;
   try { d = await fetch(api("/quests")).then((r) => r.json()); }
@@ -4577,7 +6204,7 @@ async function renderDevQuestsList() {
     const rows = d.items.filter((q) => q.faction === f.id).map((q) => `
       <div class="gadm-row">
         <div class="gadm-row-i">
-          <div class="gadm-row-t">${q.kind === "main" ? `<span style="color:var(--amber)">★</span> ` : ""}${escapeHtml(q.title)}${q.published ? "" : ` <span class="gadm-draft">ЧЕРНОВИК</span>`}</div>
+          <div class="gadm-row-t">${q.kind === "main" ? `<span style="color:var(--amber)">★</span> ` : ""}${escapeHtml(q.title)}${q.published ? "" : ` <span class="gadm-hidden" title="Не опубликован — не виден игрокам">скрыт</span>`}</div>
           <div class="gadm-row-s">#${q.id} · ${q.parents.length
             ? `после: ${escapeHtml(q.parents.map(titleOf).join(", "))}`
             : "старт линейки"}${q.has_map ? " · 📍 карта" : ""}</div>
@@ -4598,10 +6225,14 @@ async function renderDevQuestsList() {
       <div class="section-note">Блок-схема строится сама по связям «после». Публикация — сразу на /quests.</div>
     </div>
     ${devSubnav("quests")}
-    <button class="gadm-new" id="qadmNew">＋ НОВЫЙ КВЕСТ</button>
+    <div class="qadm-nav">
+      <button class="gadm-new" id="qadmNew">＋ НОВЫЙ КВЕСТ</button>
+      <button class="gadm-btn qadm-addnext" id="qadmMap" title="Расставить блоки и связи мышкой">◱ КАРТА ЛИНЕЕК</button>
+    </div>
     <div class="gadm-list">${groups}</div>
   </div>`;
   $("qadmNew").addEventListener("click", () => renderDevQuestForm(null));
+  $("qadmMap").addEventListener("click", () => renderDevQuestMap());
   page.querySelectorAll("[data-edit]").forEach((b) =>
     b.addEventListener("click", () => renderDevQuestForm(+b.dataset.edit)));
   page.querySelectorAll("[data-del]").forEach((b) =>
@@ -4612,12 +6243,57 @@ async function renderDevQuestsList() {
     }));
 }
 
-async function renderDevQuestForm(qid) {
+// дев-карта линеек: полноценный редактор графа (двигать блоки, тянуть/удалять связи)
+let devQuestMapFaction = localStorage.getItem("sz_qdev_f") || "stalkers";
+async function renderDevQuestMap() {
+  qfCleanup();
+  page.innerHTML = `<div class="mapmod"><div class="spinner">// ЗАГРУЗКА КАРТЫ</div></div>`;
+  let d;
+  try { d = await fetch(api("/quests")).then((r) => r.json()); }
+  catch (e) { page.innerHTML = `<div class="empty">[!] ОШИБКА СЕТИ</div>`; return; }
+  if (location.pathname !== "/dev/quests") return;
+  questData = d;
+  if (!d.is_admin) { page.innerHTML = `<div class="empty">[!] НЕТ ДОСТУПА</div>`; return; }
+  if (!d.factions.some((f) => f.id === devQuestMapFaction)) devQuestMapFaction = d.factions[0].id;
+  history.replaceState(null, "", "/dev/quests");
+  const tabs = d.factions.map((f) => {
+    const n = d.items.filter((q) => questInFaction(q, f.id)).length;
+    return `<button class="qst-tab${f.id === devQuestMapFaction ? " on" : ""}" data-f="${f.id}"
+      style="--fc:${f.color}">${escapeHtml(f.name.toUpperCase())}${n ? ` <span>${n}</span>` : ""}</button>`;
+  }).join("");
+  page.innerHTML = `<div class="mapmod">
+    <div class="section-head">
+      <div class="section-title">▸ ДЕВ · КВЕСТЫ · КАРТА ЛИНЕЕК</div>
+      <div class="section-note">Расставь блоки и связи мышкой — как видят игроки на /quests.</div>
+    </div>
+    ${devSubnav("quests")}
+    <div class="qadm-nav">
+      <button type="button" class="gadm-btn qadm-addnext" id="qdmNew">＋ НОВЫЙ КВЕСТ</button>
+      <button type="button" class="gadm-btn" id="qdmList">☰ СПИСОК</button>
+    </div>
+    <div class="qst-tabs">${tabs}</div>
+    <div id="qdevmap"></div>
+    <div class="map-legend">Тяни блок — двигать (прилипает к сетке), сохраняется для этой линейки.
+      Тяни <b style="color:var(--amber)">точку снизу</b> блока на другой блок — связать (тот откроется после).
+      <b style="color:var(--green)">＋</b> на блоке — добавить следующий квест. Клик по стрелке — удалить связь.
+      Клик по блоку — открыть редактор. Колесо — зум, тяни пустое поле — двигать полотно.</div>
+  </div>`;
+  page.querySelectorAll(".qst-tab").forEach((b) => b.addEventListener("click", () => {
+    devQuestMapFaction = b.dataset.f;
+    localStorage.setItem("sz_qdev_f", devQuestMapFaction);
+    renderDevQuestMap();
+  }));
+  $("qdmList").addEventListener("click", () => renderDevQuestsList());
+  $("qdmNew").addEventListener("click", () => renderDevQuestForm(null, { faction: devQuestMapFaction }));
+  renderQuestGraph($("qdevmap"), devQuestMapFaction, { edit: true });
+}
+
+async function renderDevQuestForm(qid, preset) {
   qfCleanup();
   page.innerHTML = `<div class="mapmod"><div class="spinner">// ЗАГРУЗКА</div></div>`;
-  let all, q = { id: null, title: "", faction: "stalkers", kind: "main", summary: "",
-                 reward: "", html: "", parents: [], map_layer: "", map_points: [],
-                 sort: 0, published: false };
+  let all, q = { id: null, title: "", faction: "stalkers", factions: [], kind: "main",
+                 summary: "", reward: "", html: "", parents: [], map_layer: "",
+                 map_points: [], pos: {}, sort: 0, published: true };   // сразу виден на /quests
   try {
     all = await fetch(api("/quests")).then((r) => r.json());
     if (qid != null) {
@@ -4631,10 +6307,14 @@ async function renderDevQuestForm(qid) {
   }
   if (location.pathname !== "/dev/quests") return;
   questData = all;
+  history.replaceState(null, "", qid != null ? `/dev/quests?edit=${qid}` : "/dev/quests");
   const isNew = qid == null;
+  // «＋ создать следующий» открывает новый квест, предзаполнив родителя и линейку
+  if (isNew && preset) {
+    if (preset.faction) q.faction = preset.faction;
+    if (preset.parent != null) q.parents = [preset.parent];
+  }
 
-  const factionOpts = all.factions.map((f) =>
-    `<option value="${f.id}"${q.faction === f.id ? " selected" : ""}>${escapeHtml(f.name)}</option>`).join("");
   const parentsBox = all.factions.map((f) => {
     const opts = all.items.filter((x) => x.faction === f.id && x.id !== qid).map((x) => `
       <label class="qadm-p"><input type="checkbox" data-pid="${x.id}"
@@ -4646,16 +6326,34 @@ async function renderDevQuestForm(qid) {
     .filter((t) => t.bbox)
     .map((t) => `<option value="${t.id}">${escapeHtml(t.name)}</option>`).join("");
 
+  // навигация по цепочке: предыдущие (родители) и следующие (дети)
+  const parentItems = (q.parents || [])
+    .map((pid) => all.items.find((x) => x.id === pid)).filter(Boolean);
+  const childItems = qid != null
+    ? all.items.filter((x) => (x.parents || []).includes(qid))
+        .sort((a, b) => (a.sort - b.sort) || (a.id - b.id)) : [];
+  const goBtns = (arr) => arr.map((x) =>
+    `<button type="button" class="gadm-btn qadm-go" data-go="${x.id}">${escapeHtml(x.title)}</button>`).join("");
+  const navHtml = isNew ? "" : `<div class="qadm-nav">
+    ${parentItems.length ? `<span class="qadm-nav-g"><span class="qadm-nav-l">◂ ПРЕДЫДУЩИЙ</span>${goBtns(parentItems)}</span>` : ""}
+    ${childItems.length ? `<span class="qadm-nav-g"><span class="qadm-nav-l">СЛЕДУЮЩИЙ ▸</span>${goBtns(childItems)}</span>` : ""}
+  </div>`;
+  // «также в линейках» — общий/вступительный квест дублируется в выбранных линейках
+  const factionsXBox = all.factions.map((f) =>
+    `<label class="qadm-p qadm-facx-i" data-fx="${f.id}" style="--fc:${f.color}">
+      <input type="checkbox" data-fx="${f.id}"${(f.id === q.faction || (q.factions || []).includes(f.id)) ? " checked" : ""}>
+      ${escapeHtml(f.name)}</label>`).join("");
+
   page.innerHTML = `<div class="mapmod">
     <div class="section-head">
       <div class="section-title">▸ ДЕВ · КВЕСТЫ · ${isNew ? "НОВЫЙ" : `РЕДАКТИРОВАНИЕ #${qid}`}</div>
     </div>
     ${devSubnav("quests")}
+    ${navHtml}
     <div class="gform">
       <label class="gform-l">НАЗВАНИЕ КВЕСТА
-        <input id="qfTitle" value="${escapeHtml(q.title)}" placeholder="Например: Первый выход в Зону"></label>
+        <input id="qfTitle" value="${escapeHtml(q.title)}" spellcheck="true" lang="ru" placeholder="Например: Первый выход в Зону"></label>
       <div class="gform-row">
-        <label class="gform-l">ЛИНЕЙКА <select id="qfFaction">${factionOpts}</select></label>
         <label class="gform-l">ТИП <select id="qfKind">
           <option value="main"${q.kind === "main" ? " selected" : ""}>Основной</option>
           <option value="side"${q.kind === "side" ? " selected" : ""}>Побочный</option>
@@ -4664,16 +6362,19 @@ async function renderDevQuestForm(qid) {
           ПОРЯДОК <input id="qfSort" type="number" value="${q.sort || 0}" style="width:80px"></label>
         <label class="gform-chk"><input id="qfPub" type="checkbox"${q.published ? " checked" : ""}> ОПУБЛИКОВАН</label>
       </div>
+      <div class="gform-l">ЛИНЕЙКИ КВЕСТА · отметь, к каким линейкам относится квест (в них он и покажется на схеме)
+        <div class="qadm-parents qadm-facx" id="qfFactionsX">${factionsXBox}</div>
+      </div>
       <div class="gform-l">ОТКРЫВАЕТСЯ ПОСЛЕ · отметь квесты-предшественники (стрелки на схеме)
         <div class="qadm-parents" id="qfParents">${parentsBox || `<div class="empty-sm">других квестов пока нет — этот будет стартовым</div>`}</div>
       </div>
       <label class="gform-l">КРАТКО · подсказка при наведении на блок схемы (до 400 симв.)
-        <textarea id="qfSummary" rows="2">${escapeHtml(q.summary)}</textarea></label>
+        <textarea id="qfSummary" rows="2" spellcheck="true" lang="ru">${escapeHtml(q.summary)}</textarea></label>
       <label class="gform-l">НАГРАДА · текст (деньги, предметы, репутация)
-        <input id="qfReward" value="${escapeHtml(q.reward)}" placeholder="15 000 ₽ · Аптечка армейская ×2 · +репутация у барменов"></label>
+        <input id="qfReward" value="${escapeHtml(q.reward)}" spellcheck="true" lang="ru" placeholder="15 000 ₽ · Аптечка армейская ×2 · +репутация у барменов"></label>
       <div class="gform-l">ПРОХОЖДЕНИЕ · HTML — выдели текст и жми кнопки форматирования
         <div id="qfBar"></div>
-        <textarea id="qfHtml" rows="14" class="gform-html" spellcheck="false">${escapeHtml(q.html)}</textarea>
+        <textarea id="qfHtml" rows="14" class="gform-html" spellcheck="true" lang="ru">${escapeHtml(q.html)}</textarea>
       </div>
       <div class="gform-upload">
         <input type="file" id="qfImg" accept="image/png,image/jpeg,image/webp,image/gif">
@@ -4698,9 +6399,11 @@ async function renderDevQuestForm(qid) {
       </div>
       <div class="gform-actions">
         <button type="button" class="gadm-save" id="qfSave">СОХРАНИТЬ</button>
+        <button type="button" class="gadm-save qadm-savenext" id="qfSaveNext" title="Сохранить этот квест и сразу создать следующий (откроется после него)">СОХРАНИТЬ И ＋СЛЕДУЮЩИЙ ▸</button>
         <button type="button" class="gadm-btn" id="qfPrevBtn">ОБНОВИТЬ ПРЕДПРОСМОТР ⟳</button>
-        <button type="button" class="gadm-btn" id="qfCancel">◂ К СПИСКУ</button>
+        <button type="button" class="gadm-btn" id="qfCancel">◂ К КАРТЕ</button>
         <span id="qfMsg" class="gform-msg"></span>
+        <span id="qfDraftStat" class="gform-msg qdraft-stat"></span>
       </div>
       <div class="gform-prev-h">ПРЕДПРОСМОТР ПРОХОЖДЕНИЯ</div>
       <article class="patch-article guide-article"><div class="patch-body gform-prev" id="qfPrev"></div></article>
@@ -4712,27 +6415,26 @@ async function renderDevQuestForm(qid) {
   fmtToolbar($("qfBar"), $("qfHtml"), renderPrev);
   $("qfPrevBtn").addEventListener("click", renderPrev);
   renderPrev();
-  $("qfCancel").addEventListener("click", () => renderDevQuestsList());
-  $("qfUpload").addEventListener("click", () => {
+  $("qfCancel").addEventListener("click", () => renderDevQuestMap());
+
+  // навигация по цепочке (предыдущий/следующий квест из связей)
+  page.querySelectorAll(".qadm-go").forEach((b) =>
+    b.addEventListener("click", () => renderDevQuestForm(+b.dataset.go)));
+
+  // основная линейка = первая отмеченная (или прежняя, если ещё отмечена); из галок
+  const questFactions = () => [...page.querySelectorAll("#qfFactionsX input:checked")].map((c) => c.dataset.fx);
+  const primaryFaction = () => { const ch = questFactions(); return ch.includes(q.faction) ? q.faction : ch[0]; };
+
+  $("qfUpload").addEventListener("click", async () => {
     const f = $("qfImg").files[0], msg = $("qfUpMsg");
     if (!f) { msg.textContent = "выбери файл"; return; }
-    const rd = new FileReader();
-    rd.onload = async () => {
-      msg.textContent = "загрузка…";
-      try {
-        const r = await fetch(api("/admin/guides/image"), {   // общий загрузчик картинок
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ data: rd.result, filename: f.name }),
-        });
-        const j = await r.json();
-        if (!r.ok) { msg.textContent = j.detail || "ошибка загрузки"; return; }
-        const ta = $("qfHtml");
-        ta.value = `${ta.value}\n<img src="${j.url}" alt="">\n`;
-        msg.innerHTML = `готово, вставлено в текст: <b>${escapeHtml(j.url)}</b>`;
-        renderPrev();
-      } catch (e) { msg.textContent = "ошибка сети"; }
-    };
-    rd.readAsDataURL(f);
+    msg.textContent = "сжатие и загрузка…";
+    try {
+      const url = await uploadEditorImage(f);          // общий загрузчик картинок
+      insertAtCursor($("qfHtml"), `\n<img src="${url}" alt="">\n`);
+      msg.innerHTML = `готово, вставлено в текст: <b>${escapeHtml(url)}</b>`;
+      renderPrev();
+    } catch (e) { msg.textContent = e.message || "ошибка сети"; }
   });
 
   // --- точки на карте: встроенный Leaflet-редактор ---
@@ -4845,22 +6547,111 @@ async function renderDevQuestForm(qid) {
   });
   syncMapBlock();
 
+  // --- автосейв черновика в localStorage (защита от обрыва сети/вылета) ---
+  // при пропаже инета серверный сейв не доедет, поэтому пишем локально каждые
+  // 20 с (+ дебаунс на ввод) и предлагаем восстановить при следующем открытии.
+  const DRAFT_KEY = `sz_qdraft_${qid == null ? "new" : qid}`;
+  const collectDraft = () => ({
+    v: 1, ts: Date.now(),
+    title: $("qfTitle").value, kind: $("qfKind").value,
+    factions: questFactions(),
+    sort: $("qfSort").value, published: $("qfPub").checked,
+    parents: [...page.querySelectorAll("#qfParents input:checked")].map((c) => +c.dataset.pid),
+    summary: $("qfSummary").value, reward: $("qfReward").value, html: $("qfHtml").value,
+    map_layer: $("qfLayer").value, map_points: pts.map((p) => [p[0], p[1], p[2] || ""]),
+  });
+  const draftIsEmpty = (d) => !((d.title || "").trim() || (d.summary || "").trim()
+    || (d.reward || "").trim() || (d.html || "").trim() || (d.map_points || []).length);
+  const clearDraft = () => { try { localStorage.removeItem(DRAFT_KEY); } catch (e) {} };
+  let restorePending = false;   // пока висит баннер — не перетираем найденный черновик
+  const saveDraft = () => {
+    if (!document.getElementById("qfHtml")) {          // форма закрыта — самоочистка
+      if (qfAutosaveTimer) { clearInterval(qfAutosaveTimer); qfAutosaveTimer = null; }
+      return;
+    }
+    if (restorePending) return;
+    try {
+      const d = collectDraft();
+      if (draftIsEmpty(d)) { clearDraft(); return; }
+      localStorage.setItem(DRAFT_KEY, JSON.stringify(d));
+      const st = $("qfDraftStat");
+      if (st) st.textContent = `● черновик сохранён ${new Date(d.ts)
+        .toLocaleTimeString("ru-RU").slice(0, 5)}`;
+    } catch (e) { /* квота/приватный режим — тихо игнорим */ }
+  };
+  qfAutosaveTimer = setInterval(saveDraft, 20000);
+  let draftDebounce = null;
+  const kickDraft = () => { clearTimeout(draftDebounce); draftDebounce = setTimeout(saveDraft, 2000); };
+  ["qfTitle", "qfSummary", "qfReward", "qfHtml", "qfSort"].forEach((id) =>
+    $(id).addEventListener("input", kickDraft));
+
+  // применить черновик к форме (текст + чекбоксы + слой и точки карты)
+  const applyDraft = (d) => {
+    $("qfTitle").value = d.title || "";
+    $("qfKind").value = d.kind || "main";
+    $("qfSort").value = d.sort || 0;
+    $("qfPub").checked = !!d.published;
+    $("qfSummary").value = d.summary || "";
+    $("qfReward").value = d.reward || "";
+    $("qfHtml").value = d.html || "";
+    page.querySelectorAll("#qfParents input").forEach((c) => {
+      c.checked = (d.parents || []).includes(+c.dataset.pid);
+    });
+    page.querySelectorAll("#qfFactionsX input").forEach((c) => {
+      c.checked = (d.factions || []).includes(c.dataset.fx);
+    });
+    pts.length = 0;
+    (d.map_points || []).forEach((p) => pts.push([p[0], p[1], p[2] || ""]));
+    $("qfLayer").value = d.map_layer || "";
+    syncMapBlock();
+    renderPrev();
+  };
+
+  // если при открытии нашёлся черновик, отличный от загруженного, — предложить
+  let existingDraft = null;
+  try { existingDraft = JSON.parse(localStorage.getItem(DRAFT_KEY) || "null"); } catch (e) {}
+  if (existingDraft && !draftIsEmpty(existingDraft)
+      && (existingDraft.html !== $("qfHtml").value || existingDraft.title !== $("qfTitle").value)) {
+    const gform = page.querySelector(".gform");
+    const bar = document.createElement("div");
+    bar.className = "qdraft-bar";
+    const when = new Date(existingDraft.ts).toLocaleString("ru-RU");
+    bar.innerHTML = `<span>Найден несохранённый черновик от <b>${escapeHtml(when)}</b> —
+        похоже, прошлый раз не сохранился. Восстановить?</span>
+      <span class="qdraft-actions">
+        <button type="button" class="gadm-save" id="qdRestore">ВОССТАНОВИТЬ</button>
+        <button type="button" class="gadm-btn" id="qdDismiss">ОТКЛОНИТЬ</button>
+      </span>`;
+    gform.insertBefore(bar, gform.firstChild);
+    restorePending = true;        // до решения не даём автосейву затереть черновик
+    $("qdRestore").addEventListener("click", () => {
+      applyDraft(existingDraft); restorePending = false; bar.remove(); saveDraft();
+    });
+    $("qdDismiss").addEventListener("click", () => {
+      clearDraft(); restorePending = false; bar.remove();
+    });
+  }
+
   // --- сохранение ---
-  $("qfSave").addEventListener("click", async () => {
+  // сохранить квест на сервер; вернуть сохранённый объект или null (ошибку показывает)
+  const saveQuest = async () => {
     const msg = $("qfMsg");
-    if (!$("qfTitle").value.trim()) { msg.textContent = "нужно название"; return; }
+    if (!$("qfTitle").value.trim()) { msg.textContent = "нужно название"; return null; }
+    const primary = primaryFaction();
+    if (!primary) { msg.textContent = "отметь хотя бы одну линейку"; return null; }
     const parents = [...page.querySelectorAll("#qfParents input:checked")]
       .map((c) => +c.dataset.pid);
     const layer = $("qfLayer").value;
+    const factions = questFactions().filter((fx) => fx !== primary);
     const body = {
       id: qid, title: $("qfTitle").value.trim(),
-      faction: $("qfFaction").value, kind: $("qfKind").value,
+      faction: primary, factions, kind: $("qfKind").value,
       summary: $("qfSummary").value.trim(), reward: $("qfReward").value.trim(),
       html: $("qfHtml").value, parents,
       map_layer: layer, map_points: layer ? pts : [],
       sort: +$("qfSort").value || 0, published: $("qfPub").checked,
     };
-    $("qfSave").disabled = true;
+    $("qfSave").disabled = true; $("qfSaveNext").disabled = true;
     msg.textContent = "сохранение…";
     try {
       const r = await fetch(api("/admin/quests"), {
@@ -4870,14 +6661,24 @@ async function renderDevQuestForm(qid) {
       const j = await r.json();
       if (!r.ok) {
         msg.textContent = j.detail || "ошибка сохранения";
-        $("qfSave").disabled = false;
-        return;
+        $("qfSave").disabled = false; $("qfSaveNext").disabled = false;
+        return null;
       }
-      renderDevQuestsList();
+      clearDraft();                 // сохранилось на сервере — черновик больше не нужен
+      return j;
     } catch (e) {
       msg.textContent = "ошибка сети";
-      $("qfSave").disabled = false;
+      $("qfSave").disabled = false; $("qfSaveNext").disabled = false;
+      return null;
     }
+  };
+  $("qfSave").addEventListener("click", async () => {
+    if (await saveQuest()) renderDevQuestMap();
+  });
+  // сохранить текущий и сразу открыть новый квест, открывающийся после него
+  $("qfSaveNext").addEventListener("click", async () => {
+    const s = await saveQuest();
+    if (s) renderDevQuestForm(null, { parent: s.id, faction: s.faction });
   });
 }
 
@@ -5206,6 +7007,384 @@ function updateStatus() {
     опубликованные — всем на <a href="/map">/map</a>.`;
 }
 
+// ---------- Операции (PvE-режим): мета снаряжения + лента забегов ----------
+const opsTierColor = (t) => t === 2 ? "var(--red)" : t === 1 ? "var(--amber)" : "var(--green)";
+const opsTierName = (t) => ({ low: "НИЗКИЙ", mid: "СРЕДНИЙ", high: "ВЫСОКИЙ" }[t.key] || t.label);
+// класс брони из API (combat/scientist/combined) → русское название
+const OPS_CLASS_RU = { combat: "БОЕВАЯ", scientist: "НАУЧНАЯ", combined: "КОМБИНИРОВАННАЯ" };
+const opsClassName = (k) => OPS_CLASS_RU[k] || (k ? String(k).toUpperCase() : "—");
+// карты операций (ключ API → название)
+const OPS_MAP_RU = { big_cleanup: "Большая уборка", sea_alienation: "Море отчуждения",
+                     shock_therapy: "Шоковая терапия" };
+const opsMapName = (m) => (m
+  ? (OPS_MAP_RU[m] || String(m).replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()))
+  : "—");
+// подпись меты-недели: «НЕДЕЛЯ С 22.07 · СБРОС СР»
+const OPS_DOW_RU = ["ПН", "ВТ", "СР", "ЧТ", "ПТ", "СБ", "ВС"];
+function opsWeekLabel(week) {
+  if (!week) return "МЕТА ЗА НЕДЕЛЮ";
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(week.start || "");
+  const dd = m ? ` С ${m[3]}.${m[2]}` : "";
+  const dow = OPS_DOW_RU[week.reset_dow] != null ? OPS_DOW_RU[week.reset_dow] : "СР";
+  return `НЕДЕЛЯ${dd} · СБРОС ${dow}`;
+}
+
+// время прохождения: секунды → «M:СС» (или «Ч М» на длинных забегах)
+function fmtDur(sec) {
+  if (sec == null) return "—";
+  sec = Math.round(sec);
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+  return h ? `${h} Ч ${String(m).padStart(2, "0")} М` : `${m}:${String(s).padStart(2, "0")}`;
+}
+
+// плитка снаряжения: иконка + имя (цвет по редкости) + заточка.
+// кликабельна — ведёт на карточку предмета (/item/{id}); нераспознанный id
+// (скрытый предмет не из базы) — плейсхолдер без ссылки и битой иконки
+function opsGear(g, lvl) {
+  if (!g) return `<span class="ops-gear ops-gear-empty">—</span>`;
+  const ptn = lvl ? `<span class="ops-lvl">+${lvl}</span>` : "";
+  const icon = g.icon
+    ? `<img loading="lazy" src="${asset(g.icon)}" alt="">`
+    : `<span class="ops-gear-ph" aria-hidden="true"></span>`;
+  if (g.unknown)
+    return `<span class="ops-gear ops-gear-unknown" title="Предмета нет в базе игры: ${escapeHtml(g.id)}">
+      ${icon}<span class="nm">неизв. предмет</span>${ptn}</span>`;
+  return `<a class="ops-gear" href="/item/${encodeURIComponent(g.id)}"
+      title="${escapeHtml(g.name)}${lvl ? " +" + lvl : ""} — открыть карточку">
+    ${icon}<span class="nm" style="color:${rank(g.color).color}">${escapeHtml(g.name)}</span>${ptn}</a>`;
+}
+
+// ===== модуль на главной: мета по классам брони (все классы стопкой) =====
+function opsDashNote(ov) {
+  if (!ov || !ov.classes || !ov.classes.length) return "СНАРЯЖЕНИЕ ПО КЛАССАМ · В РОТАЦИИ";
+  return `${ov.tier ? `ЭТАП ${ov.tier.label}` : "ВСЕ ЭТАПЫ"} · ${opsWeekLabel(ov.week)}`;
+}
+
+function opsDashBody(ov) {
+  if (!ov || !ov.classes || !ov.classes.length)
+    return `<div class="empty-sm">НАКАПЛИВАЕМ ЗАБЕГИ ОПЕРАЦИЙ — МЕТА ПОЯВИТСЯ, КАК СОБЕРЁТСЯ ВЫБОРКА.</div>`;
+  // все классы брони — стопкой (места на карточке хватает, ротация не нужна)
+  const panels = ov.classes.map((c) => {
+    const a = (c.armors || [])[0];
+    const weaps = (c.weapons || []).slice(0, 2).map((w) => opsGear(w.gear, w.avg_lvl)).join("");
+    return `<div class="odp">
+      <div class="odp-cls"><span class="odp-cls-n">${escapeHtml(opsClassName(c.armor_class))}</span>
+        <span class="odp-cls-s">${c.sessions} ЗАБ.</span></div>
+      <div class="odp-row"><span class="odp-k">БРОНЯ</span>${a ? opsGear(a.gear, a.avg_lvl) : "—"}</div>
+      <div class="odp-row"><span class="odp-k">ОРУЖИЕ</span><span class="odp-weaps">${weaps || "—"}</span></div>
+    </div>`;
+  }).join("");
+  return `<div class="ops-dash">${panels}</div>`;
+}
+
+// ===== страница /operations =====
+const opsState = { tier: "high", map: "", offset: 0, total: 0, user: "" };
+
+async function openOperations() {
+  home.classList.add("hidden");
+  detail.classList.add("hidden");
+  results.innerHTML = "";
+  page.classList.remove("hidden");
+  page.innerHTML = `<div class="spinner">// ЗАГРУЗКА ОПЕРАЦИЙ</div>`;
+  window.scrollTo(0, 0);
+  opsState.tier = "high"; opsState.map = ""; opsState.user = "";
+  const [meta, feed] = await opsFetch();
+  if (location.pathname !== "/operations") return;
+  opsRenderShell(meta, feed);
+}
+
+function opsFetch() {
+  return Promise.all([
+    fetch(api(`/operations/meta?tier=${opsState.tier}`)).then((r) => r.json()).catch(() => null),
+    fetch(api(`/operations/sessions?tier=${opsState.tier}`
+      + `${opsState.map ? "&map=" + encodeURIComponent(opsState.map) : ""}&limit=30`))
+      .then((r) => r.json()).catch(() => null),
+  ]);
+}
+
+function opsRenderShell(meta, feed) {
+  const tiers = (meta && meta.tiers) || (feed && feed.tiers) || [];
+  const tabs = [`<button class="ops-tab" data-tier="all">ВСЕ</button>`]
+    .concat(tiers.map((t) => `<button class="ops-tab" data-tier="${t.key}">${opsTierName(t)}`
+      + `${t.sessions != null ? `<span class="ops-tab-n">${t.sessions}</span>` : ""}</button>`)).join("");
+  const maps = (feed && feed.maps) || [];
+  const mapOpts = [`<option value="">ВСЕ КАРТЫ</option>`]
+    .concat(maps.map((m) => `<option value="${escapeHtml(m)}">${escapeHtml(opsMapName(m))}</option>`)).join("");
+  page.innerHTML = `<div class="ops">
+    <div class="section-head">
+      <div class="section-title">▸ ОПЕРАЦИИ · МЕТА И СТАТИСТИКА ЗАБЕГОВ</div>
+      <div class="section-note" id="opsNote"></div>
+    </div>
+    <div class="ops-intro">С каким снаряжением и на каком этапе сложности операции проходят
+      быстрее всего — по завершённым забегам игроков (регион RU).</div>
+    <div class="ops-tabs" id="opsTabs">${tabs}</div>
+    <div id="opsMeta"></div>
+    <div class="section-head ops-feed-head">
+      <div class="section-title">▸ ЛЕНТА ЗАБЕГОВ</div>
+      <div class="ops-filters">
+        <input id="opsUser" class="ops-user" type="search" autocomplete="off" placeholder="ПОИСК ПО НИКУ…">
+        <select id="opsMap" class="ops-map">${mapOpts}</select>
+      </div>
+    </div>
+    <div id="opsFeed"></div>
+    <button id="opsMore" class="bt-more hidden">ПОКАЗАТЬ ЕЩЁ</button>
+  </div>`;
+  opsRenderMeta(meta);
+  opsRenderFeed(feed, true);
+  opsSyncTabs();
+  $("opsTabs").querySelectorAll(".ops-tab").forEach((b) => b.addEventListener("click", async () => {
+    opsState.tier = b.dataset.tier; opsState.user = "";
+    const u = $("opsUser"); if (u) u.value = "";
+    opsSyncTabs();
+    const [meta2, feed2] = await opsFetch();
+    if (location.pathname !== "/operations") return;
+    opsRenderMeta(meta2); opsRenderFeed(feed2, true);
+  }));
+  $("opsMap").addEventListener("change", (e) => { opsState.map = e.target.value; opsFeedReload(); });
+  let ut = null;
+  $("opsUser").addEventListener("input", (e) => {
+    clearTimeout(ut); const q = e.target.value.trim();
+    ut = setTimeout(() => { opsState.user = q; opsFeedReload(); }, 350);
+  });
+  $("opsMore").addEventListener("click", opsMore);
+}
+
+function opsSyncTabs() {
+  const tabs = document.getElementById("opsTabs");
+  if (tabs) tabs.querySelectorAll(".ops-tab").forEach((b) =>
+    b.classList.toggle("on", b.dataset.tier === opsState.tier));
+}
+
+function opsCurTierLabel(meta) {
+  if (opsState.tier === "all") return "";
+  const t = ((meta && meta.tiers) || []).find((x) => x.key === opsState.tier);
+  return t ? `${opsTierName(t)} (${t.label})` : "";
+}
+
+function opsRenderMeta(meta) {
+  const box = document.getElementById("opsMeta");
+  const note = document.getElementById("opsNote");
+  if (!box) return;
+  if (!meta) { box.innerHTML = `<div class="empty-sm">МЕТА ВРЕМЕННО НЕДОСТУПНА.</div>`; return; }
+  if (note) note.textContent = `МЕТА ЗА ${opsWeekLabel(meta.week)} · МИН. ВЫБОРКА КОМБО ${meta.min_sample} ЗАБ.`;
+  const tierLabel = opsCurTierLabel(meta);
+  const fast = meta.fastest || [];
+  const fastRows = fast.length ? fast.map((c, i) => `
+    <div class="ops-combo">
+      <span class="ops-combo-r">${i + 1}</span>
+      <div class="ops-combo-g">${opsGear(c.armor, c.armor_lvl)}<span class="ops-plus">+</span>${opsGear(c.weapon, c.prim_lvl)}</div>
+      <span class="ops-combo-t" title="СРЕДНЕЕ ВРЕМЯ ПРОХОЖДЕНИЯ">⏱ ${fmtDur(c.avg_dur)}</span>
+      <span class="ops-combo-u">${c.uses} ЗАБ.</span>
+    </div>`).join("")
+    : `<div class="empty-sm">НА ЭТОМ ЭТАПЕ ПОКА МАЛО ЗАБЕГОВ ДЛЯ РЕЙТИНГА СЕТАПОВ.</div>`;
+  const cls = meta.classes || [];
+  const clsCards = cls.length ? cls.map((c) => {
+    const a = (c.armors || [])[0];
+    const weaps = (c.weapons || []).slice(0, 3).map((w) =>
+      `<div class="ops-cc-row">${opsGear(w.gear, w.avg_lvl)}<span class="ops-cc-u">${w.uses}</span></div>`).join("");
+    return `<div class="ops-cc">
+      <div class="ops-cc-h"><span class="ops-cc-n">${escapeHtml(opsClassName(c.armor_class))}</span>
+        <span class="ops-cc-s">${c.sessions} ЗАБ.</span></div>
+      <div class="ops-cc-k">БРОНЯ</div>
+      <div class="ops-cc-row">${a ? opsGear(a.gear, a.avg_lvl) : "—"}${a ? `<span class="ops-cc-u">${a.uses}</span>` : ""}</div>
+      <div class="ops-cc-k">ОРУЖИЕ</div>
+      ${weaps || `<div class="ops-cc-row">—</div>`}
+    </div>`;
+  }).join("")
+    : `<div class="empty-sm">КЛАССЫ БРОНИ НАБИРАЮТ ВЫБОРКУ.</div>`;
+  box.innerHTML = `
+    <div class="ops-meta-block">
+      <div class="ops-sub">САМЫЕ БЫСТРЫЕ СЕТАПЫ${tierLabel ? ` · ЭТАП ${tierLabel}` : ""}</div>
+      <div class="ops-combos">${fastRows}</div>
+    </div>
+    <div class="ops-meta-block">
+      <div class="ops-sub">МЕТА ПО КЛАССАМ БРОНИ</div>
+      <div class="ops-cc-grid">${clsCards}</div>
+    </div>`;
+}
+
+function opsSessionCard(s) {
+  const col = opsTierColor(s.tier);
+  // ник сверху (+ K/D справа), снаряжение стопкой под ником — кликабельно
+  const parts = (s.parts || []).map((p) => {
+    const stats = [
+      p.mob_kills != null ? `☠ ${p.mob_kills}` : "",
+      p.deaths != null ? `💀 ${p.deaths}` : "",
+    ].filter(Boolean).join(" · ");
+    // только броня + основное оружие (второе — пистолет — не показываем)
+    const gear = [
+      opsGear(p.armor, p.armor_level),
+      opsGear(p.primary, p.prim_level),
+    ].filter(Boolean).join("");
+    return `<div class="ops-part">
+      <div class="ops-part-top">
+        <span class="ops-part-u">${escapeHtml(p.username || "—")}</span>
+        ${stats ? `<span class="ops-part-s">${stats}</span>` : ""}
+      </div>
+      <div class="ops-part-gear">${gear}</div>
+    </div>`;
+  }).join("");
+  return `<div class="ops-sess">
+    <div class="ops-sess-h">
+      <span class="ops-diff" style="color:${col};border-color:${col}">СЛ ${s.difficulty}</span>
+      <span class="ops-map">${escapeHtml(opsMapName(s.map))}</span>
+      <span class="ops-dur" title="ВРЕМЯ ПРОХОЖДЕНИЯ">⏱ ${fmtDur(s.duration)}</span>
+      ${s.reward != null ? `<span class="ops-rew" title="НАГРАДА ЗА СЛОЖНОСТЬ">🏅 ${fmt(s.reward)}</span>` : ""}
+      <span class="ops-when">${s.end_time ? fmtMsk(s.end_time) : ""}</span>
+    </div>
+    <div class="ops-parts">${parts}</div>
+  </div>`;
+}
+
+async function opsFeedReload() {
+  const box = document.getElementById("opsFeed");
+  if (box) box.innerHTML = `<div class="spinner-sm">// ЗАГРУЗКА</div>`;
+  let feed;
+  if (opsState.user) {
+    const d = await fetch(api(`/operations/player/${encodeURIComponent(opsState.user)}`))
+      .then((r) => r.json()).catch(() => null);
+    feed = d ? { items: d.items, total: d.count, player: opsState.user } : null;
+  } else {
+    feed = await fetch(api(`/operations/sessions?tier=${opsState.tier}`
+      + `${opsState.map ? "&map=" + encodeURIComponent(opsState.map) : ""}&limit=30`))
+      .then((r) => r.json()).catch(() => null);
+  }
+  if (location.pathname !== "/operations") return;
+  opsRenderFeed(feed, true);
+}
+
+function opsRenderFeed(feed, reset) {
+  const box = document.getElementById("opsFeed");
+  if (!box) return;
+  const items = (feed && feed.items) || [];
+  if (reset) { box.innerHTML = ""; opsState.offset = 0; opsState.total = feed ? (feed.total || items.length) : 0; }
+  const more = document.getElementById("opsMore");
+  if (!items.length && reset) {
+    box.innerHTML = feed && feed.player
+      ? `<div class="empty-sm">У ИГРОКА «${escapeHtml(feed.player)}» ЗАБЕГОВ НЕ НАЙДЕНО (ИЛИ ЕЩЁ НЕ ПОПАЛИ В ВЫБОРКУ).</div>`
+      : `<div class="empty-sm">ЗАБЕГИ ЕЩЁ НАКАПЛИВАЮТСЯ. ДАННЫЕ ИДУТ ПО ЗАВЕРШЁННЫМ СЕССИЯМ ОПЕРАЦИЙ — ЗАГЛЯНИ ПОЗЖЕ.</div>`;
+    if (more) more.classList.add("hidden");
+    return;
+  }
+  box.insertAdjacentHTML("beforeend", items.map(opsSessionCard).join(""));
+  opsState.offset += items.length;
+  if (more) more.classList.toggle("hidden", !!opsState.user || opsState.offset >= opsState.total);
+}
+
+async function opsMore() {
+  const feed = await fetch(api(`/operations/sessions?tier=${opsState.tier}`
+    + `${opsState.map ? "&map=" + encodeURIComponent(opsState.map) : ""}&limit=30&offset=${opsState.offset}`))
+    .then((r) => r.json()).catch(() => null);
+  if (location.pathname !== "/operations") return;
+  opsRenderFeed(feed, false);
+}
+
+// ---------- База предметов: каталог всех предметов ----------
+const IDB_CATS = [
+  { key: "", label: "ВСЕ" }, { key: "weapon", label: "ОРУЖИЕ" },
+  { key: "armor", label: "БРОНЯ" }, { key: "container", label: "КОНТЕЙНЕРЫ" },
+  { key: "artefact", label: "АРТЕФАКТЫ" }, { key: "attachment", label: "ОБВЕСЫ" },
+  { key: "bullet", label: "ПАТРОНЫ" }, { key: "medicine", label: "МЕДИЦИНА" },
+  { key: "grenade", label: "ГРАНАТЫ" }, { key: "misc", label: "ПРОЧЕЕ" },
+];
+const IDB_CAT_RU = {
+  weapon: "Оружие", armor: "Броня", containers: "Контейнер", backpacks: "Рюкзак",
+  artefact: "Артефакт", attachment: "Обвес", weapon_modules: "Модуль",
+  bullet: "Патроны", medicine: "Медицина", grenade: "Граната", supply: "Припасы",
+  device: "Устройство", misc: "Прочее", other: "Прочее",
+};
+const idbState = { cat: "", q: "", offset: 0, total: 0 };
+
+async function openItemDb() {
+  home.classList.add("hidden"); detail.classList.add("hidden");
+  results.innerHTML = "";
+  page.classList.remove("hidden");
+  window.scrollTo(0, 0);
+  const sp = new URLSearchParams(location.search);
+  idbState.cat = sp.get("cat") || "";
+  idbState.q = sp.get("q") || "";
+  idbState.offset = 0;
+  const chips = IDB_CATS.map((c) =>
+    `<button class="idb-chip" data-cat="${c.key}">${c.label}</button>`).join("");
+  page.innerHTML = `<div class="idb">
+    <div class="section-head">
+      <div class="section-title">▸ БАЗА ПРЕДМЕТОВ</div>
+      <div class="section-note" id="idbNote"></div>
+    </div>
+    <div class="idb-search"><span class="idb-prompt">&gt;_</span>
+      <input id="idbInput" type="search" autocomplete="off" placeholder="ПОИСК ПРЕДМЕТА…" value="${escapeHtml(idbState.q)}"></div>
+    <div class="idb-chips" id="idbChips">${chips}</div>
+    <div id="idbGrid" class="idb-grid"></div>
+    <button id="idbMore" class="bt-more hidden">ПОКАЗАТЬ ЕЩЁ</button>
+  </div>`;
+  idbSyncChips();
+  $("idbChips").querySelectorAll(".idb-chip").forEach((b) => b.addEventListener("click", () => {
+    idbState.cat = b.dataset.cat; idbSyncChips(); idbReload();
+  }));
+  let t = null;
+  $("idbInput").addEventListener("input", (e) => {
+    clearTimeout(t); const q = e.target.value.trim();
+    t = setTimeout(() => { idbState.q = q; idbReload(); }, 300);
+  });
+  $("idbMore").addEventListener("click", idbMore);
+  idbReload();
+}
+
+function idbSyncChips() {
+  const box = document.getElementById("idbChips");
+  if (box) box.querySelectorAll(".idb-chip").forEach((b) =>
+    b.classList.toggle("on", b.dataset.cat === idbState.cat));
+}
+
+function idbUrl() {
+  return api(`/items?cat=${encodeURIComponent(idbState.cat)}`
+    + `&q=${encodeURIComponent(idbState.q)}&limit=60&offset=${idbState.offset}`);
+}
+
+async function idbReload() {
+  idbState.offset = 0;
+  const grid = $("idbGrid");
+  if (grid) grid.innerHTML = `<div class="spinner-sm">// ЗАГРУЗКА</div>`;
+  const d = await fetch(idbUrl()).then((r) => r.json()).catch(() => null);
+  if (location.pathname !== "/items") return;
+  if (grid) grid.innerHTML = "";
+  idbRender(d, true);
+}
+
+async function idbMore() {
+  const d = await fetch(idbUrl()).then((r) => r.json()).catch(() => null);
+  if (location.pathname !== "/items") return;
+  idbRender(d, false);
+}
+
+function idbCard(it) {
+  const rk = rank(it.color);
+  return `<a class="idb-card" href="/item/${encodeURIComponent(it.id)}" style="--rar:${rk.color}">
+    <div class="idb-ic"><img loading="lazy" src="${asset(it.icon)}" alt=""></div>
+    <div class="idb-nm" style="color:${rk.color}">${escapeHtml(it.name)}</div>
+    <div class="idb-cat">${escapeHtml(IDB_CAT_RU[it.category] || it.category || "")}</div>
+  </a>`;
+}
+
+function idbRender(d, reset) {
+  const grid = $("idbGrid");
+  if (!grid || !d) return;
+  const items = d.items || [];
+  if (reset) idbState.total = d.total || 0;
+  const more = $("idbMore");
+  if (!items.length && reset) {
+    grid.innerHTML = `<div class="empty-sm">НИЧЕГО НЕ НАЙДЕНО.</div>`;
+    if (more) more.classList.add("hidden");
+    const note = $("idbNote"); if (note) note.textContent = "";
+    return;
+  }
+  grid.insertAdjacentHTML("beforeend", items.map(idbCard).join(""));
+  idbState.offset += items.length;
+  const note = $("idbNote");
+  if (note) note.textContent = `${idbState.total} ПРЕДМЕТОВ${idbState.q ? ` · «${idbState.q}»` : ""}`;
+  if (more) more.classList.toggle("hidden", idbState.offset >= idbState.total);
+}
+
 // ---------- разделы в разработке: заглушки с описанием модуля ----------
 const PAGES = {};
 
@@ -5230,6 +7409,29 @@ function openPage(key) {
   window.scrollTo(0, 0);
 }
 
+// ---------- юридические страницы (Политика / Соглашение) ----------
+// Текст лежит статикой в /legal/*.html — правится без пересборки app.js.
+const _legalCache = {};
+async function openLegal(kind) {
+  home.classList.add("hidden");
+  detail.classList.add("hidden");
+  results.innerHTML = "";
+  page.classList.remove("hidden");
+  page.innerHTML = '<div class="legal legal-loading">Загрузка…</div>';
+  window.scrollTo(0, 0);
+  try {
+    if (!_legalCache[kind]) {
+      const r = await fetch(`${BASE}/legal/${kind}.html`, { cache: "no-cache" });
+      if (!r.ok) throw new Error(String(r.status));
+      _legalCache[kind] = await r.text();
+    }
+    page.innerHTML = _legalCache[kind];
+  } catch (e) {
+    page.innerHTML = '<div class="legal"><a class="legal-back" href="/">◂ НА ГЛАВНУЮ</a>'
+      + '<p>Не удалось загрузить документ. Попробуйте обновить страницу.</p></div>';
+  }
+}
+
 // ---------- роутер на реальных путях ----------
 // Старые #hash-ссылки (item=/q=/auction/artm=/builds/profile/map/guides) —
 // разово переводим в новый путь при загрузке (шаринг в комьюнити не ломается).
@@ -5250,9 +7452,15 @@ function migrateLegacyHash() {
 }
 
 function route() {
+  ymHit();          // SPA-переход = просмотр страницы для Метрики
   renderOnboard();  // подсказка прячется на профиле, заглушках и в других разделах
   gModalClose();    // навигация закрывает модалы разделов
   const path = location.pathname;
+  // серверный SEO-блок виден только на своём роуте: SPA-навигация его прячет,
+  // чтобы чужой текст не «залипал» при переходах (краулер грузит каждый URL заново)
+  mkModalClose();   // навигация закрывает карточку аука (в т.ч. созданную вне /market)
+  const seoProse = document.getElementById("seoProse");
+  if (seoProse) seoProse.hidden = seoProse.dataset.seoPath !== path;
   const strip = document.querySelector(".search-strip");
   let mm;
 
@@ -5262,6 +7470,7 @@ function route() {
   document.documentElement.classList.remove("map-drawing");
 
   if (mapCleanup && !onMap) { mapCleanup(); mapCleanup = null; }
+  if (scanState && path !== "/dev/scan") scanClose();   // ушли со сканера — гасим WS
   if (path === "/dev") { navigate("/dev/map", { replace: true }); return; }
   if (path === "/dev/map") {
     strip.classList.add("hidden");
@@ -5283,11 +7492,29 @@ function route() {
     strip.classList.add("hidden");
     setNav("dev"); openDevPromos(); return;
   }
+  if (path === "/dev/craft") {
+    strip.classList.add("hidden");
+    setNav("dev"); openDevCraft(); return;
+  }
+  if (path === "/dev/scan") {
+    strip.classList.add("hidden");
+    setNav("dev"); openDevScan(); return;
+  }
   if ((mm = path.match(/^\/map(?:\/([a-z0-9_-]+))?$/))) {
     strip.classList.add("hidden");
     setNav("map"); openMap(mm[1] || null); return;
   }
 
+  if (path === "/items") {
+    strip.classList.add("hidden"); detail.classList.add("hidden");
+    setNav("itemdb"); openItemDb(); return;
+  }
+  // отдельная страница предмета — в разделе «База предметов»
+  if ((mm = path.match(/^\/item\/(.+)$/))) {
+    strip.classList.add("hidden"); page.classList.add("hidden");
+    home.classList.add("hidden"); results.innerHTML = "";
+    setNav("itemdb"); openItem(decodeURIComponent(mm[1])); return;
+  }
   if (path === "/market") {
     strip.classList.add("hidden");
     setNav("market"); openMarket(); return;
@@ -5336,6 +7563,14 @@ function route() {
     strip.classList.add("hidden"); page.classList.add("hidden");
     setNav("builds"); openBuilds(); return;
   }
+  if (path === "/operations") {
+    strip.classList.add("hidden"); detail.classList.add("hidden");
+    setNav("operations"); openOperations(); return;
+  }
+  if (path === "/privacy" || path === "/terms") {
+    strip.classList.add("hidden");
+    setNav(""); openLegal(path === "/privacy" ? "privacy" : "terms"); return;
+  }
   if (PAGES[path.slice(1)]) {
     strip.classList.add("hidden"); page.classList.add("hidden");
     setNav(path.slice(1)); openPage(path.slice(1)); return;
@@ -5355,7 +7590,6 @@ function route() {
   page.classList.add("hidden");
   setNav("craft");
   if (path === "/profile") { openProfile(); return; }
-  if ((mm = path.match(/^\/item\/(.+)$/))) { openItem(decodeURIComponent(mm[1])); return; }
   if (path === "/search") {
     const q = new URLSearchParams(location.search).get("q") || "";
     input.value = q; lastQuery = ""; doSearch(); return;
@@ -5379,6 +7613,25 @@ document.addEventListener("click", (e) => {
   e.preventDefault();
   navigate(href);
 });
+
+// ---------- cookie-баннер (152-ФЗ: информирование об использовании cookie) ----------
+(function cookieBanner() {
+  try { if (localStorage.getItem("sz_cookie_ok") === "1") return; } catch (e) { return; }
+  const bar = document.createElement("div");
+  bar.className = "cookie-bar";
+  bar.setAttribute("role", "region");
+  bar.setAttribute("aria-label", "Уведомление о cookie");
+  bar.innerHTML = `<span class="cookie-txt">Мы используем файлы cookie и сервис
+    Яндекс.Метрика для работы сайта и аналитики. Продолжая пользоваться сайтом, вы
+    соглашаетесь с этим и принимаете
+    <a href="/privacy">Политику конфиденциальности</a>.</span>
+    <button class="cookie-ok" type="button">ПРИНЯТЬ</button>`;
+  bar.querySelector(".cookie-ok").addEventListener("click", () => {
+    try { localStorage.setItem("sz_cookie_ok", "1"); } catch (e) { /* приватный режим */ }
+    bar.remove();
+  });
+  document.body.appendChild(bar);
+})();
 
 window.addEventListener("popstate", route);
 migrateLegacyHash();

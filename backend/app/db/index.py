@@ -21,11 +21,67 @@ def _id_from_path(p: str) -> str:
     return Path(p).stem
 
 
+# --- характеристики предмета (тултип) для игровой карточки ---
+# элементы без переведённого имени в базе подписываем вручную
+_CHAR_KEY_NAMES = {
+    "core.tooltip.info.rank": "Ранг",
+    "core.tooltip.info.category": "Класс",
+    "weapon.tooltip.weapon.info.ammo_type": "Тип боеприпасов",
+}
+# единицы измерения по ключу стата (как в игровом интерфейсе)
+_CHAR_UNITS = {
+    "core.tooltip.info.weight": "кг",
+    "core.tooltip.info.durability": "%",
+    "core.tooltip.info.max_durability": "%",
+    "stalker.artefact_properties.factor.speed_modifier": "%",
+    "core.tooltip.stat_name.damage_type.direct": "ед",
+    "weapon.tooltip.weapon.info.distance": "м",
+    "weapon.tooltip.weapon.info.rate_of_fire": "выстр/мин",
+    "weapon.tooltip.magazine.info.reload_time": "с",
+    "weapon.tooltip.magazine.info.reload_time_tactical": "с",
+    "weapon.stat_factor.reload_modifier": "%",
+    "weapon.tooltip.weapon.info.spread": "°",
+    "weapon.tooltip.weapon.info.hip_spread": "°",
+    "weapon.tooltip.weapon.info.draw_time": "с",
+    "weapon.tooltip.weapon.info.aim_switch": "с",
+}
+
+
+def _fmt_num(v) -> str | None:
+    """Число тултипа → строка без хвостовых нулей, с десятичной запятой как в игре
+    (33.9→«33,9», 100.0→«100», -1.9999981→«-2», 0.42000008→«0,42»)."""
+    if v is None:
+        return None
+    r = round(float(v), 2)
+    s = str(int(r)) if r == int(r) else f"{r:g}"
+    return s.replace(".", ",")
+
+
 def _is_weapon_part(name: str) -> bool:
     """Оружейная «часть»: «Часть … #N» или «Часть схемы: …» (решение юзера —
     такие бартеры (сборка оружия из частей) в разделе не нужны)."""
     nm = (name or "").strip()
     return nm.startswith("Часть схемы") or (nm.startswith("Часть ") and "#" in nm)
+
+
+_CURRENCY_WORDS = ("жетон", "талон", "расписк")
+
+
+def _is_activity_currency(name: str, rel_path: str) -> bool:
+    """Валюта активности: жетоны/талоны/расписки за бои, репутацию и квесты.
+
+    Их зарабатывают, а не покупают, поэтому рублёвая цена с аукциона для них —
+    ложь. «Боевой жетон» там реально стоит 4 000 ₽/шт, и вход «1000 жетонов»
+    превращал себестоимость бартера в 4 млн ₽ (Аномальная сыворотка → Берлога-6,
+    85% посчитанной цены). Такие входы — фарм, цены у них нет.
+
+    Только items/other: одноимённые аксессуары («Золотой жетон сталкера») —
+    настоящие предметы аукциона, их цена честная.
+    """
+    if not rel_path.startswith("items/other/"):
+        return False
+    nm = (name or "").lower()
+    return any(w in nm for w in _CURRENCY_WORDS)
 
 
 class GameDB:
@@ -40,15 +96,18 @@ class GameDB:
         self.barter_by_result: dict[str, list] = {}  # id результата -> [бартеры поселений]
         self.barter_used_in: dict[str, list[str]] = {}  # id входа -> [id результатов бартера]
         self.barter_settlements: dict[str, str] = {}    # ключ поселения -> имя (ru)
+        self.farm_currency: set[str] = set()      # валюты активности (жетоны/талоны): цены с аука не берём
         self.disassembly: dict[str, dict] = {}    # id входа -> {parent, count}: разбор родителя с аука
         self.artefacts: dict[str, dict] = {}      # id -> {class, weight, stats{key: {name,min,max,harmful}}}
         self.artefact_stat_names: dict[str, dict] = {}  # stat_key -> {name, harmful} (справочник)
-        self.containers: dict[str, dict] = {}     # id -> {name, icon, color, rank, slots, efficiency, protection, weight}
+        self.containers: dict[str, dict] = {}     # id -> {name, icon, color, kind, rank, slots, efficiency, protection, weight, self_stats}
+        self.backpacks: dict[str, dict] = {}      # то же, что контейнеры (рюкзаки со слотами под арты)
         self.armor: dict[str, dict] = {}          # id -> {name, icon, color, class, weight, bullet0, vit0, rel}
         self._armor_lvl: dict[tuple, dict] = {}   # (id, ptn) -> {bullet, vitality} (ленивый кэш заточки)
         self._search: list[tuple[str, str]] = []  # (id, "имя_ru имя_en" в нижнем регистре)
         self._data_path: dict[str, str] = {}      # id -> относительный путь к json предмета
         self._desc_cache: dict[str, str | None] = {}
+        self._char_cache: dict[str, list] = {}    # характеристики предмета (тултип)
         self._energy_cache: dict[str, float | None] = {}  # номинал топлива (core.tooltip.energy)
 
     # ---------- загрузка ----------
@@ -59,13 +118,18 @@ class GameDB:
         self._load_disassembly()
         self._build_used_in()
         self._load_equipment()
+        self.farm_currency = {
+            iid for iid, it in self.items.items()
+            if _is_activity_currency(it.get("name", ""), self._data_path.get(iid, ""))}
+        logger.info("farm currency (цены с аука не берём): %s",
+                    ", ".join(sorted(self.items[i]["name"] for i in self.farm_currency)))
         logger.info(
             "GameDB loaded: %d items, %d craft results, %d barter results, "
-            "%d used-in entries, %d artefacts with stats, %d containers, %d armor, "
-            "%d disassembly maps",
+            "%d used-in entries, %d artefacts with stats, %d containers, %d backpacks, "
+            "%d armor, %d disassembly maps",
             len(self.items), len(self.recipe_by_result), len(self.barter_by_result),
-            len(self.used_in), len(self.artefacts), len(self.containers), len(self.armor),
-            len(self.disassembly),
+            len(self.used_in), len(self.artefacts), len(self.containers),
+            len(self.backpacks), len(self.armor), len(self.disassembly),
         )
 
     def _read(self, name: str):
@@ -115,7 +179,11 @@ class GameDB:
                 "requirements": rc.get("requirements") or {},
             }
             for res in recipe["result"]:
-                self.recipe_by_result.setdefault(res["item"], []).append(recipe)
+                lst = self.recipe_by_result.setdefault(res["item"], [])
+                # ключ для ручного тюнинга (/dev/craft): результат + № варианта;
+                # у рецепта с несколькими результатами ключ по первому — first wins
+                recipe.setdefault("key", f"{res['item']}:{len(lst)}")
+                lst.append(recipe)
         self.hideout_features = sorted(feats)
         # станок относим к столу, на чьих рецептах он чаще всего требуется; нужно для
         # группировки в профиле (при равенстве — кухня > лаборатория > верстак:
@@ -236,11 +304,48 @@ class GameDB:
             for el in (block.get("elements") or []):
                 yield el
 
+    def _parse_storage(self, iid: str, doc: dict, kind: str) -> dict | None:
+        """Хранилище под арты (контейнер/рюкзак): слоты (size), эффективность,
+        внутр. защита, вес, ранг — плюс СОБСТВЕННЫЕ статы предмета (пулестойкость,
+        переносимый вес, эфф. лечения, защита/эмиссия заражения…): в игре они входят
+        в сборку так же, как статы артефактов. Вредный стат — по красному nameColor.
+        None — у предмета нет слотов под арты (сумки без размера не берём)."""
+        fields = {"rank": "", "slots": None, "efficiency": None,
+                  "protection": None, "weight": None}
+        keymap = {
+            "core.tooltip.info.weight": "weight",
+            "stalker.tooltip.backpack.stat_name.inner_protection": "protection",
+            "stalker.tooltip.backpack.stat_name.effectiveness": "efficiency",
+            "stalker.tooltip.backpack.info.size": "slots",
+        }
+        self_stats = []
+        for el in self._elements(doc):
+            key = ((el.get("name") or el.get("key") or {}).get("key")) or ""
+            if el.get("type") == "numeric" and key in keymap:
+                fields[keymap[key]] = el.get("value")
+            elif el.get("type") == "key-value" and key == "core.tooltip.info.rank":
+                fields["rank"] = _tr(el.get("value"))
+            elif (el.get("type") == "numeric"
+                  and key.startswith("stalker.artefact_properties.factor.")):
+                color = ((el.get("formatted") or {}).get("nameColor") or "").upper()
+                self_stats.append({"key": key, "name": _tr(el.get("name")) or key,
+                                   "val": el.get("value"), "harmful": color.startswith("C1")})
+        if not fields["slots"]:
+            return None
+        it = self.items.get(iid, {})
+        return {"id": iid, "name": it.get("name", iid), "icon": it.get("icon", ""),
+                "color": it.get("color", "DEFAULT"), "kind": kind,
+                **fields, "slots": int(fields["slots"]), "self_stats": self_stats}
+
+    def storage(self, sid: str) -> dict | None:
+        """Хранилище сборки по id — контейнер или рюкзак (в калькуляторе равноправны)."""
+        return self.containers.get(sid) or self.backpacks.get(sid)
+
     def _load_equipment(self) -> None:
         """Артефакты: окно статов ОБЫЧНОГО качества из базового json (диапазон =
         M∈[0.85; 1.0] от Q0-max; тиры выше — сдвиг M, формулы в services/builds).
         Вредные статы определяются по красному nameColor и не масштабируются.
-        Контейнеры: слоты/эффективность/защита/вес по translation-ключам."""
+        Контейнеры/рюкзаки: слоты/эффективность/защита/вес + собственные статы."""
         for iid, rel in self._data_path.items():
             if rel.startswith("items/artefact/"):
                 doc = self._item_json(iid)
@@ -268,28 +373,14 @@ class GameDB:
                     self.artefacts[iid] = art
             elif rel.startswith("items/containers/"):
                 doc = self._item_json(iid)
-                if not doc:
-                    continue
-                cont = {"rank": "", "slots": None, "efficiency": None,
-                        "protection": None, "weight": None}
-                keymap = {
-                    "core.tooltip.info.weight": "weight",
-                    "stalker.tooltip.backpack.stat_name.inner_protection": "protection",
-                    "stalker.tooltip.backpack.stat_name.effectiveness": "efficiency",
-                    "stalker.tooltip.backpack.info.size": "slots",
-                }
-                for el in self._elements(doc):
-                    key = ((el.get("name") or el.get("key") or {}).get("key")) or ""
-                    if el.get("type") == "numeric" and key in keymap:
-                        cont[keymap[key]] = el.get("value")
-                    elif el.get("type") == "key-value" and key == "core.tooltip.info.rank":
-                        cont["rank"] = _tr(el.get("value"))
-                if cont["slots"]:
-                    it = self.items.get(iid, {})
-                    self.containers[iid] = {"id": iid, "name": it.get("name", iid),
-                                            "icon": it.get("icon", ""),
-                                            "color": it.get("color", "DEFAULT"), **cont,
-                                            "slots": int(cont["slots"])}
+                st = self._parse_storage(iid, doc, "container") if doc else None
+                if st:
+                    self.containers[iid] = st
+            elif rel.startswith("items/backpacks/"):
+                doc = self._item_json(iid)
+                st = self._parse_storage(iid, doc, "backpack") if doc else None
+                if st:
+                    self.backpacks[iid] = st
             elif rel.startswith("items/armor/"):
                 doc = self._item_json(iid)
                 if not doc:
@@ -370,6 +461,19 @@ class GameDB:
     def item(self, item_id: str) -> dict | None:
         return self.items.get(item_id)
 
+    def category(self, item_id: str) -> str:
+        """Категория предмета по пути данных: 'items/armor/x.json' → 'armor'.
+        Известные: artefact, weapon, armor, attachment, bullet, misc, supply,
+        containers, backpacks, grenade, medicine, other. Пусто — предмет вне базы."""
+        rel = self._data_path.get(item_id) or ""
+        parts = rel.split("/")
+        return parts[1] if len(parts) > 2 else ""
+
+    def category_ids(self, *cats: str) -> list[str]:
+        """Все предметы перечисленных категорий (см. category)."""
+        want = set(cats)
+        return sorted(i for i in self._data_path if self.category(i) in want)
+
     def description(self, item_id: str) -> str | None:
         """Игровое описание предмета из его json-файла (лениво, с кэшем)."""
         if item_id in self._desc_cache:
@@ -388,6 +492,42 @@ class GameDB:
                 logger.exception("failed to read item description for %s", item_id)
         self._desc_cache[item_id] = desc
         return desc
+
+    def characteristics(self, item_id: str) -> list[dict]:
+        """Характеристики предмета из тултипа игрового json (порядок сохранён) для
+        игровой карточки: [{name, value, unit, harmful, group}]. group='info' —
+        шапка (ранг/класс/вес/прочность), 'stat' — боевые статы (урон, защиты,
+        скорострельность…). Минусы — harmful. С кэшем: json читаем один раз."""
+        if item_id in self._char_cache:
+            return self._char_cache[item_id]
+        out: list[dict] = []
+        doc = self._item_json(item_id)
+        if doc:
+            for el in self._elements(doc):
+                key = ((el.get("name") or el.get("key") or {}).get("key")) or ""
+                t = el.get("type")
+                name = _tr(el.get("name")) or _CHAR_KEY_NAMES.get(key, "")
+                if not name:
+                    continue
+                if t == "numeric":
+                    val = _fmt_num(el.get("value"))
+                elif t == "range" and el.get("min") is not None:
+                    val = f"{_fmt_num(el.get('min'))}–{_fmt_num(el.get('max'))}"
+                elif t == "key-value":
+                    val = _tr(el.get("value"))
+                else:
+                    continue
+                if val in (None, ""):
+                    continue
+                color = ((el.get("formatted") or {}).get("nameColor") or "").upper()
+                out.append({
+                    "name": name, "value": val, "unit": _CHAR_UNITS.get(key, ""),
+                    "harmful": color.startswith("C1"),
+                    "group": "info" if key.startswith("core.tooltip.info.") else "stat",
+                    "rank": key == "core.tooltip.info.rank",
+                })
+        self._char_cache[item_id] = out
+        return out
 
     def energy_value(self, item_id: str) -> float | None:
         """Сколько энергии даёт предмет в генераторе (core.tooltip.energy), с кэшем."""
@@ -417,8 +557,9 @@ class GameDB:
         return [self.items[i] for _, i in out[:limit]]
 
     def recipes_for(self, item_id: str) -> list[dict]:
-        """Все рецепты верстака, дающие предмет."""
-        return self.recipe_by_result.get(item_id, [])
+        """Все рецепты верстака, дающие предмет (с правками админа из /dev/craft)."""
+        from app.db import craft_tuning   # локально: избежать цикла при загрузке
+        return [craft_tuning.apply(r) for r in self.recipe_by_result.get(item_id, [])]
 
     def artefact_ids(self) -> list[str]:
         """Все артефакты (по пути данных items/artefact/**) — для биржи артефактов."""

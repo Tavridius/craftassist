@@ -8,12 +8,40 @@
 
 Перебирает все варианты рецепта (дешёвый — выбранный, остальные — альтернативы),
 мемоизирует общие поддеревья, рвёт циклы, обрезается по глубине.
+
+С профилем убежища (авторизованный, прокачка заполнена) дерево персональное:
+- вариант, на который не хватает навыков/станков, не выбирается как «крафт»
+  НИГДЕ в дереве (компонент уходит в закупку с пометкой craft_locked);
+- бонусный крафт: 75% за каждый уровень навыка сверх требуемого рецептом
+  (форум EXBO, тред 144626: каждые полные 100% — гарантированная доп. партия
+  результата, остаток — шанс ещё одной; кап шкалы в игре 500%). В себестоимости
+  учитываем матожидание выхода. Применяется ТОЛЬКО к рецептам, у которых админ
+  подтвердил наличие шкалы в /dev/craft (bonus_ok=1 из craft_tuning).
 """
 import math
 
 from app import config
 from app.db.index import db
+from app.services import hideout
 from app.services.price_store import store
+
+BONUS_PER_LEVEL = 75    # % бонусного крафта за уровень навыка сверх требуемого
+BONUS_CAP = 500         # потолок шкалы бонусного крафта в игре
+
+
+def _bonus(recipe: dict, perks: dict):
+    """Матожидание бонусного крафта варианта для прокачки perks (или None)."""
+    if recipe.get("bonus_ok") != 1:
+        return None
+    req = (recipe.get("requirements") or {}).get("perks") or {}
+    if not req:
+        return None
+    diff = min(perks.get(k, 0) - lvl for k, lvl in req.items())
+    if diff <= 0:
+        return None
+    pct = min(BONUS_CAP, BONUS_PER_LEVEL * diff)
+    return {"levels": diff, "pct": pct, "guaranteed": pct // 100,
+            "chance_pct": pct % 100, "mult": 1 + pct / 100}
 
 
 def unit_buy_price(item_id: str, needed: int = 1):
@@ -28,7 +56,7 @@ def unit_buy_price(item_id: str, needed: int = 1):
         return p.get("min_buyout")
     target = max(1, needed) * 3
     got, cost = 0, 0.0
-    for unit, amount in depth:
+    for unit, amount, *_ in depth:   # хвост записи — качество/заточка (нужны сканеру)
         take = min(amount, target - got)
         cost += take * unit
         got += take
@@ -91,10 +119,17 @@ def _price(item_id: str, path: tuple, ctx: dict, depth: int, expand: bool,
 
     child_path = path + (item_id,)
     fuel_rate = ctx.get("fuel_rate")   # ₽ за 1 ед. энергии; None = топливо не учитываем
+    gate = ctx.get("gate")             # профиль задан → сверяем требования по всему дереву
+    perks = ctx.get("perks") or {}
+    feats = ctx.get("feats") or set()
     evaluated = []
     for idx, r in enumerate(variants):
+        req = r.get("requirements") or {}
+        req_ok = hideout.variant_ok(req, perks, feats) if gate else None
+        bonus = _bonus(r, perks) if gate and req_ok else None
+        mult = bonus["mult"] if bonus else 1.0     # матожидание выхода с бонусом
         ramount = _result_amount(r, item_id)
-        ops = max(1, math.ceil(needed / ramount))   # сколько крафт-операций нужно
+        ops = max(1, math.ceil(needed / (ramount * mult)))   # сколько крафт-операций нужно
         ings, total, known = [], 0.0, True
         for ing in r.get("ingredients", []):
             cid, amt = ing["item"], ing.get("amount", 1)
@@ -112,20 +147,32 @@ def _price(item_id: str, path: tuple, ctx: dict, depth: int, expand: bool,
         # топливо: энергия операции × цена энергии — входит в себестоимость,
         # поэтому выбор «крафт vs аук» учитывает его на всех уровнях дерева
         fuel_cost = round((r.get("energy") or 0) * fuel_rate) if fuel_rate else None
-        recipe_cost = round((total + (fuel_cost or 0)) / ramount) if known else None
+        recipe_cost = round((total + (fuel_cost or 0)) / (ramount * mult)) if known else None
         evaluated.append((
             recipe_cost if recipe_cost is not None else float("inf"),
             known,
             {"variant": idx + 1, "category": r.get("category"),
              "subcategory": r.get("subcategory"), "bench": r.get("bench"),
              "result_amount": ramount, "energy": r.get("energy"), "fuel_cost": fuel_cost,
-             "requirements": r.get("requirements") or {},
+             "requirements": req, "req_ok": req_ok, "bonus": bonus,
              "recipe_cost": recipe_cost, "cost_known": known, "ingredients": ings},
         ))
 
     evaluated.sort(key=lambda e: e[0])
-    known_variants = [e for e in evaluated if e[1]]
-    chosen = known_variants[0][2] if known_variants else None
+    usable = [e for e in evaluated if e[1] and e[2]["req_ok"] is not False]
+    chosen = usable[0][2] if usable else None
+    if chosen is None:
+        # прокачки не хватает ни на один вариант: компонент падает в закупку на
+        # ауке; корень и компонент БЕЗ аука показываем по крафту с пометкой
+        # «закрыто» (иначе дерево деградирует в «цена неизвестна»)
+        locked = next((e[2] for e in evaluated if e[1]), None)
+        if locked and (depth == 0 or node["market_price"] is None):
+            chosen = locked
+        elif locked:
+            node["craft_locked"] = True
+            node["locked_cost"] = locked["recipe_cost"]
+    if chosen and chosen.get("req_ok") is False:
+        node["craft_locked"] = True
     node["craft_cost"] = chosen["recipe_cost"] if chosen else None
 
     cands = [c for c in (node["market_price"], node["craft_cost"]) if c is not None]
@@ -153,20 +200,27 @@ def _summ(recipe: dict) -> dict:
     return {
         "variant": recipe["variant"], "recipe_cost": recipe["recipe_cost"],
         "cost_known": recipe["cost_known"], "result_amount": recipe["result_amount"],
+        "req_ok": recipe.get("req_ok"),
         "ingredients": [{"name": i["node"]["name"], "id": i["node"]["id"],
                          "icon": i["node"]["icon"], "amount": i["amount"],
                          "unit_price": i["node"].get("best_cost")} for i in recipe["ingredients"]],
     }
 
 
-def analyze(item_id: str, fuel_src: dict | None = None) -> dict:
+def analyze(item_id: str, fuel_src: dict | None = None,
+            profile: dict | None = None) -> dict:
     """Полный ответ /api/craft: предмет, дерево крафта, цена готового и вердикт.
 
     fuel_src — источник энергии из services/fuel (учёт топлива включён):
     себестоимость каждой крафт-операции в дереве получает +энергия×цена.
+    profile — профиль убежища юзера: требования и бонусный крафт по всему
+    дереву (пустой/None = как гость, без персонализации).
     """
     rate = (fuel_src["price"] / fuel_src["energy"]) if fuel_src else None
-    ctx = {"memo": {}, "seen": set(), "fuel_rate": rate}
+    perks, feats = hideout._norm(profile or {})
+    gate = bool(perks or feats)
+    ctx = {"memo": {}, "seen": set(), "fuel_rate": rate,
+           "gate": gate, "perks": perks, "feats": feats}
     tree = _price(item_id, tuple(), ctx, 0, expand=True)
     store.request(ctx["seen"])  # приоритетно обновить цены встреченных предметов
 
@@ -187,6 +241,9 @@ def analyze(item_id: str, fuel_src: dict | None = None) -> dict:
         "tree": tree,
         "verdict": _verdict(tree, buy_price, craft_cost, item_id),
     }
+    if gate:
+        # прокачка юзера — фронту для сводки требований по всему дереву
+        res["hideout_profile"] = {"perks": perks, "features": sorted(feats)}
     if fuel_src:
         chosen = tree.get("recipe") or {}
         energy = chosen.get("energy")

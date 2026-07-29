@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS promos (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     title       TEXT NOT NULL,
     code        TEXT NOT NULL,
+    url         TEXT NOT NULL DEFAULT '',   -- внешняя ссылка (Steam DLC и т.п.); если есть — вместо копирования кода кнопка «Забрать»
     description TEXT NOT NULL DEFAULT '',
     image       TEXT NOT NULL DEFAULT '',
     expires_at  TEXT NOT NULL DEFAULT '',   -- YYYY-MM-DDTHH:MM МСК; '' = бессрочный
@@ -53,6 +54,10 @@ def init() -> None:
         _conn.row_factory = sqlite3.Row
         _conn.execute("PRAGMA journal_mode=WAL")
         _conn.executescript(_SCHEMA)
+        # миграция старых БД (до появления url): добавить колонку, если её нет
+        cols = {r[1] for r in _conn.execute("PRAGMA table_info(promos)")}
+        if "url" not in cols:
+            _conn.execute("ALTER TABLE promos ADD COLUMN url TEXT NOT NULL DEFAULT ''")
         _conn.commit()
         total = _conn.execute("SELECT COUNT(*) FROM promos").fetchone()[0]
     logger.info("promos: db ready (%d promos)", total)
@@ -64,7 +69,7 @@ def _today() -> str:
 
 def _row(r: sqlite3.Row) -> dict:
     return {
-        "id": r["id"], "title": r["title"], "code": r["code"],
+        "id": r["id"], "title": r["title"], "code": r["code"], "url": r["url"],
         "description": r["description"], "image": r["image"],
         "expires_at": r["expires_at"], "is_ref": bool(r["is_ref"]),
         "created_at": r["created_at"],
@@ -107,20 +112,20 @@ def save(pid: int | None, data: dict) -> dict | None:
         if pid is None:
             cur = _conn.execute(
                 """INSERT INTO promos
-                     (title, code, description, image, expires_at, is_ref,
+                     (title, code, url, description, image, expires_at, is_ref,
                       created_at, updated_at)
-                   VALUES (?,?,?,?,?,?,?,?)""",
-                (data["title"], data["code"], data.get("description", ""),
-                 data.get("image", ""), data.get("expires_at", ""), is_ref,
-                 _today(), time.time()))
+                   VALUES (?,?,?,?,?,?,?,?,?)""",
+                (data["title"], data["code"], data.get("url", ""),
+                 data.get("description", ""), data.get("image", ""),
+                 data.get("expires_at", ""), is_ref, _today(), time.time()))
             pid = cur.lastrowid
         else:
             cur = _conn.execute(
-                """UPDATE promos SET title=?, code=?, description=?, image=?,
+                """UPDATE promos SET title=?, code=?, url=?, description=?, image=?,
                      expires_at=?, is_ref=?, updated_at=? WHERE id=?""",
-                (data["title"], data["code"], data.get("description", ""),
-                 data.get("image", ""), data.get("expires_at", ""), is_ref,
-                 time.time(), pid))
+                (data["title"], data["code"], data.get("url", ""),
+                 data.get("description", ""), data.get("image", ""),
+                 data.get("expires_at", ""), is_ref, time.time(), pid))
             if not cur.rowcount:
                 return None
         if is_ref:

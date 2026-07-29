@@ -122,7 +122,10 @@ class IngredientWatch:
                 delay = None
                 try:
                     slot = self.latest_slot()
-                    if slot != self.last_slot:  # новый или пропущенный слот
+                    # новый/пропущенный слот ИЛИ в конфиг добавили предмет без
+                    # серии — доснимаем текущий слот сразу, не ждём следующего
+                    if slot != self.last_slot or any(
+                            iid not in self.series for iid in config.WATCH_IDS):
                         if not await self._snapshot(client, slot):
                             delay = 600  # данных не было — ретрай через 10 мин
                 except Exception:

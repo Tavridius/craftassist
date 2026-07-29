@@ -11,6 +11,7 @@
 """
 import asyncio
 import logging
+import statistics
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -55,22 +56,46 @@ def bucket_page(prices: list, floor: datetime, raw: dict) -> tuple[datetime | No
         price, amount = e.get("price"), e.get("amount") or 1
         if qlt is None or not price or amount <= 0:
             continue
-        raw.setdefault((int(qlt), int(a.get("ptn") or 0)), []).append(price / amount)
+        ptn = market.ptn_bucket(int(a.get("ptn") or 0))  # котируем +0/+5/+10/+15
+        raw.setdefault((int(qlt), ptn), []).append(price / amount)
     return newest, False
 
 
-def finalize_buckets(raw: dict) -> dict:
-    """Сырые цены корзин {(qlt, ptn): [цена/шт]} → агрегаты {n, sum, min, max},
-    отсекая завышенные выбросы: продажу дороже ART_OUTLIER_FACTOR × (мин. цены
-    корзины в снапшоте) отбрасываем. Так перевод валюты через продажу «за 50
-    цен» не задирает среднюю. Минимум корзины манипулировать нельзя — завышенная
-    сделка его не двигает; при n=1 сравнивать не с чем, точку оставляем как есть.
+def finalize_buckets(raw: dict, refs: dict | None = None) -> dict:
+    """Сырые цены корзин {(qlt, ptn): [цена/шт]} → агрегаты {n, sum, min, max, med}.
+
+    Отсечка выбросов, по приоритету (подробности и замеры — в config.py):
+    1. Есть опора refs[(qlt, ptn)] (устоявшаяся цена корзины по истории) —
+       держим коридор [ref/F, ref×F], F = ART_SPIKE_FACTOR. Это и ловит разовые
+       сделки: привязка к минимуму ТОГО ЖЕ снапшота при n=1 бесполезна, потому
+       что минимум и есть сама выбросовая сделка.
+    2. Опоры нет (первые замеры корзины) — прежний резерв: ART_OUTLIER_FACTOR ×
+       минимум корзины в снапшоте.
+
+    Если вся выборка вне коридора — принимаем как новый уровень цены только при
+    ДВУХ условиях: сделок >= ART_SHIFT_MIN_SALES и отклонение медианы меньше
+    ART_SHIFT_MAX_FACTOR. Иначе корзину за слот НЕ пишем вовсе — честнее «не
+    знаем», чем записать выброс. Одного объёма мало: перевод валюты делают и в
+    4-20 сделок; одного веса слота при чтении тоже мало: у дешёвого артефакта
+    сделка ×1500 сопоставима со всем недельным оборотом.
     """
     out = {}
     for key, units in raw.items():
-        cap = min(units) * config.ART_OUTLIER_FACTOR
-        kept = [u for u in units if u <= cap]  # минимум всегда проходит — kept непуст
-        out[key] = {"n": len(kept), "sum": sum(kept), "min": min(kept), "max": max(kept)}
+        ref = (refs or {}).get(key)
+        if ref and ref > 0:
+            lo, hi = ref / config.ART_SPIKE_FACTOR, ref * config.ART_SPIKE_FACTOR
+            kept = [u for u in units if lo <= u <= hi]
+            if not kept:
+                dev = max(statistics.median(units) / ref, ref / statistics.median(units))
+                if (len(units) < config.ART_SHIFT_MIN_SALES
+                        or dev > config.ART_SHIFT_MAX_FACTOR):
+                    continue                      # выброс, а не сдвиг — слот пропускаем
+                kept = units                      # сдвиг подтверждён объёмом и масштабом
+        else:
+            cap = min(units) * config.ART_OUTLIER_FACTOR
+            kept = [u for u in units if u <= cap]  # минимум всегда проходит — kept непуст
+        out[key] = {"n": len(kept), "sum": sum(kept), "min": min(kept),
+                    "max": max(kept), "med": statistics.median(kept)}
     return out
 
 
@@ -135,7 +160,9 @@ class ArtefactWatch:
             offset += len(prices)
         # у sales_log своя граница sale_ts — страницы передаём одним вызовом
         sales_log.record(iid, all_prices)
-        buckets = finalize_buckets(raw)
+        # опора для отсечки — устоявшаяся цена корзин по истории (не по этому снапшоту)
+        ref_since = self._slot_key(datetime.now(MSK) - timedelta(days=config.ART_REF_DAYS))
+        buckets = finalize_buckets(raw, market.bucket_refs(iid, ref_since))
 
         # границу двигаем только ВПЕРЁД: без новых продаж newest со страницы старее floor
         new_ts = newest_all.isoformat() if newest_all and newest_all > floor else None

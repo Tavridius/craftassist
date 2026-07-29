@@ -1,0 +1,3188 @@
+{
+ "_meta": {
+  "source": "stalzone.wiki (страницы /en/items/artefacts/<id>, блоки artifactAdditionalPropertyRange)",
+  "fetched": "2026-07-20",
+  "mechanics": "На +5 разблокируется случайное свойство из пула, на +10 — из оставшихся, на +15 — последнее. К +15 активен ВЕСЬ пул (у обычных артов 3) — на +15 детерминированно. Рубик 9n7z — пул из 24, к +15 активны только 3 случайных из 24.",
+  "notes": "j306 Всполох: на вики пула не было — базы выведены из 3 тултипов krabishka (20.07.2026, M 1.6338/1.1666/0.9398 на +15/+15/+8): электрозащита 12.2 (тройное совпадение до сотых), скорость 0.35, регенерация 0.5; min записан как 0.85×max по образцу вики. Диапазон [min;max] вики — окно Q0 для отображения; для расчёта важен конец с большим модулем.",
+  "formula": "Величина допа ФИКСИРОВАНА (не роллится): значение = конец диапазона с большим модулем (для отрицательных — min) × M × (1 + 0.02×ptn). Верифицировано 20.07.2026 по 9 тултипам krabishka (Ягодка, Спираль, Браслет, Креветка, Иней ×3) — 20/20 совпадений <1%, см. ROADMAP."
+ },
+ "misses": [],
+ "props": {
+  "04yr": [
+   {
+    "key": "stalker.artefact_properties.factor.stamina_bonus",
+    "name_ru": "Выносливость",
+    "name_en": "Stamina",
+    "min": 4.28,
+    "max": 5.2,
+    "fmt_ru": "[+4.28%; +5.2%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.regeneration_bonus",
+    "name_ru": "Регенерация здоровья",
+    "name_en": "Health regeneration",
+    "min": 0.99,
+    "max": 1.2,
+    "fmt_ru": "[+0.99%; +1.2%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.bleeding_accumulation",
+    "name_ru": "Кровотечение",
+    "name_en": "Bleeding",
+    "min": -0.3,
+    "max": -0.25,
+    "fmt_ru": "[-0.3; -0.25]",
+    "color": "53C353"
+   }
+  ],
+  "1kdg": [
+   {
+    "key": "stalker.artefact_properties.factor.radiation_accumulation",
+    "name_ru": "Радиация",
+    "name_en": "Radiation",
+    "min": -0.88,
+    "max": -0.748,
+    "fmt_ru": "[-0.88; -0.748]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.stamina_bonus",
+    "name_ru": "Выносливость",
+    "name_en": "Stamina",
+    "min": 3.06,
+    "max": 3.6,
+    "fmt_ru": "[+3.06%; +3.6%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.speed_modifier",
+    "name_ru": "Скорость передвижения",
+    "name_en": "Movement speed",
+    "min": 0.12,
+    "max": 0.15,
+    "fmt_ru": "[+0.12%; +0.15%]",
+    "color": "53C353"
+   }
+  ],
+  "4lml": [
+   {
+    "key": "stalker.artefact_properties.factor.stamina_bonus",
+    "name_ru": "Выносливость",
+    "name_en": "Stamina",
+    "min": 12.41,
+    "max": 14.6,
+    "fmt_ru": "[+12.41%; +14.6%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.speed_modifier",
+    "name_ru": "Скорость передвижения",
+    "name_en": "Movement speed",
+    "min": 0.2,
+    "max": 0.25,
+    "fmt_ru": "[+0.2%; +0.25%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.health_bonus",
+    "name_ru": "Живучесть",
+    "name_en": "Vitality",
+    "min": 0.595,
+    "max": 0.7,
+    "fmt_ru": "[+0.595%; +0.7%]",
+    "color": "53C353"
+   }
+  ],
+  "5r04": [
+   {
+    "key": "stalker.artefact_properties.factor.bleeding_accumulation",
+    "name_ru": "Кровотечение",
+    "name_en": "Bleeding",
+    "min": -0.8,
+    "max": -0.68,
+    "fmt_ru": "[-0.8; -0.68]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.bleeding_protection",
+    "name_ru": "Защита от кровотечения",
+    "name_en": "Bleeding protection",
+    "min": 0.765,
+    "max": 0.9,
+    "fmt_ru": "[+0.765%; +0.9%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.heal_efficiency",
+    "name_ru": "Эффективность лечения",
+    "name_en": "Healing effectiveness",
+    "min": 1.87,
+    "max": 2.2,
+    "fmt_ru": "[+1.87%; +2.2%]",
+    "color": "53C353"
+   }
+  ],
+  "5rd1": [
+   {
+    "key": "stalker.artefact_properties.factor.bullet_dmg_factor",
+    "name_ru": "Пулестойкость",
+    "name_en": "Bullet resistance",
+    "min": 3.74,
+    "max": 4.4,
+    "fmt_ru": "[+3.74; +4.4]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.tear_dmg_factor",
+    "name_ru": "Защита от разрыва",
+    "name_en": "Laceration protection",
+    "min": 11.28,
+    "max": 13.7,
+    "fmt_ru": "[+11.28; +13.7]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.stamina_bonus",
+    "name_ru": "Выносливость",
+    "name_en": "Stamina",
+    "min": 4.03,
+    "max": 4.9,
+    "fmt_ru": "[+4.03%; +4.9%]",
+    "color": "53C353"
+   }
+  ],
+  "9nml": [
+   {
+    "key": "stalker.artefact_properties.factor.stamina_bonus",
+    "name_ru": "Выносливость",
+    "name_en": "Stamina",
+    "min": 2.635,
+    "max": 3.1,
+    "fmt_ru": "[+2.635%; +3.1%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.speed_modifier",
+    "name_ru": "Скорость передвижения",
+    "name_en": "Movement speed",
+    "min": 0.12,
+    "max": 0.15,
+    "fmt_ru": "[+0.12%; +0.15%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.stamina_regeneration_bonus",
+    "name_ru": "Восстановление выносливости",
+    "name_en": "Stamina regeneration",
+    "min": 1.275,
+    "max": 1.5,
+    "fmt_ru": "[+1.275%; +1.5%]",
+    "color": "53C353"
+   }
+  ],
+  "g34p": [
+   {
+    "key": "stalker.artefact_properties.factor.bullet_dmg_factor",
+    "name_ru": "Пулестойкость",
+    "name_en": "Bullet resistance",
+    "min": 5.6,
+    "max": 6.8,
+    "fmt_ru": "[+5.6; +6.8]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.tear_dmg_factor",
+    "name_ru": "Защита от разрыва",
+    "name_en": "Laceration protection",
+    "min": 4.03,
+    "max": 4.9,
+    "fmt_ru": "[+4.03; +4.9]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.explosion_dmg_factor",
+    "name_ru": "Защита от взрыва",
+    "name_en": "Explosion protection",
+    "min": 2.06,
+    "max": 2.5,
+    "fmt_ru": "[+2.06; +2.5]",
+    "color": "53C353"
+   }
+  ],
+  "gy06": [
+   {
+    "key": "stalker.artefact_properties.factor.stamina_regeneration_bonus",
+    "name_ru": "Восстановление выносливости",
+    "name_en": "Stamina regeneration",
+    "min": 0.9,
+    "max": 1.1,
+    "fmt_ru": "[+0.9%; +1.1%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.biological_accumulation",
+    "name_ru": "Биологическое заражение",
+    "name_en": "Biological infection",
+    "min": -0.88,
+    "max": -0.748,
+    "fmt_ru": "[-0.88; -0.748]",
+    "color": "C15252"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.heal_efficiency",
+    "name_ru": "Эффективность лечения",
+    "name_en": "Healing effectiveness",
+    "min": 1.36,
+    "max": 1.6,
+    "fmt_ru": "[+1.36%; +1.6%]",
+    "color": "53C353"
+   }
+  ],
+  "gyjg": [
+   {
+    "key": "stalker.artefact_properties.factor.chemical_burn_dmg_factor",
+    "name_ru": "Химзащита",
+    "name_en": "Resistance to chemicals",
+    "min": 6.01,
+    "max": 7.3,
+    "fmt_ru": "[+6.01; +7.3]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.biological_protection",
+    "name_ru": "Защита от биозаражения",
+    "name_en": "Bioinfection protection",
+    "min": 8.5,
+    "max": 10,
+    "fmt_ru": "[+8.5; +10]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.regeneration_bonus",
+    "name_ru": "Регенерация здоровья",
+    "name_en": "Health regeneration",
+    "min": 0.24,
+    "max": 0.3,
+    "fmt_ru": "[+0.24%; +0.3%]",
+    "color": "53C353"
+   }
+  ],
+  "jkj4": [
+   {
+    "key": "stalker.artefact_properties.factor.chemical_burn_dmg_factor",
+    "name_ru": "Химзащита",
+    "name_en": "Resistance to chemicals",
+    "min": 7.98,
+    "max": 9.7,
+    "fmt_ru": "[+7.98; +9.7]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.regeneration_bonus",
+    "name_ru": "Регенерация здоровья",
+    "name_en": "Health regeneration",
+    "min": 0.425,
+    "max": 0.5,
+    "fmt_ru": "[+0.425%; +0.5%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.biological_protection",
+    "name_ru": "Защита от биозаражения",
+    "name_en": "Bioinfection protection",
+    "min": 17,
+    "max": 20,
+    "fmt_ru": "[+17; +20]",
+    "color": "53C353"
+   }
+  ],
+  "kqj3": [
+   {
+    "key": "stalker.artefact_properties.factor.bleeding_protection",
+    "name_ru": "Защита от кровотечения",
+    "name_en": "Bleeding protection",
+    "min": 1.955,
+    "max": 2.3,
+    "fmt_ru": "[+1.955%; +2.3%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.stamina_bonus",
+    "name_ru": "Выносливость",
+    "name_en": "Stamina",
+    "min": 3.57,
+    "max": 4.2,
+    "fmt_ru": "[+3.57%; +4.2%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.regeneration_bonus",
+    "name_ru": "Регенерация здоровья",
+    "name_en": "Health regeneration",
+    "min": 0.34,
+    "max": 0.4,
+    "fmt_ru": "[+0.34%; +0.4%]",
+    "color": "53C353"
+   }
+  ],
+  "ljpq": [
+   {
+    "key": "stalker.artefact_properties.factor.stamina_regeneration_bonus",
+    "name_ru": "Восстановление выносливости",
+    "name_en": "Stamina regeneration",
+    "min": 0.91,
+    "max": 1.1,
+    "fmt_ru": "[+0.91%; +1.1%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.stamina_bonus",
+    "name_ru": "Выносливость",
+    "name_en": "Stamina",
+    "min": 5.76,
+    "max": 7,
+    "fmt_ru": "[+5.76%; +7%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.speed_modifier",
+    "name_ru": "Скорость передвижения",
+    "name_en": "Movement speed",
+    "min": 0.618,
+    "max": 0.75,
+    "fmt_ru": "[+0.618%; +0.75%]",
+    "color": "53C353"
+   }
+  ],
+  "qo59": [
+   {
+    "key": "stalker.artefact_properties.factor.radiation_accumulation",
+    "name_ru": "Радиация",
+    "name_en": "Radiation",
+    "min": -0.88,
+    "max": -0.748,
+    "fmt_ru": "[-0.88; -0.748]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.regeneration_bonus",
+    "name_ru": "Регенерация здоровья",
+    "name_en": "Health regeneration",
+    "min": 0.34,
+    "max": 0.4,
+    "fmt_ru": "[+0.34%; +0.4%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.bleeding_accumulation",
+    "name_ru": "Кровотечение",
+    "name_en": "Bleeding",
+    "min": -0.4,
+    "max": -0.32,
+    "fmt_ru": "[-0.4; -0.32]",
+    "color": "53C353"
+   }
+  ],
+  "wgvd": [
+   {
+    "key": "stalker.artefact_properties.factor.tear_dmg_factor",
+    "name_ru": "Защита от разрыва",
+    "name_en": "Laceration protection",
+    "min": 10.37,
+    "max": 12.2,
+    "fmt_ru": "[+10.37; +12.2]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.regeneration_bonus",
+    "name_ru": "Регенерация здоровья",
+    "name_en": "Health regeneration",
+    "min": 0.58,
+    "max": 0.7,
+    "fmt_ru": "[+0.58%; +0.7%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.health_bonus",
+    "name_ru": "Живучесть",
+    "name_en": "Vitality",
+    "min": 0.34,
+    "max": 0.4,
+    "fmt_ru": "[+0.34%; +0.4%]",
+    "color": "53C353"
+   }
+  ],
+  "y5vw": [
+   {
+    "key": "stalker.artefact_properties.factor.bleeding_accumulation",
+    "name_ru": "Кровотечение",
+    "name_en": "Bleeding",
+    "min": -0.3,
+    "max": -0.255,
+    "fmt_ru": "[-0.3; -0.255]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.bleeding_protection",
+    "name_ru": "Защита от кровотечения",
+    "name_en": "Bleeding protection",
+    "min": 2.14,
+    "max": 2.6,
+    "fmt_ru": "[+2.14%; +2.6%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.regeneration_bonus",
+    "name_ru": "Регенерация здоровья",
+    "name_en": "Health regeneration",
+    "min": 0.425,
+    "max": 0.5,
+    "fmt_ru": "[+0.425%; +0.5%]",
+    "color": "53C353"
+   }
+  ],
+  "zy7y": [
+   {
+    "key": "stalker.artefact_properties.factor.stamina_bonus",
+    "name_ru": "Выносливость",
+    "name_en": "Stamina",
+    "min": 2.975,
+    "max": 3.5,
+    "fmt_ru": "[+2.975%; +3.5%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.tear_dmg_factor",
+    "name_ru": "Защита от разрыва",
+    "name_en": "Laceration protection",
+    "min": 7.98,
+    "max": 9.7,
+    "fmt_ru": "[+7.98; +9.7]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.radiation_protection",
+    "name_ru": "Защита от радиации",
+    "name_en": "Radiation protection",
+    "min": 17,
+    "max": 20,
+    "fmt_ru": "[+17; +20]",
+    "color": "53C353"
+   }
+  ],
+  "zyv9": [
+   {
+    "key": "stalker.artefact_properties.factor.tear_dmg_factor",
+    "name_ru": "Защита от разрыва",
+    "name_en": "Laceration protection",
+    "min": 1.72,
+    "max": 2.1,
+    "fmt_ru": "[+1.72; +2.1]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.stamina_regeneration_bonus",
+    "name_ru": "Восстановление выносливости",
+    "name_en": "Stamina regeneration",
+    "min": 0.595,
+    "max": 0.7,
+    "fmt_ru": "[+0.595%; +0.7%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.health_bonus",
+    "name_ru": "Живучесть",
+    "name_en": "Vitality",
+    "min": 0.51,
+    "max": 0.6,
+    "fmt_ru": "[+0.51%; +0.6%]",
+    "color": "53C353"
+   }
+  ],
+  "1k96": [
+   {
+    "key": "stalker.artefact_properties.factor.stamina_regeneration_bonus",
+    "name_ru": "Восстановление выносливости",
+    "name_en": "Stamina regeneration",
+    "min": 1.87,
+    "max": 2.2,
+    "fmt_ru": "[+1.87%; +2.2%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.stamina_bonus",
+    "name_ru": "Выносливость",
+    "name_en": "Stamina",
+    "min": 3.995,
+    "max": 4.7,
+    "fmt_ru": "[+3.995%; +4.7%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.speed_modifier",
+    "name_ru": "Скорость передвижения",
+    "name_en": "Movement speed",
+    "min": 0.16,
+    "max": 0.2,
+    "fmt_ru": "[+0.16%; +0.2%]",
+    "color": "53C353"
+   }
+  ],
+  "4lkp": [
+   {
+    "key": "stalker.artefact_properties.factor.max_weight_bonus",
+    "name_ru": "Переносимый вес",
+    "name_en": "Carry weight",
+    "min": 1.98,
+    "max": 2.4,
+    "fmt_ru": "[+1.98; +2.4]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.psycho_protection",
+    "name_ru": "Защита от пси-излучения",
+    "name_en": "Psy-Emission protection",
+    "min": 16.47,
+    "max": 20,
+    "fmt_ru": "[+16.47; +20]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.electra_dmg_factor",
+    "name_ru": "Электрозащита",
+    "name_en": "Resistance to electricity",
+    "min": 7.99,
+    "max": 9.7,
+    "fmt_ru": "[+7.99%; +9.7%]",
+    "color": "53C353"
+   }
+  ],
+  "5r5g": [
+   {
+    "key": "stalker.artefact_properties.factor.stamina_bonus",
+    "name_ru": "Выносливость",
+    "name_en": "Stamina",
+    "min": 11.05,
+    "max": 13,
+    "fmt_ru": "[+11.05%; +13%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.speed_modifier",
+    "name_ru": "Скорость передвижения",
+    "name_en": "Movement speed",
+    "min": 0.28,
+    "max": 0.35,
+    "fmt_ru": "[+0.28%; +0.35%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.stamina_regeneration_bonus",
+    "name_ru": "Восстановление выносливости",
+    "name_en": "Stamina regeneration",
+    "min": 0.85,
+    "max": 1,
+    "fmt_ru": "[+0.85%; +1%]",
+    "color": "53C353"
+   }
+  ],
+  "5rwq": [
+   {
+    "key": "stalker.artefact_properties.factor.health_bonus",
+    "name_ru": "Живучесть",
+    "name_en": "Vitality",
+    "min": 0.595,
+    "max": 0.7,
+    "fmt_ru": "[+0.595%; +0.7%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.stamina_regeneration_bonus",
+    "name_ru": "Восстановление выносливости",
+    "name_en": "Stamina regeneration",
+    "min": 2.72,
+    "max": 3.2,
+    "fmt_ru": "[+2.72%; +3.2%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.heal_efficiency",
+    "name_ru": "Эффективность лечения",
+    "name_en": "Healing effectiveness",
+    "min": 1.955,
+    "max": 2.3,
+    "fmt_ru": "[+1.955%; +2.3%]",
+    "color": "53C353"
+   }
+  ],
+  "9nd0": [
+   {
+    "key": "stalker.artefact_properties.factor.electra_dmg_factor",
+    "name_ru": "Электрозащита",
+    "name_en": "Resistance to electricity",
+    "min": 6.01,
+    "max": 7.3,
+    "fmt_ru": "[+6.01%; +7.3%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.psycho_protection",
+    "name_ru": "Защита от пси-излучения",
+    "name_en": "Psy-Emission protection",
+    "min": 8.5,
+    "max": 10,
+    "fmt_ru": "[+8.5; +10]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.stamina_regeneration_bonus",
+    "name_ru": "Восстановление выносливости",
+    "name_en": "Stamina regeneration",
+    "min": 0.51,
+    "max": 0.6,
+    "fmt_ru": "[+0.51%; +0.6%]",
+    "color": "53C353"
+   }
+  ],
+  "gyn0": [
+   {
+    "key": "stalker.artefact_properties.factor.stamina_regeneration_bonus",
+    "name_ru": "Восстановление выносливости",
+    "name_en": "Stamina regeneration",
+    "min": 2.125,
+    "max": 2.5,
+    "fmt_ru": "[+2.125%; +2.5%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.stamina_bonus",
+    "name_ru": "Выносливость",
+    "name_en": "Stamina",
+    "min": 4.59,
+    "max": 5.4,
+    "fmt_ru": "[+4.59%; +5.4%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.speed_modifier",
+    "name_ru": "Скорость передвижения",
+    "name_en": "Movement speed",
+    "min": 0.16,
+    "max": 0.2,
+    "fmt_ru": "[+0.16%; +0.2%]",
+    "color": "53C353"
+   }
+  ],
+  "gyq5": [
+   {
+    "key": "stalker.artefact_properties.factor.max_weight_bonus",
+    "name_ru": "Переносимый вес",
+    "name_en": "Carry weight",
+    "min": 2.465,
+    "max": 2.9,
+    "fmt_ru": "[+2.465; +2.9]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.speed_modifier",
+    "name_ru": "Скорость передвижения",
+    "name_en": "Movement speed",
+    "min": 0.28,
+    "max": 0.35,
+    "fmt_ru": "[+0.28%; +0.35%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.heal_efficiency",
+    "name_ru": "Эффективность лечения",
+    "name_en": "Healing effectiveness",
+    "min": 5.02,
+    "max": 6.1,
+    "fmt_ru": "[+5.02%; +6.1%]",
+    "color": "53C353"
+   }
+  ],
+  "kqr0": [
+   {
+    "key": "stalker.artefact_properties.factor.speed_modifier",
+    "name_ru": "Скорость передвижения",
+    "name_en": "Movement speed",
+    "min": 0.32,
+    "max": 0.4,
+    "fmt_ru": "[+0.32%; +0.4%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.stamina_regeneration_bonus",
+    "name_ru": "Восстановление выносливости",
+    "name_en": "Stamina regeneration",
+    "min": 2.72,
+    "max": 3.2,
+    "fmt_ru": "[+2.72%; +3.2%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.regeneration_bonus",
+    "name_ru": "Регенерация здоровья",
+    "name_en": "Health regeneration",
+    "min": 0.51,
+    "max": 0.6,
+    "fmt_ru": "[+0.51%; +0.6%]",
+    "color": "53C353"
+   }
+  ],
+  "lj0j": [
+   {
+    "key": "stalker.artefact_properties.factor.speed_modifier",
+    "name_ru": "Скорость передвижения",
+    "name_en": "Movement speed",
+    "min": 0.33,
+    "max": 0.4,
+    "fmt_ru": "[+0.33%; +0.4%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.burn_dmg_factor",
+    "name_ru": "Защита от огня",
+    "name_en": "Resistance to fire",
+    "min": 4.2,
+    "max": 5.1,
+    "fmt_ru": "[+4.2; +5.1]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.bleeding_protection",
+    "name_ru": "Защита от кровотечения",
+    "name_en": "Bleeding protection",
+    "min": 3.54,
+    "max": 4.3,
+    "fmt_ru": "[+3.54%; +4.3%]",
+    "color": "53C353"
+   }
+  ],
+  "qo06": [
+   {
+    "key": "stalker.artefact_properties.factor.stamina_bonus",
+    "name_ru": "Выносливость",
+    "name_en": "Stamina",
+    "min": 3.995,
+    "max": 4.7,
+    "fmt_ru": "[+3.995%; +4.7%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.max_weight_bonus",
+    "name_ru": "Переносимый вес",
+    "name_en": "Carry weight",
+    "min": 1.87,
+    "max": 2.2,
+    "fmt_ru": "[+1.87; +2.2]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.psycho_accumulation",
+    "name_ru": "Пси-излучение",
+    "name_en": "Psy-emissions",
+    "min": -0.88,
+    "max": -0.748,
+    "fmt_ru": "[-0.88; -0.748]",
+    "color": "C15252"
+   }
+  ],
+  "wg3p": [
+   {
+    "key": "stalker.artefact_properties.factor.speed_modifier",
+    "name_ru": "Скорость передвижения",
+    "name_en": "Movement speed",
+    "min": 0.37,
+    "max": 0.45,
+    "fmt_ru": "[+0.37%; +0.45%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.stamina_bonus",
+    "name_ru": "Выносливость",
+    "name_en": "Stamina",
+    "min": 3.57,
+    "max": 4.2,
+    "fmt_ru": "[+3.57%; +4.2%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.stamina_regeneration_bonus",
+    "name_ru": "Восстановление выносливости",
+    "name_en": "Stamina regeneration",
+    "min": 0.57,
+    "max": 0.7,
+    "fmt_ru": "[+0.57%; +0.7%]",
+    "color": "53C353"
+   }
+  ],
+  "wg53": [
+   {
+    "key": "stalker.artefact_properties.factor.bleeding_accumulation",
+    "name_ru": "Кровотечение",
+    "name_en": "Bleeding",
+    "min": -0.698,
+    "max": -0.575,
+    "fmt_ru": "[-0.698; -0.575]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.stamina_regeneration_bonus",
+    "name_ru": "Восстановление выносливости",
+    "name_en": "Stamina regeneration",
+    "min": 0.989,
+    "max": 1.201,
+    "fmt_ru": "[+0.989%; +1.201%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.health_bonus",
+    "name_ru": "Живучесть",
+    "name_en": "Vitality",
+    "min": 0.331,
+    "max": 0.402,
+    "fmt_ru": "[+0.331%; +0.402%]",
+    "color": "53C353"
+   }
+  ],
+  "y54z": [
+   {
+    "key": "stalker.artefact_properties.factor.burn_dmg_factor",
+    "name_ru": "Защита от огня",
+    "name_en": "Resistance to fire",
+    "min": 7.98,
+    "max": 9.7,
+    "fmt_ru": "[+7.98; +9.7]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.speed_modifier",
+    "name_ru": "Скорость передвижения",
+    "name_en": "Movement speed",
+    "min": 0.16,
+    "max": 0.2,
+    "fmt_ru": "[+0.16%; +0.2%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.thermal_protection",
+    "name_ru": "Защита от температуры",
+    "name_en": "Thermal protection",
+    "min": 17,
+    "max": 20,
+    "fmt_ru": "[+17; +20]",
+    "color": "53C353"
+   }
+  ],
+  "y5w3": [
+   {
+    "key": "stalker.artefact_properties.factor.bullet_dmg_factor",
+    "name_ru": "Пулестойкость",
+    "name_en": "Bullet resistance",
+    "min": 4.165,
+    "max": 4.9,
+    "fmt_ru": "[+4.165; +4.9]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.explosion_dmg_factor",
+    "name_ru": "Защита от взрыва",
+    "name_en": "Explosion protection",
+    "min": 3.23,
+    "max": 3.8,
+    "fmt_ru": "[+3.23; +3.8]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.stamina_regeneration_bonus",
+    "name_ru": "Восстановление выносливости",
+    "name_en": "Stamina regeneration",
+    "min": 3.06,
+    "max": 3.6,
+    "fmt_ru": "[+3.06%; +3.6%]",
+    "color": "53C353"
+   }
+  ],
+  "zy32": [
+   {
+    "key": "stalker.artefact_properties.factor.electra_dmg_factor",
+    "name_ru": "Электрозащита",
+    "name_en": "Resistance to electricity",
+    "min": 8.81,
+    "max": 10.7,
+    "fmt_ru": "[+8.81%; +10.7%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.speed_modifier",
+    "name_ru": "Скорость передвижения",
+    "name_en": "Movement speed",
+    "min": 0.24,
+    "max": 0.3,
+    "fmt_ru": "[+0.24%; +0.3%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.stamina_bonus",
+    "name_ru": "Выносливость",
+    "name_en": "Stamina",
+    "min": 3.12,
+    "max": 3.8,
+    "fmt_ru": "[+3.12%; +3.8%]",
+    "color": "53C353"
+   }
+  ],
+  "zyrm": [
+   {
+    "key": "stalker.artefact_properties.factor.speed_modifier",
+    "name_ru": "Скорость передвижения",
+    "name_en": "Movement speed",
+    "min": 0.207,
+    "max": 0.252,
+    "fmt_ru": "[+0.207%; +0.252%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.radiation_protection",
+    "name_ru": "Защита от радиации",
+    "name_en": "Radiation protection",
+    "min": 16.47,
+    "max": 20,
+    "fmt_ru": "[+16.47; +20]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.psycho_protection",
+    "name_ru": "Защита от пси-излучения",
+    "name_en": "Psy-Emission protection",
+    "min": 16.47,
+    "max": 20,
+    "fmt_ru": "[+16.47; +20]",
+    "color": "53C353"
+   }
+  ],
+  "1k4q": [
+   {
+    "key": "stalker.artefact_properties.factor.stamina_bonus",
+    "name_ru": "Выносливость",
+    "name_en": "Stamina",
+    "min": 7.98,
+    "max": 9.7,
+    "fmt_ru": "[+7.98%; +9.7%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.regeneration_bonus",
+    "name_ru": "Регенерация здоровья",
+    "name_en": "Health regeneration",
+    "min": 0.425,
+    "max": 0.5,
+    "fmt_ru": "[+0.425%; +0.5%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.heal_efficiency",
+    "name_ru": "Эффективность лечения",
+    "name_en": "Healing effectiveness",
+    "min": 1.36,
+    "max": 1.6,
+    "fmt_ru": "[+1.36%; +1.6%]",
+    "color": "53C353"
+   }
+  ],
+  "1kv2": [
+   {
+    "key": "stalker.artefact_properties.factor.tear_dmg_factor",
+    "name_ru": "Защита от разрыва",
+    "name_en": "Laceration protection",
+    "min": 2.635,
+    "max": 3.1,
+    "fmt_ru": "[+2.635; +3.1]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.max_weight_bonus",
+    "name_ru": "Переносимый вес",
+    "name_en": "Carry weight",
+    "min": 2.635,
+    "max": 3.1,
+    "fmt_ru": "[+2.635; +3.1]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.bleeding_accumulation",
+    "name_ru": "Кровотечение",
+    "name_en": "Bleeding",
+    "min": -0.8,
+    "max": -0.68,
+    "fmt_ru": "[-0.8; -0.68]",
+    "color": "53C353"
+   }
+  ],
+  "4l1r": [
+   {
+    "key": "stalker.artefact_properties.factor.regeneration_bonus",
+    "name_ru": "Регенерация здоровья",
+    "name_en": "Health regeneration",
+    "min": 0.82,
+    "max": 1,
+    "fmt_ru": "[+0.82%; +1%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.stamina_regeneration_bonus",
+    "name_ru": "Восстановление выносливости",
+    "name_en": "Stamina regeneration",
+    "min": 0.765,
+    "max": 0.9,
+    "fmt_ru": "[+0.765%; +0.9%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.heal_efficiency",
+    "name_ru": "Эффективность лечения",
+    "name_en": "Healing effectiveness",
+    "min": 1.15,
+    "max": 1.4,
+    "fmt_ru": "[+1.15%; +1.4%]",
+    "color": "53C353"
+   }
+  ],
+  "4lpo": [
+   {
+    "key": "stalker.artefact_properties.factor.stamina_bonus",
+    "name_ru": "Выносливость",
+    "name_en": "Stamina",
+    "min": 13.34,
+    "max": 16.2,
+    "fmt_ru": "[+13.34%; +16.2%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.bullet_dmg_factor",
+    "name_ru": "Пулестойкость",
+    "name_en": "Bullet resistance",
+    "min": 2.8,
+    "max": 3.4,
+    "fmt_ru": "[+2.8; +3.4]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.recoil_bonus",
+    "name_ru": "Отдача",
+    "name_en": "Recoil",
+    "min": -1.3,
+    "max": -1.07,
+    "fmt_ru": "[-1.3%; -1.07%]",
+    "color": "53C353"
+   }
+  ],
+  "5r34": [
+   {
+    "key": "stalker.artefact_properties.factor.heal_efficiency",
+    "name_ru": "Эффективность лечения",
+    "name_en": "Healing effectiveness",
+    "min": 5.18,
+    "max": 6.3,
+    "fmt_ru": "[+5.18%; +6.3%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.stamina_regeneration_bonus",
+    "name_ru": "Восстановление выносливости",
+    "name_en": "Stamina regeneration",
+    "min": 0.66,
+    "max": 0.8,
+    "fmt_ru": "[+0.66%; +0.8%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.regeneration_bonus",
+    "name_ru": "Регенерация здоровья",
+    "name_en": "Health regeneration",
+    "min": 0.765,
+    "max": 0.9,
+    "fmt_ru": "[+0.765%; +0.9%]",
+    "color": "53C353"
+   }
+  ],
+  "5rg1": [
+   {
+    "key": "stalker.artefact_properties.factor.bullet_dmg_factor",
+    "name_ru": "Пулестойкость",
+    "name_en": "Bullet resistance",
+    "min": 3.315,
+    "max": 3.9,
+    "fmt_ru": "[+3.315; +3.9]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.explosion_dmg_factor",
+    "name_ru": "Защита от взрыва",
+    "name_en": "Explosion protection",
+    "min": 2.55,
+    "max": 3,
+    "fmt_ru": "[+2.55; +3]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.stamina_regeneration_bonus",
+    "name_ru": "Восстановление выносливости",
+    "name_en": "Stamina regeneration",
+    "min": 2.465,
+    "max": 2.9,
+    "fmt_ru": "[+2.465%; +2.9%]",
+    "color": "53C353"
+   }
+  ],
+  "5rpq": [
+   {
+    "key": "stalker.artefact_properties.factor.speed_modifier",
+    "name_ru": "Скорость передвижения",
+    "name_en": "Movement speed",
+    "min": 0.49,
+    "max": 0.6,
+    "fmt_ru": "[+0.49%; +0.6%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.stamina_regeneration_bonus",
+    "name_ru": "Восстановление выносливости",
+    "name_en": "Stamina regeneration",
+    "min": 0.765,
+    "max": 0.9,
+    "fmt_ru": "[+0.765%; +0.9%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.max_weight_bonus",
+    "name_ru": "Переносимый вес",
+    "name_en": "Carry weight",
+    "min": 3.23,
+    "max": 3.8,
+    "fmt_ru": "[+3.23; +3.8]",
+    "color": "53C353"
+   }
+  ],
+  "9n1w": [
+   {
+    "key": "stalker.artefact_properties.factor.bleeding_accumulation",
+    "name_ru": "Кровотечение",
+    "name_en": "Bleeding",
+    "min": -0.2,
+    "max": -0.17,
+    "fmt_ru": "[-0.2; -0.17]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.regeneration_bonus",
+    "name_ru": "Регенерация здоровья",
+    "name_en": "Health regeneration",
+    "min": 0.91,
+    "max": 1.1,
+    "fmt_ru": "[+0.91%; +1.1%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.health_bonus",
+    "name_ru": "Живучесть",
+    "name_en": "Vitality",
+    "min": 0.425,
+    "max": 0.5,
+    "fmt_ru": "[+0.425%; +0.5%]",
+    "color": "53C353"
+   }
+  ],
+  "9nvy": [
+   {
+    "key": "stalker.artefact_properties.factor.tear_dmg_factor",
+    "name_ru": "Защита от разрыва",
+    "name_en": "Laceration protection",
+    "min": 2.635,
+    "max": 3.1,
+    "fmt_ru": "[+2.635; +3.1]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.explosion_dmg_factor",
+    "name_ru": "Защита от взрыва",
+    "name_en": "Explosion protection",
+    "min": 2.63,
+    "max": 3.2,
+    "fmt_ru": "[+2.63; +3.2]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.regeneration_bonus",
+    "name_ru": "Регенерация здоровья",
+    "name_en": "Health regeneration",
+    "min": 0.9,
+    "max": 1.1,
+    "fmt_ru": "[+0.9%; +1.1%]",
+    "color": "53C353"
+   }
+  ],
+  "gyg5": [
+   {
+    "key": "stalker.artefact_properties.factor.bullet_dmg_factor",
+    "name_ru": "Пулестойкость",
+    "name_en": "Bullet resistance",
+    "min": 2.04,
+    "max": 2.4,
+    "fmt_ru": "[+2.04; +2.4]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.explosion_dmg_factor",
+    "name_ru": "Защита от взрыва",
+    "name_en": "Explosion protection",
+    "min": 6.63,
+    "max": 7.8,
+    "fmt_ru": "[+6.63; +7.8]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.max_weight_bonus",
+    "name_ru": "Переносимый вес",
+    "name_en": "Carry weight",
+    "min": 3.145,
+    "max": 3.7,
+    "fmt_ru": "[+3.145; +3.7]",
+    "color": "53C353"
+   }
+  ],
+  "gypg": [
+   {
+    "key": "stalker.artefact_properties.factor.stamina_regeneration_bonus",
+    "name_ru": "Восстановление выносливости",
+    "name_en": "Stamina regeneration",
+    "min": 0.425,
+    "max": 0.5,
+    "fmt_ru": "[+0.425%; +0.5%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.bleeding_accumulation",
+    "name_ru": "Кровотечение",
+    "name_en": "Bleeding",
+    "min": -0.3,
+    "max": -0.24,
+    "fmt_ru": "[-0.3; -0.24]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.speed_modifier",
+    "name_ru": "Скорость передвижения",
+    "name_en": "Movement speed",
+    "min": 0.28,
+    "max": 0.35,
+    "fmt_ru": "[+0.28%; +0.35%]",
+    "color": "53C353"
+   }
+  ],
+  "gyv6": [
+   {
+    "key": "stalker.artefact_properties.factor.bullet_dmg_factor",
+    "name_ru": "Пулестойкость",
+    "name_en": "Bullet resistance",
+    "min": 2.465,
+    "max": 2.9,
+    "fmt_ru": "[+2.465; +2.9]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.explosion_dmg_factor",
+    "name_ru": "Защита от взрыва",
+    "name_en": "Explosion protection",
+    "min": 1.955,
+    "max": 2.3,
+    "fmt_ru": "[+1.955; +2.3]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.max_weight_bonus",
+    "name_ru": "Переносимый вес",
+    "name_en": "Carry weight",
+    "min": 5.525,
+    "max": 6.5,
+    "fmt_ru": "[+5.525; +6.5]",
+    "color": "53C353"
+   }
+  ],
+  "kqgy": [
+   {
+    "key": "stalker.artefact_properties.factor.stamina_bonus",
+    "name_ru": "Выносливость",
+    "name_en": "Stamina",
+    "min": 13.77,
+    "max": 16.2,
+    "fmt_ru": "[+13.77%; +16.2%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.speed_modifier",
+    "name_ru": "Скорость передвижения",
+    "name_en": "Movement speed",
+    "min": 0.32,
+    "max": 0.4,
+    "fmt_ru": "[+0.32%; +0.4%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.stamina_regeneration_bonus",
+    "name_ru": "Восстановление выносливости",
+    "name_en": "Stamina regeneration",
+    "min": 1.02,
+    "max": 1.2,
+    "fmt_ru": "[+1.02%; +1.2%]",
+    "color": "53C353"
+   }
+  ],
+  "qokj": [
+   {
+    "key": "stalker.artefact_properties.factor.health_bonus",
+    "name_ru": "Живучесть",
+    "name_en": "Vitality",
+    "min": 0.82,
+    "max": 1,
+    "fmt_ru": "[+0.82%; +1%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.max_weight_bonus",
+    "name_ru": "Переносимый вес",
+    "name_en": "Carry weight",
+    "min": 2.06,
+    "max": 2.5,
+    "fmt_ru": "[+2.06; +2.5]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.stamina_regeneration_bonus",
+    "name_ru": "Восстановление выносливости",
+    "name_en": "Stamina regeneration",
+    "min": 0.99,
+    "max": 1.2,
+    "fmt_ru": "[+0.99%; +1.2%]",
+    "color": "53C353"
+   }
+  ],
+  "wg62": [
+   {
+    "key": "stalker.artefact_properties.factor.psycho_accumulation",
+    "name_ru": "Пси-излучение",
+    "name_en": "Psy-emissions",
+    "min": -0.88,
+    "max": -0.748,
+    "fmt_ru": "[-0.88; -0.748]",
+    "color": "C15252"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.stamina_bonus",
+    "name_ru": "Выносливость",
+    "name_en": "Stamina",
+    "min": 2.14,
+    "max": 2.6,
+    "fmt_ru": "[+2.14%; +2.6%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.max_weight_bonus",
+    "name_ru": "Переносимый вес",
+    "name_en": "Carry weight",
+    "min": 2.125,
+    "max": 2.5,
+    "fmt_ru": "[+2.125; +2.5]",
+    "color": "53C353"
+   }
+  ],
+  "wgr3": [
+   {
+    "key": "stalker.artefact_properties.factor.regeneration_bonus",
+    "name_ru": "Регенерация здоровья",
+    "name_en": "Health regeneration",
+    "min": 0.49,
+    "max": 0.6,
+    "fmt_ru": "[+0.49%; +0.6%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.health_bonus",
+    "name_ru": "Живучесть",
+    "name_en": "Vitality",
+    "min": 0.33,
+    "max": 0.4,
+    "fmt_ru": "[+0.33%; +0.4%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.stamina_regeneration_bonus",
+    "name_ru": "Восстановление выносливости",
+    "name_en": "Stamina regeneration",
+    "min": 0.66,
+    "max": 0.8,
+    "fmt_ru": "[+0.66%; +0.8%]",
+    "color": "53C353"
+   }
+  ],
+  "wgzd": [
+   {
+    "key": "stalker.artefact_properties.factor.psycho_accumulation",
+    "name_ru": "Пси-излучение",
+    "name_en": "Psy-emissions",
+    "min": -1.28,
+    "max": -1.088,
+    "fmt_ru": "[-1.28; -1.088]",
+    "color": "C15252"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.max_weight_bonus",
+    "name_ru": "Переносимый вес",
+    "name_en": "Carry weight",
+    "min": 2.635,
+    "max": 3.1,
+    "fmt_ru": "[+2.635; +3.1]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.stamina_regeneration_bonus",
+    "name_ru": "Восстановление выносливости",
+    "name_en": "Stamina regeneration",
+    "min": 0.68,
+    "max": 0.8,
+    "fmt_ru": "[+0.68%; +0.8%]",
+    "color": "53C353"
+   }
+  ],
+  "y5jk": [
+   {
+    "key": "stalker.artefact_properties.factor.bullet_dmg_factor",
+    "name_ru": "Пулестойкость",
+    "name_en": "Bullet resistance",
+    "min": 1.615,
+    "max": 1.9,
+    "fmt_ru": "[+1.615; +1.9]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.stamina_regeneration_bonus",
+    "name_ru": "Восстановление выносливости",
+    "name_en": "Stamina regeneration",
+    "min": 1.7,
+    "max": 2,
+    "fmt_ru": "[+1.7%; +2%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.max_weight_bonus",
+    "name_ru": "Переносимый вес",
+    "name_en": "Carry weight",
+    "min": 2.465,
+    "max": 2.9,
+    "fmt_ru": "[+2.465; +2.9]",
+    "color": "53C353"
+   }
+  ],
+  "y5m3": [
+   {
+    "key": "stalker.artefact_properties.factor.stamina_regeneration_bonus",
+    "name_ru": "Восстановление выносливости",
+    "name_en": "Stamina regeneration",
+    "min": 0.765,
+    "max": 0.9,
+    "fmt_ru": "[+0.765%; +0.9%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.bullet_dmg_factor",
+    "name_ru": "Пулестойкость",
+    "name_en": "Bullet resistance",
+    "min": 4.59,
+    "max": 5.4,
+    "fmt_ru": "[+4.59; +5.4]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.max_weight_bonus",
+    "name_ru": "Переносимый вес",
+    "name_en": "Carry weight",
+    "min": 1.2,
+    "max": 2,
+    "fmt_ru": "[+1.2; +2]",
+    "color": "53C353"
+   }
+  ],
+  "y5yw": [
+   {
+    "key": "stalker.artefact_properties.factor.heal_efficiency",
+    "name_ru": "Эффективность лечения",
+    "name_en": "Healing effectiveness",
+    "min": 2.805,
+    "max": 3.3,
+    "fmt_ru": "[+2.805%; +3.3%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.tear_dmg_factor",
+    "name_ru": "Защита от разрыва",
+    "name_en": "Laceration protection",
+    "min": 3.79,
+    "max": 4.6,
+    "fmt_ru": "[+3.79; +4.6]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.speed_modifier",
+    "name_ru": "Скорость передвижения",
+    "name_en": "Movement speed",
+    "min": 0.62,
+    "max": 0.75,
+    "fmt_ru": "[+0.62%; +0.75%]",
+    "color": "53C353"
+   }
+  ],
+  "zyly": [
+   {
+    "key": "stalker.artefact_properties.factor.bullet_dmg_factor",
+    "name_ru": "Пулестойкость",
+    "name_en": "Bullet resistance",
+    "min": 1.4,
+    "max": 1.7,
+    "fmt_ru": "[+1.4; +1.7]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.stamina_bonus",
+    "name_ru": "Выносливость",
+    "name_en": "Stamina",
+    "min": 3.05,
+    "max": 3.7,
+    "fmt_ru": "[+3.05%; +3.7%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.bleeding_protection",
+    "name_ru": "Защита от кровотечения",
+    "name_en": "Bleeding protection",
+    "min": 1.72,
+    "max": 2.1,
+    "fmt_ru": "[+1.72%; +2.1%]",
+    "color": "53C353"
+   }
+  ],
+  "zyo9": [
+   {
+    "key": "stalker.artefact_properties.factor.biological_accumulation",
+    "name_ru": "Биологическое заражение",
+    "name_en": "Biological infection",
+    "min": -0.88,
+    "max": -0.748,
+    "fmt_ru": "[-0.88; -0.748]",
+    "color": "C15252"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.stamina_regeneration_bonus",
+    "name_ru": "Восстановление выносливости",
+    "name_en": "Stamina regeneration",
+    "min": 0.65,
+    "max": 0.8,
+    "fmt_ru": "[+0.65%; +0.8%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.heal_efficiency",
+    "name_ru": "Эффективность лечения",
+    "name_en": "Healing effectiveness",
+    "min": 1.02,
+    "max": 1.2,
+    "fmt_ru": "[+1.02%; +1.2%]",
+    "color": "53C353"
+   }
+  ],
+  "zypm": [
+   {
+    "key": "stalker.artefact_properties.factor.speed_modifier",
+    "name_ru": "Скорость передвижения",
+    "name_en": "Movement speed",
+    "min": 0.2,
+    "max": 0.25,
+    "fmt_ru": "[+0.2%; +0.25%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.max_weight_bonus",
+    "name_ru": "Переносимый вес",
+    "name_en": "Carry weight",
+    "min": 3.57,
+    "max": 4.2,
+    "fmt_ru": "[+3.57; +4.2]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.stamina_bonus",
+    "name_ru": "Выносливость",
+    "name_en": "Stamina",
+    "min": 11.05,
+    "max": 13,
+    "fmt_ru": "[+11.05%; +13%]",
+    "color": "53C353"
+   }
+  ],
+  "1kw1": [
+   {
+    "key": "stalker.artefact_properties.factor.stamina_bonus",
+    "name_ru": "Выносливость",
+    "name_en": "Stamina",
+    "min": 3.74,
+    "max": 4.4,
+    "fmt_ru": "[+3.74%; +4.4%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.max_weight_bonus",
+    "name_ru": "Переносимый вес",
+    "name_en": "Carry weight",
+    "min": 3.57,
+    "max": 4.2,
+    "fmt_ru": "[+3.57; +4.2]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.stamina_regeneration_bonus",
+    "name_ru": "Восстановление выносливости",
+    "name_en": "Stamina regeneration",
+    "min": 2.465,
+    "max": 2.9,
+    "fmt_ru": "[+2.465%; +2.9%]",
+    "color": "53C353"
+   }
+  ],
+  "49zn": [
+   {
+    "key": "stalker.artefact_properties.factor.speed_modifier",
+    "name_ru": "Скорость передвижения",
+    "name_en": "Movement speed",
+    "min": 0.2,
+    "max": 0.25,
+    "fmt_ru": "[+0.2%; +0.25%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.heal_efficiency",
+    "name_ru": "Эффективность лечения",
+    "name_en": "Healing effectiveness",
+    "min": 2.465,
+    "max": 2.9,
+    "fmt_ru": "[+2.465%; +2.9%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.max_weight_bonus",
+    "name_ru": "Переносимый вес",
+    "name_en": "Carry weight",
+    "min": 7.395,
+    "max": 8.7,
+    "fmt_ru": "[+7.395; +8.7]",
+    "color": "53C353"
+   }
+  ],
+  "4lrn": [
+   {
+    "key": "stalker.artefact_properties.factor.regeneration_bonus",
+    "name_ru": "Регенерация здоровья",
+    "name_en": "Health regeneration",
+    "min": 0.595,
+    "max": 0.7,
+    "fmt_ru": "[+0.595%; +0.7%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.recoil_bonus",
+    "name_ru": "Отдача",
+    "name_en": "Recoil",
+    "min": -1.5,
+    "max": -1.275,
+    "fmt_ru": "[-1.5%; -1.275%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.wiggle_bonus",
+    "name_ru": "Покачивание",
+    "name_en": "Sway",
+    "min": -6.1,
+    "max": -5.185,
+    "fmt_ru": "[-6.1%; -5.185%]",
+    "color": "53C353"
+   }
+  ],
+  "51l0": [
+   {
+    "key": "stalker.artefact_properties.factor.health_bonus",
+    "name_ru": "Живучесть",
+    "name_en": "Vitality",
+    "min": 0.32,
+    "max": 0.4,
+    "fmt_ru": "[+0.32%; +0.4%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.regeneration_bonus",
+    "name_ru": "Регенерация здоровья",
+    "name_en": "Health regeneration",
+    "min": 1.15,
+    "max": 1.4,
+    "fmt_ru": "[+1.15%; +1.4%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.explosion_dmg_factor",
+    "name_ru": "Защита от взрыва",
+    "name_en": "Explosion protection",
+    "min": 3.54,
+    "max": 4.3,
+    "fmt_ru": "[+3.54; +4.3]",
+    "color": "53C353"
+   }
+  ],
+  "5rm0": [
+   {
+    "key": "stalker.artefact_properties.factor.bullet_dmg_factor",
+    "name_ru": "Пулестойкость",
+    "name_en": "Bullet resistance",
+    "min": 10.37,
+    "max": 12.2,
+    "fmt_ru": "[+10.37; +12.2]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.recoil_bonus",
+    "name_ru": "Отдача",
+    "name_en": "Recoil",
+    "min": -1.5,
+    "max": -1.275,
+    "fmt_ru": "[-1.5%; -1.275%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.wiggle_bonus",
+    "name_ru": "Покачивание",
+    "name_en": "Sway",
+    "min": -2.1,
+    "max": -1.785,
+    "fmt_ru": "[-2.1%; -1.785%]",
+    "color": "53C353"
+   }
+  ],
+  "6goy": [
+   {
+    "key": "stalker.artefact_properties.factor.speed_modifier",
+    "name_ru": "Скорость передвижения",
+    "name_en": "Movement speed",
+    "min": 0.33,
+    "max": 0.4,
+    "fmt_ru": "[+0.33%; +0.4%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.bleeding_accumulation",
+    "name_ru": "Кровотечение",
+    "name_en": "Bleeding",
+    "min": -1,
+    "max": -0.82,
+    "fmt_ru": "[-1; -0.82]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.recoil_bonus",
+    "name_ru": "Отдача",
+    "name_en": "Recoil",
+    "min": -0.9,
+    "max": -0.74,
+    "fmt_ru": "[-0.9%; -0.74%]",
+    "color": "53C353"
+   }
+  ],
+  "7z77": [
+   {
+    "key": "stalker.artefact_properties.factor.max_weight_bonus",
+    "name_ru": "Переносимый вес",
+    "name_en": "Carry weight",
+    "min": 2.39,
+    "max": 2.9,
+    "fmt_ru": "[+2.39; +2.9]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.bullet_dmg_factor",
+    "name_ru": "Пулестойкость",
+    "name_en": "Bullet resistance",
+    "min": 3.21,
+    "max": 3.9,
+    "fmt_ru": "[+3.21; +3.9]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.tear_dmg_factor",
+    "name_ru": "Защита от разрыва",
+    "name_en": "Laceration protection",
+    "min": 10.05,
+    "max": 12.2,
+    "fmt_ru": "[+10.05; +12.2]",
+    "color": "53C353"
+   }
+  ],
+  "9n7z": [
+   {
+    "key": "stalker.artefact_properties.factor.bullet_dmg_factor",
+    "name_ru": "Пулестойкость",
+    "name_en": "Bullet resistance",
+    "min": 6.885,
+    "max": 8.1,
+    "fmt_ru": "[+6.885; +8.1]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.explosion_dmg_factor",
+    "name_ru": "Защита от взрыва",
+    "name_en": "Explosion protection",
+    "min": 7.565,
+    "max": 8.9,
+    "fmt_ru": "[+7.565; +8.9]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.tear_dmg_factor",
+    "name_ru": "Защита от разрыва",
+    "name_en": "Laceration protection",
+    "min": 10.37,
+    "max": 12.2,
+    "fmt_ru": "[+10.37; +12.2]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.reaction_to_tear",
+    "name_ru": "Реакция на разрыв",
+    "name_en": "Reaction to laceration",
+    "min": 2.295,
+    "max": 2.7,
+    "fmt_ru": "[+2.295%; +2.7%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.reaction_to_electroshock",
+    "name_ru": "Реакция на электричество",
+    "name_en": "Reaction to electricity",
+    "min": 2.805,
+    "max": 3.3,
+    "fmt_ru": "[+2.805%; +3.3%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.reaction_to_burn",
+    "name_ru": "Реакция на ожог",
+    "name_en": "Reaction to burns",
+    "min": 1.87,
+    "max": 2.2,
+    "fmt_ru": "[+1.87%; +2.2%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.reaction_to_chemical_burn",
+    "name_ru": "Реакция на хим. ожог",
+    "name_en": "Reaction to chemical burns",
+    "min": 2.805,
+    "max": 3.3,
+    "fmt_ru": "[+2.805%; +3.3%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.electra_dmg_factor",
+    "name_ru": "Электрозащита",
+    "name_en": "Resistance to electricity",
+    "min": 10.37,
+    "max": 12.2,
+    "fmt_ru": "[+10.37%; +12.2%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.burn_dmg_factor",
+    "name_ru": "Защита от огня",
+    "name_en": "Resistance to fire",
+    "min": 10.37,
+    "max": 12.2,
+    "fmt_ru": "[+10.37; +12.2]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.chemical_burn_dmg_factor",
+    "name_ru": "Химзащита",
+    "name_en": "Resistance to chemicals",
+    "min": 10.37,
+    "max": 12.2,
+    "fmt_ru": "[+10.37; +12.2]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.recoil_bonus",
+    "name_ru": "Отдача",
+    "name_en": "Recoil",
+    "min": -2.1,
+    "max": -1.785,
+    "fmt_ru": "[-2.1%; -1.785%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.bleeding_protection",
+    "name_ru": "Защита от кровотечения",
+    "name_en": "Bleeding protection",
+    "min": 2.8,
+    "max": 3.4,
+    "fmt_ru": "[+2.8%; +3.4%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.radiation_accumulation",
+    "name_ru": "Радиация",
+    "name_en": "Radiation",
+    "min": -1.28,
+    "max": -1.088,
+    "fmt_ru": "[-1.28; -1.088]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.thermal_accumulation",
+    "name_ru": "Температура",
+    "name_en": "Temperature",
+    "min": -1.28,
+    "max": -1.088,
+    "fmt_ru": "[-1.28; -1.088]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.biological_accumulation",
+    "name_ru": "Биологическое заражение",
+    "name_en": "Biological infection",
+    "min": -1.28,
+    "max": -1.088,
+    "fmt_ru": "[-1.28; -1.088]",
+    "color": "C15252"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.psycho_accumulation",
+    "name_ru": "Пси-излучение",
+    "name_en": "Psy-emissions",
+    "min": -1.28,
+    "max": -1.088,
+    "fmt_ru": "[-1.28; -1.088]",
+    "color": "C15252"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.bleeding_accumulation",
+    "name_ru": "Кровотечение",
+    "name_en": "Bleeding",
+    "min": -1,
+    "max": -0.85,
+    "fmt_ru": "[-1; -0.85]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.speed_modifier",
+    "name_ru": "Скорость передвижения",
+    "name_en": "Movement speed",
+    "min": 1.19,
+    "max": 1.4,
+    "fmt_ru": "[+1.19%; +1.4%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.max_weight_bonus",
+    "name_ru": "Переносимый вес",
+    "name_en": "Carry weight",
+    "min": 7.395,
+    "max": 8.7,
+    "fmt_ru": "[+7.395; +8.7]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.heal_efficiency",
+    "name_ru": "Эффективность лечения",
+    "name_en": "Healing effectiveness",
+    "min": 5.93,
+    "max": 7.2,
+    "fmt_ru": "[+5.93%; +7.2%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.health_bonus",
+    "name_ru": "Живучесть",
+    "name_en": "Vitality",
+    "min": 1.02,
+    "max": 1.2,
+    "fmt_ru": "[+1.02%; +1.2%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.regeneration_bonus",
+    "name_ru": "Регенерация здоровья",
+    "name_en": "Health regeneration",
+    "min": 1.15,
+    "max": 1.4,
+    "fmt_ru": "[+1.15%; +1.4%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.stamina_bonus",
+    "name_ru": "Выносливость",
+    "name_en": "Stamina",
+    "min": 11.05,
+    "max": 13,
+    "fmt_ru": "[+11.05%; +13%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.stamina_regeneration_bonus",
+    "name_ru": "Восстановление выносливости",
+    "name_en": "Stamina regeneration",
+    "min": 2.465,
+    "max": 2.9,
+    "fmt_ru": "[+2.465%; +2.9%]",
+    "color": "53C353"
+   }
+  ],
+  "gy7p": [
+   {
+    "key": "stalker.artefact_properties.factor.speed_modifier",
+    "name_ru": "Скорость передвижения",
+    "name_en": "Movement speed",
+    "min": 0.288,
+    "max": 0.35,
+    "fmt_ru": "[+0.288%; +0.35%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.stamina_regeneration_bonus",
+    "name_ru": "Восстановление выносливости",
+    "name_en": "Stamina regeneration",
+    "min": 0.85,
+    "max": 1,
+    "fmt_ru": "[+0.85%; +1%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.bleeding_accumulation",
+    "name_ru": "Кровотечение",
+    "name_en": "Bleeding",
+    "min": -1,
+    "max": -0.85,
+    "fmt_ru": "[-1; -0.85]",
+    "color": "53C353"
+   }
+  ],
+  "j3p6": [
+   {
+    "key": "stalker.artefact_properties.factor.stamina_regeneration_bonus",
+    "name_ru": "Восстановление выносливости",
+    "name_en": "Stamina regeneration",
+    "min": 2.96,
+    "max": 3.6,
+    "fmt_ru": "[+2.96%; +3.6%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.artefakt_heal",
+    "name_ru": "Периодическое лечение",
+    "name_en": "Periodic healing",
+    "min": 0.165,
+    "max": 0.2,
+    "fmt_ru": "[+0.165%; +0.2%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.health_bonus",
+    "name_ru": "Живучесть",
+    "name_en": "Vitality",
+    "min": 0.595,
+    "max": 0.7,
+    "fmt_ru": "[+0.595%; +0.7%]",
+    "color": "53C353"
+   }
+  ],
+  "jky6": [
+   {
+    "key": "stalker.artefact_properties.factor.stamina_bonus",
+    "name_ru": "Выносливость",
+    "name_en": "Stamina",
+    "min": 6.12,
+    "max": 7.2,
+    "fmt_ru": "[+6.12%; +7.2%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.speed_modifier",
+    "name_ru": "Скорость передвижения",
+    "name_en": "Movement speed",
+    "min": 0.45,
+    "max": 0.55,
+    "fmt_ru": "[+0.45%; +0.55%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.stamina_regeneration_bonus",
+    "name_ru": "Восстановление выносливости",
+    "name_en": "Stamina regeneration",
+    "min": 4.08,
+    "max": 4.8,
+    "fmt_ru": "[+4.08%; +4.8%]",
+    "color": "53C353"
+   }
+  ],
+  "k3rv": [
+   {
+    "key": "stalker.artefact_properties.factor.stamina_bonus",
+    "name_ru": "Выносливость",
+    "name_en": "Stamina",
+    "min": 3.87,
+    "max": 4.7,
+    "fmt_ru": "[+3.87%; +4.7%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.speed_modifier",
+    "name_ru": "Скорость передвижения",
+    "name_en": "Movement speed",
+    "min": 0.17,
+    "max": 0.2,
+    "fmt_ru": "[+0.17%; +0.2%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.psycho_accumulation",
+    "name_ru": "Пси-излучение",
+    "name_en": "Psy-emissions",
+    "min": -1.28,
+    "max": -1.06,
+    "fmt_ru": "[-1.28; -1.06]",
+    "color": "C15252"
+   }
+  ],
+  "k3yv": [
+   {
+    "key": "stalker.artefact_properties.factor.bullet_dmg_factor",
+    "name_ru": "Пулестойкость",
+    "name_en": "Bullet resistance",
+    "min": 2.55,
+    "max": 3.1,
+    "fmt_ru": "[+2.55; +3.1]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.stamina_bonus",
+    "name_ru": "Выносливость",
+    "name_en": "Stamina",
+    "min": 12.02,
+    "max": 14.6,
+    "fmt_ru": "[+12.02%; +14.6%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.regeneration_bonus",
+    "name_ru": "Регенерация здоровья",
+    "name_en": "Health regeneration",
+    "min": 0.68,
+    "max": 0.8,
+    "fmt_ru": "[+0.68%; +0.8%]",
+    "color": "53C353"
+   }
+  ],
+  "kq4v": [
+   {
+    "key": "stalker.artefact_properties.factor.regeneration_bonus",
+    "name_ru": "Регенерация здоровья",
+    "name_en": "Health regeneration",
+    "min": 0.91,
+    "max": 1.1,
+    "fmt_ru": "[+0.91%; +1.1%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.speed_modifier",
+    "name_ru": "Скорость передвижения",
+    "name_en": "Movement speed",
+    "min": 0.95,
+    "max": 1.15,
+    "fmt_ru": "[+0.95%; +1.15%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.stamina_regeneration_bonus",
+    "name_ru": "Восстановление выносливости",
+    "name_en": "Stamina regeneration",
+    "min": 1.32,
+    "max": 1.6,
+    "fmt_ru": "[+1.32%; +1.6%]",
+    "color": "53C353"
+   }
+  ],
+  "q10k": [
+   {
+    "key": "stalker.artefact_properties.factor.health_bonus",
+    "name_ru": "Живучесть",
+    "name_en": "Vitality",
+    "min": 0.58,
+    "max": 0.7,
+    "fmt_ru": "[+0.58%; +0.7%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.max_weight_bonus",
+    "name_ru": "Переносимый вес",
+    "name_en": "Carry weight",
+    "min": 3.05,
+    "max": 3.7,
+    "fmt_ru": "[+3.05; +3.7]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.regeneration_bonus",
+    "name_ru": "Регенерация здоровья",
+    "name_en": "Health regeneration",
+    "min": 1.48,
+    "max": 1.8,
+    "fmt_ru": "[+1.48%; +1.8%]",
+    "color": "53C353"
+   }
+  ],
+  "q1lk": [
+   {
+    "key": "stalker.artefact_properties.factor.stamina_regeneration_bonus",
+    "name_ru": "Восстановление выносливости",
+    "name_en": "Stamina regeneration",
+    "min": 2.72,
+    "max": 3.2,
+    "fmt_ru": "[+2.72%; +3.2%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.regeneration_bonus",
+    "name_ru": "Регенерация здоровья",
+    "name_en": "Health regeneration",
+    "min": 0.68,
+    "max": 0.8,
+    "fmt_ru": "[+0.68%; +0.8%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.health_bonus",
+    "name_ru": "Живучесть",
+    "name_en": "Vitality",
+    "min": 0.425,
+    "max": 0.5,
+    "fmt_ru": "[+0.425%; +0.5%]",
+    "color": "53C353"
+   }
+  ],
+  "qodk": [
+   {
+    "key": "stalker.artefact_properties.factor.bullet_dmg_factor",
+    "name_ru": "Пулестойкость",
+    "name_en": "Bullet resistance",
+    "min": 5.525,
+    "max": 6.5,
+    "fmt_ru": "[+5.525; +6.5]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.tear_dmg_factor",
+    "name_ru": "Защита от разрыва",
+    "name_en": "Laceration protection",
+    "min": 17.17,
+    "max": 20.2,
+    "fmt_ru": "[+17.17; +20.2]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.explosion_dmg_factor",
+    "name_ru": "Защита от взрыва",
+    "name_en": "Explosion protection",
+    "min": 4.25,
+    "max": 5,
+    "fmt_ru": "[+4.25; +5]",
+    "color": "53C353"
+   }
+  ],
+  "rnkl": [
+   {
+    "key": "stalker.artefact_properties.factor.speed_modifier",
+    "name_ru": "Скорость передвижения",
+    "name_en": "Movement speed",
+    "min": 0.206,
+    "max": 0.25,
+    "fmt_ru": "[+0.206%; +0.25%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.regeneration_bonus",
+    "name_ru": "Регенерация здоровья",
+    "name_en": "Health regeneration",
+    "min": 1.15,
+    "max": 1.4,
+    "fmt_ru": "[+1.15%; +1.4%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.tear_dmg_factor",
+    "name_ru": "Защита от разрыва",
+    "name_en": "Laceration protection",
+    "min": 4.78,
+    "max": 5.8,
+    "fmt_ru": "[+4.78; +5.8]",
+    "color": "53C353"
+   }
+  ],
+  "w4jo": [
+   {
+    "key": "stalker.artefact_properties.factor.bullet_dmg_factor",
+    "name_ru": "Пулестойкость",
+    "name_en": "Bullet resistance",
+    "min": 2.8,
+    "max": 3.4,
+    "fmt_ru": "[+2.8; +3.4]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.stamina_regeneration_bonus",
+    "name_ru": "Восстановление выносливости",
+    "name_en": "Stamina regeneration",
+    "min": 1.4,
+    "max": 1.7,
+    "fmt_ru": "[+1.4%; +1.7%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.regeneration_bonus",
+    "name_ru": "Регенерация здоровья",
+    "name_en": "Health regeneration",
+    "min": 1.48,
+    "max": 1.8,
+    "fmt_ru": "[+1.48%; +1.8%]",
+    "color": "53C353"
+   }
+  ],
+  "w4no": [
+   {
+    "key": "stalker.artefact_properties.factor.max_weight_bonus",
+    "name_ru": "Переносимый вес",
+    "name_en": "Carry weight",
+    "min": 2.38,
+    "max": 2.9,
+    "fmt_ru": "[+2.38; +2.9]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.health_bonus",
+    "name_ru": "Живучесть",
+    "name_en": "Vitality",
+    "min": 0.98,
+    "max": 1.2,
+    "fmt_ru": "[+0.98%; +1.2%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.regeneration_bonus",
+    "name_ru": "Регенерация здоровья",
+    "name_en": "Health regeneration",
+    "min": 0.58,
+    "max": 0.7,
+    "fmt_ru": "[+0.58%; +0.7%]",
+    "color": "53C353"
+   }
+  ],
+  "wgko": [
+   {
+    "key": "stalker.artefact_properties.factor.stamina_regeneration_bonus",
+    "name_ru": "Восстановление выносливости",
+    "name_en": "Stamina regeneration",
+    "min": 3.54,
+    "max": 4.3,
+    "fmt_ru": "[+3.54%; +4.3%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.bullet_dmg_factor",
+    "name_ru": "Пулестойкость",
+    "name_en": "Bullet resistance",
+    "min": 3.485,
+    "max": 4.1,
+    "fmt_ru": "[+3.485; +4.1]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.stopping_protection",
+    "name_ru": "Стойкость",
+    "name_en": "Stability",
+    "min": 2.31,
+    "max": 2.8,
+    "fmt_ru": "[+2.31%; +2.8%]",
+    "color": "53C353"
+   }
+  ],
+  "y5ro": [
+   {
+    "key": "stalker.artefact_properties.factor.stamina_bonus",
+    "name_ru": "Выносливость",
+    "name_en": "Stamina",
+    "min": 5.525,
+    "max": 6.5,
+    "fmt_ru": "[+5.525%; +6.5%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.max_weight_bonus",
+    "name_ru": "Переносимый вес",
+    "name_en": "Carry weight",
+    "min": 5.27,
+    "max": 6.2,
+    "fmt_ru": "[+5.27; +6.2]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.bleeding_protection",
+    "name_ru": "Защита от кровотечения",
+    "name_en": "Bleeding protection",
+    "min": 4.335,
+    "max": 5.1,
+    "fmt_ru": "[+4.335%; +5.1%]",
+    "color": "53C353"
+   }
+  ],
+  "yq3o": [
+   {
+    "key": "stalker.artefact_properties.factor.health_bonus",
+    "name_ru": "Живучесть",
+    "name_en": "Vitality",
+    "min": 0.99,
+    "max": 1.2,
+    "fmt_ru": "[+0.99%; +1.2%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.stamina_bonus",
+    "name_ru": "Выносливость",
+    "name_en": "Stamina",
+    "min": 3.62,
+    "max": 4.4,
+    "fmt_ru": "[+3.62%; +4.4%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.heal_efficiency",
+    "name_ru": "Эффективность лечения",
+    "name_en": "Healing effectiveness",
+    "min": 2.39,
+    "max": 2.9,
+    "fmt_ru": "[+2.39%; +2.9%]",
+    "color": "53C353"
+   }
+  ],
+  "zjzn": [
+   {
+    "key": "stalker.artefact_properties.factor.regeneration_bonus",
+    "name_ru": "Регенерация здоровья",
+    "name_en": "Health regeneration",
+    "min": 1.15,
+    "max": 1.4,
+    "fmt_ru": "[+1.15%; +1.4%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.stamina_regeneration_bonus",
+    "name_ru": "Восстановление выносливости",
+    "name_en": "Stamina regeneration",
+    "min": 1.15,
+    "max": 1.4,
+    "fmt_ru": "[+1.15%; +1.4%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.bullet_dmg_factor",
+    "name_ru": "Пулестойкость",
+    "name_en": "Bullet resistance",
+    "min": 2.22,
+    "max": 2.7,
+    "fmt_ru": "[+2.22; +2.7]",
+    "color": "53C353"
+   }
+  ],
+  "zymn": [
+   {
+    "key": "stalker.artefact_properties.factor.regeneration_bonus",
+    "name_ru": "Регенерация здоровья",
+    "name_en": "Health regeneration",
+    "min": 0.41,
+    "max": 0.5,
+    "fmt_ru": "[+0.41%; +0.5%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.heal_efficiency",
+    "name_ru": "Эффективность лечения",
+    "name_en": "Healing effectiveness",
+    "min": 2.465,
+    "max": 2.9,
+    "fmt_ru": "[+2.465%; +2.9%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.explosion_dmg_factor",
+    "name_ru": "Защита от взрыва",
+    "name_en": "Explosion protection",
+    "min": 6.12,
+    "max": 7.2,
+    "fmt_ru": "[+6.12; +7.2]",
+    "color": "53C353"
+   }
+  ],
+  "4l7p": [
+   {
+    "key": "stalker.artefact_properties.factor.bullet_dmg_factor",
+    "name_ru": "Пулестойкость",
+    "name_en": "Bullet resistance",
+    "min": 2.89,
+    "max": 3.4,
+    "fmt_ru": "[+2.89; +3.4]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.explosion_dmg_factor",
+    "name_ru": "Защита от взрыва",
+    "name_en": "Explosion protection",
+    "min": 2.21,
+    "max": 2.6,
+    "fmt_ru": "[+2.21; +2.6]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.bleeding_accumulation",
+    "name_ru": "Кровотечение",
+    "name_en": "Bleeding",
+    "min": -0.9,
+    "max": -0.765,
+    "fmt_ru": "[-0.9; -0.765]",
+    "color": "53C353"
+   }
+  ],
+  "5rog": [
+   {
+    "key": "stalker.artefact_properties.factor.max_weight_bonus",
+    "name_ru": "Переносимый вес",
+    "name_en": "Carry weight",
+    "min": 1.53,
+    "max": 1.8,
+    "fmt_ru": "[+1.53; +1.8]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.reaction_to_tear",
+    "name_ru": "Реакция на разрыв",
+    "name_en": "Reaction to laceration",
+    "min": 1.36,
+    "max": 1.6,
+    "fmt_ru": "[+1.36%; +1.6%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.radiation_protection",
+    "name_ru": "Защита от радиации",
+    "name_en": "Radiation protection",
+    "min": 8.5,
+    "max": 10,
+    "fmt_ru": "[+8.5; +10]",
+    "color": "53C353"
+   }
+  ],
+  "5rzo": [
+   {
+    "key": "stalker.artefact_properties.factor.tear_dmg_factor",
+    "name_ru": "Защита от разрыва",
+    "name_en": "Laceration protection",
+    "min": 3.06,
+    "max": 3.6,
+    "fmt_ru": "[+3.06; +3.6]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.bullet_dmg_factor",
+    "name_ru": "Пулестойкость",
+    "name_en": "Bullet resistance",
+    "min": 2.89,
+    "max": 3.4,
+    "fmt_ru": "[+2.89; +3.4]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.explosion_dmg_factor",
+    "name_ru": "Защита от взрыва",
+    "name_en": "Explosion protection",
+    "min": 6.63,
+    "max": 7.8,
+    "fmt_ru": "[+6.63; +7.8]",
+    "color": "53C353"
+   }
+  ],
+  "gy10": [
+   {
+    "key": "stalker.artefact_properties.factor.burn_dmg_factor",
+    "name_ru": "Защита от огня",
+    "name_en": "Resistance to fire",
+    "min": 6.01,
+    "max": 7.3,
+    "fmt_ru": "[+6.01; +7.3]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.thermal_protection",
+    "name_ru": "Защита от температуры",
+    "name_en": "Thermal protection",
+    "min": 8.5,
+    "max": 10,
+    "fmt_ru": "[+8.5; +10]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.stamina_bonus",
+    "name_ru": "Выносливость",
+    "name_en": "Stamina",
+    "min": 2.21,
+    "max": 2.6,
+    "fmt_ru": "[+2.21%; +2.6%]",
+    "color": "53C353"
+   }
+  ],
+  "gyln": [
+   {
+    "key": "stalker.artefact_properties.factor.tear_dmg_factor",
+    "name_ru": "Защита от разрыва",
+    "name_en": "Laceration protection",
+    "min": 3.74,
+    "max": 4.4,
+    "fmt_ru": "[+3.74; +4.4]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.stamina_bonus",
+    "name_ru": "Выносливость",
+    "name_en": "Stamina",
+    "min": 7.98,
+    "max": 9.7,
+    "fmt_ru": "[+7.98%; +9.7%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.heal_efficiency",
+    "name_ru": "Эффективность лечения",
+    "name_en": "Healing effectiveness",
+    "min": 1.36,
+    "max": 1.6,
+    "fmt_ru": "[+1.36%; +1.6%]",
+    "color": "53C353"
+   }
+  ],
+  "jkml": [
+   {
+    "key": "stalker.artefact_properties.factor.thermal_protection",
+    "name_ru": "Защита от температуры",
+    "name_en": "Thermal protection",
+    "min": 16.47,
+    "max": 20,
+    "fmt_ru": "[+16.47; +20]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.biological_protection",
+    "name_ru": "Защита от биозаражения",
+    "name_en": "Bioinfection protection",
+    "min": 16.47,
+    "max": 20,
+    "fmt_ru": "[+16.47; +20]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.speed_modifier",
+    "name_ru": "Скорость передвижения",
+    "name_en": "Movement speed",
+    "min": 0.2,
+    "max": 0.25,
+    "fmt_ru": "[+0.2%; +0.25%]",
+    "color": "53C353"
+   }
+  ],
+  "jkq7": [
+   {
+    "key": "stalker.artefact_properties.factor.health_bonus",
+    "name_ru": "Живучесть",
+    "name_en": "Vitality",
+    "min": 0.576,
+    "max": 0.699,
+    "fmt_ru": "[+0.576%; +0.699%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.stamina_bonus",
+    "name_ru": "Выносливость",
+    "name_en": "Stamina",
+    "min": 13.34,
+    "max": 16.2,
+    "fmt_ru": "[+13.34%; +16.2%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.stopping_protection",
+    "name_ru": "Стойкость",
+    "name_en": "Stability",
+    "min": 1.4,
+    "max": 1.7,
+    "fmt_ru": "[+1.4%; +1.7%]",
+    "color": "53C353"
+   }
+  ],
+  "kqoj": [
+   {
+    "key": "stalker.artefact_properties.factor.explosion_dmg_factor",
+    "name_ru": "Защита от взрыва",
+    "name_en": "Explosion protection",
+    "min": 3.7,
+    "max": 4.5,
+    "fmt_ru": "[+3.7; +4.5]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.tear_dmg_factor",
+    "name_ru": "Защита от разрыва",
+    "name_en": "Laceration protection",
+    "min": 14.98,
+    "max": 18.2,
+    "fmt_ru": "[+14.98; +18.2]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.heal_efficiency",
+    "name_ru": "Эффективность лечения",
+    "name_en": "Healing effectiveness",
+    "min": 3.74,
+    "max": 4.4,
+    "fmt_ru": "[+3.74%; +4.4%]",
+    "color": "53C353"
+   }
+  ],
+  "kqp0": [
+   {
+    "key": "stalker.artefact_properties.factor.bleeding_accumulation",
+    "name_ru": "Кровотечение",
+    "name_en": "Bleeding",
+    "min": -1,
+    "max": -0.85,
+    "fmt_ru": "[-1; -0.85]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.regeneration_bonus",
+    "name_ru": "Регенерация здоровья",
+    "name_en": "Health regeneration",
+    "min": 0.425,
+    "max": 0.5,
+    "fmt_ru": "[+0.425%; +0.5%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.heal_efficiency",
+    "name_ru": "Эффективность лечения",
+    "name_en": "Healing effectiveness",
+    "min": 2.465,
+    "max": 2.9,
+    "fmt_ru": "[+2.465%; +2.9%]",
+    "color": "53C353"
+   }
+  ],
+  "ljn2": [
+   {
+    "key": "stalker.artefact_properties.factor.health_bonus",
+    "name_ru": "Живучесть",
+    "name_en": "Vitality",
+    "min": 0.765,
+    "max": 0.9,
+    "fmt_ru": "[+0.765%; +0.9%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.combustion_accumulation",
+    "name_ru": "Горение",
+    "name_en": "Burning",
+    "min": -0.2,
+    "max": -0.17,
+    "fmt_ru": "[-0.2; -0.17]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.explosion_dmg_factor",
+    "name_ru": "Защита от взрыва",
+    "name_en": "Explosion protection",
+    "min": 12.665,
+    "max": 14.9,
+    "fmt_ru": "[+12.665; +14.9]",
+    "color": "53C353"
+   }
+  ],
+  "ljrj": [
+   {
+    "key": "stalker.artefact_properties.factor.combustion_accumulation",
+    "name_ru": "Горение",
+    "name_en": "Burning",
+    "min": -0.1,
+    "max": -0.08,
+    "fmt_ru": "[-0.1; -0.08]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.speed_modifier",
+    "name_ru": "Скорость передвижения",
+    "name_en": "Movement speed",
+    "min": 0.16,
+    "max": 0.2,
+    "fmt_ru": "[+0.16%; +0.2%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.thermal_accumulation",
+    "name_ru": "Температура",
+    "name_en": "Temperature",
+    "min": -0.88,
+    "max": -0.748,
+    "fmt_ru": "[-0.88; -0.748]",
+    "color": "53C353"
+   }
+  ],
+  "qo94": [
+   {
+    "key": "stalker.artefact_properties.factor.health_bonus",
+    "name_ru": "Живучесть",
+    "name_en": "Vitality",
+    "min": 0.49,
+    "max": 0.6,
+    "fmt_ru": "[+0.49%; +0.6%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.max_weight_bonus",
+    "name_ru": "Переносимый вес",
+    "name_en": "Carry weight",
+    "min": 2.465,
+    "max": 2.9,
+    "fmt_ru": "[+2.465; +2.9]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.stamina_regeneration_bonus",
+    "name_ru": "Восстановление выносливости",
+    "name_en": "Stamina regeneration",
+    "min": 2.465,
+    "max": 2.9,
+    "fmt_ru": "[+2.465%; +2.9%]",
+    "color": "53C353"
+   }
+  ],
+  "qoq6": [
+   {
+    "key": "stalker.artefact_properties.factor.regeneration_bonus",
+    "name_ru": "Регенерация здоровья",
+    "name_en": "Health regeneration",
+    "min": 0.51,
+    "max": 0.6,
+    "fmt_ru": "[+0.51%; +0.6%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.bleeding_protection",
+    "name_ru": "Защита от кровотечения",
+    "name_en": "Bleeding protection",
+    "min": 3.315,
+    "max": 3.9,
+    "fmt_ru": "[+3.315%; +3.9%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.health_bonus",
+    "name_ru": "Живучесть",
+    "name_en": "Vitality",
+    "min": 0.595,
+    "max": 0.7,
+    "fmt_ru": "[+0.595%; +0.7%]",
+    "color": "53C353"
+   }
+  ],
+  "rn1z": [
+   {
+    "key": "stalker.artefact_properties.factor.stamina_bonus",
+    "name_ru": "Выносливость",
+    "name_en": "Stamina",
+    "min": 5.93,
+    "max": 7.2,
+    "fmt_ru": "[+5.93%; +7.2%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.bullet_dmg_factor",
+    "name_ru": "Пулестойкость",
+    "name_en": "Bullet resistance",
+    "min": 5.35,
+    "max": 6.5,
+    "fmt_ru": "[+5.35; +6.5]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.stopping_protection",
+    "name_ru": "Стойкость",
+    "name_en": "Stability",
+    "min": 5.35,
+    "max": 6.5,
+    "fmt_ru": "[+5.35%; +6.5%]",
+    "color": "53C353"
+   }
+  ],
+  "rnvg": [
+   {
+    "key": "stalker.artefact_properties.factor.stamina_bonus",
+    "name_ru": "Выносливость",
+    "name_en": "Stamina",
+    "min": 4.28,
+    "max": 5.2,
+    "fmt_ru": "[+4.28%; +5.2%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.heal_efficiency",
+    "name_ru": "Эффективность лечения",
+    "name_en": "Healing effectiveness",
+    "min": 4.2,
+    "max": 5.1,
+    "fmt_ru": "[+4.2%; +5.1%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.combustion_accumulation",
+    "name_ru": "Горение",
+    "name_en": "Burning",
+    "min": -0.1,
+    "max": -0.082,
+    "fmt_ru": "[-0.1; -0.082]",
+    "color": "53C353"
+   }
+  ],
+  "wglp": [
+   {
+    "key": "stalker.artefact_properties.factor.stamina_bonus",
+    "name_ru": "Выносливость",
+    "name_en": "Stamina",
+    "min": 13.77,
+    "max": 16.2,
+    "fmt_ru": "[+13.77%; +16.2%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.heal_efficiency",
+    "name_ru": "Эффективность лечения",
+    "name_en": "Healing effectiveness",
+    "min": 3.05,
+    "max": 3.7,
+    "fmt_ru": "[+3.05%; +3.7%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.health_bonus",
+    "name_ru": "Живучесть",
+    "name_en": "Vitality",
+    "min": 0.425,
+    "max": 0.5,
+    "fmt_ru": "[+0.425%; +0.5%]",
+    "color": "53C353"
+   }
+  ],
+  "wgwz": [
+   {
+    "key": "stalker.artefact_properties.factor.bullet_dmg_factor",
+    "name_ru": "Пулестойкость",
+    "name_en": "Bullet resistance",
+    "min": 2.635,
+    "max": 3.1,
+    "fmt_ru": "[+2.635; +3.1]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.stamina_bonus",
+    "name_ru": "Выносливость",
+    "name_en": "Stamina",
+    "min": 2.88,
+    "max": 3.5,
+    "fmt_ru": "[+2.88%; +3.5%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.regeneration_bonus",
+    "name_ru": "Регенерация здоровья",
+    "name_en": "Health regeneration",
+    "min": 1.02,
+    "max": 1.2,
+    "fmt_ru": "[+1.02%; +1.2%]",
+    "color": "53C353"
+   }
+  ],
+  "y5k0": [
+   {
+    "key": "stalker.artefact_properties.factor.electra_dmg_factor",
+    "name_ru": "Электрозащита",
+    "name_en": "Resistance to electricity",
+    "min": 3.78,
+    "max": 4.6,
+    "fmt_ru": "[+3.78%; +4.6%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.combustion_accumulation",
+    "name_ru": "Горение",
+    "name_en": "Burning",
+    "min": -0.3,
+    "max": -0.24,
+    "fmt_ru": "[-0.3; -0.24]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.speed_modifier",
+    "name_ru": "Скорость передвижения",
+    "name_en": "Movement speed",
+    "min": 0.32,
+    "max": 0.4,
+    "fmt_ru": "[+0.32%; +0.4%]",
+    "color": "53C353"
+   }
+  ],
+  "y5nz": [
+   {
+    "key": "stalker.artefact_properties.factor.bullet_dmg_factor",
+    "name_ru": "Пулестойкость",
+    "name_en": "Bullet resistance",
+    "min": 3.485,
+    "max": 4.1,
+    "fmt_ru": "[+3.485; +4.1]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.stamina_bonus",
+    "name_ru": "Выносливость",
+    "name_en": "Stamina",
+    "min": 2.55,
+    "max": 3.1,
+    "fmt_ru": "[+2.55%; +3.1%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.max_weight_bonus",
+    "name_ru": "Переносимый вес",
+    "name_en": "Carry weight",
+    "min": 1.275,
+    "max": 1.5,
+    "fmt_ru": "[+1.275; +1.5]",
+    "color": "53C353"
+   }
+  ],
+  "zyqk": [
+   {
+    "key": "stalker.artefact_properties.factor.combustion_accumulation",
+    "name_ru": "Горение",
+    "name_en": "Burning",
+    "min": -0.1,
+    "max": -0.085,
+    "fmt_ru": "[-0.1; -0.085]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.regeneration_bonus",
+    "name_ru": "Регенерация здоровья",
+    "name_en": "Health regeneration",
+    "min": 0.41,
+    "max": 0.4,
+    "fmt_ru": "[+0.41%; +0.4%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.health_bonus",
+    "name_ru": "Живучесть",
+    "name_en": "Vitality",
+    "min": 0.51,
+    "max": 0.6,
+    "fmt_ru": "[+0.51%; +0.6%]",
+    "color": "53C353"
+   }
+  ],
+  "zyw2": [
+   {
+    "key": "stalker.artefact_properties.factor.thermal_accumulation",
+    "name_ru": "Температура",
+    "name_en": "Temperature",
+    "min": -0.88,
+    "max": -0.35,
+    "fmt_ru": "[-0.88; -0.35]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.stamina_regeneration_bonus",
+    "name_ru": "Восстановление выносливости",
+    "name_en": "Stamina regeneration",
+    "min": 0.68,
+    "max": 0.8,
+    "fmt_ru": "[+0.68%; +0.8%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.regeneration_bonus",
+    "name_ru": "Регенерация здоровья",
+    "name_en": "Health regeneration",
+    "min": 0.24,
+    "max": 0.3,
+    "fmt_ru": "[+0.24%; +0.3%]",
+    "color": "53C353"
+   }
+  ],
+  "j306": [
+   {
+    "key": "stalker.artefact_properties.factor.speed_modifier",
+    "name_ru": "Скорость передвижения",
+    "name_en": "Movement speed",
+    "min": 0.2975,
+    "max": 0.35,
+    "fmt_ru": "[+0,3%; +0,35%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.regeneration_bonus",
+    "name_ru": "Регенерация здоровья",
+    "name_en": "Health regeneration",
+    "min": 0.425,
+    "max": 0.5,
+    "fmt_ru": "[+0,43%; +0,5%]",
+    "color": "53C353"
+   },
+   {
+    "key": "stalker.artefact_properties.factor.electra_dmg_factor",
+    "name_ru": "Электрозащита",
+    "name_en": "Resistance to electricity",
+    "min": 10.37,
+    "max": 12.2,
+    "fmt_ru": "[+10,37; +12,2]",
+    "color": "53C353"
+   }
+  ]
+ }
+}

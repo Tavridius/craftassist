@@ -18,14 +18,21 @@ M — множитель качества: тиры непрерывны по +0
 Эффективность контейнера НЕ масштабирует величину статов (в текущей игре это темп
 разряда энергии) — суммы берём сырые, как в игровой формуле.
 
+Доп-свойства порогов заточки (+5/+10/+15): фиксированный пул арта
+(BONUS_PROPS из db/art_bonus_props.json), значение = base × M × заточка;
+случаен только порядок разблокировки → учёт матожиданием (bonus_factor),
+на +15 у обычных артов (пул 3) — детерминированно все три.
+
 Автоподбор — bounded knapsack: пул (артефакт × качество × заточка) с ценами,
 парето-фронт + DP по (слоты × бюджет). Приведённое ХП — та же основа со свипом
 λ по (пулестойкость, живучесть), т.к. цель (100+пуле)×живучесть нелинейна.
 """
+import json
 import math
 import random
 import time
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from app import config
 from app.db import market
@@ -36,10 +43,13 @@ from app.services.artefact_watch import MSK
 M_MIN, M_MAX = 0.85, 1.75
 TIER_STEP = 0.15
 PTN_LEVELS = (0, 5, 10, 15)  # уровни заточки в автоподборе (решение юзера)
-# Заточка НЕлинейна (выведено из игровых тултипов Креветки/Браслета):
-# множитель к положительным статам = 1 + a·ptn + b·ptn²  →  +0×1.0, +5×1.10,
-# +10×1.35, +15×1.74. Проверено: Креветка +15 M1.15 пуле 7.1×1.15×1.739=14.2 (в игре 14.2).
-SHARP_A, SHARP_B = 0.0053667, 0.0029267
+# Заточка ЛИНЕЙНА: +2% от базы за уровень (+15 = ×1.30). Подтверждено файлами
+# _variants (Батарейка zy32, Креветка gyg5: все 15 уровней ровно 1+0.02·ptn).
+# Квадратичная калибровка по тултипам была ошибкой — в тултипы входили случайные
+# доп-свойства порогов +5/+10/+15, которых нет в статической базе (баг VeilSol:
+# Батарейка 1.84 ск.бега показывала +15→3.20 вместо 2.39). Форма a·ptn + b·ptn²
+# оставлена ради совместимости с фронтом (константы уезжают в payload модели).
+SHARP_A, SHARP_B = 0.02, 0.0
 
 
 def sharp(ptn: int) -> float:
@@ -71,7 +81,7 @@ TOP_COLORS = ("RANK_MASTER", "RANK_LEGEND")
 # Лестница бюджетов на артефакты (к=тыс, кк=млн, ккк=млрд).
 DAILY_BUDGETS = (100_000, 500_000, 1_000_000, 3_000_000, 5_000_000,
                  10_000_000, 50_000_000, 100_000_000, 500_000_000, 1_000_000_000)
-DAILY_ARMOR_PTN = (0, 5, 10, 15)     # уровень заточки брони в сборке дня
+DAILY_ARMOR_PTN = (15,)              # уровень заточки брони в сборке дня — только +15
 DAILY_ATTEMPTS = 8                   # детерминированных перекруток, если под ролл нет цен
 # Полезные статы для ролла. «Первичные» могут стоять первым параметром; «вторичные»
 # (восст. выносливости / регенерация / переносимый вес) — только вторым/третьим.
@@ -130,6 +140,43 @@ def milestones(ptn: int) -> list[int]:
     return [m for m in (5, 10, 15) if m > ptn]
 
 
+# ---------- доп-свойства заточки (+5/+10/+15) ----------
+# Пул фиксированных доп-свойств артефакта (снят со stalzone.wiki —
+# db/art_bonus_props.json). Величина НЕ случайна: base × M × заточка(ptn),
+# верифицировано 9 тултипами (20.07.2026, см. ROADMAP). Случаен только порядок
+# разблокировки: +5 — одно свойство пула, +10 — второе, +15 — третье. Учитываем
+# матожиданием (разблокировано/размер пула): у обычных артов (пул из 3) на +15
+# это ровно 1.0 — детерминировано; у Рубика (пул из 24) — всегда доля.
+_BONUS_FILE = Path(__file__).resolve().parents[1] / "db" / "art_bonus_props.json"
+
+
+def _load_bonus_props() -> dict:
+    try:
+        raw = json.loads(_BONUS_FILE.read_text(encoding="utf-8"))["props"]
+    except Exception:
+        return {}
+    return {iid: [{"key": p["key"], "name": p.get("name_ru") or p["key"],
+                   "base": p["max"] if abs(p["max"]) >= abs(p["min"]) else p["min"]}
+                  for p in props]
+            for iid, props in raw.items()}
+
+
+BONUS_PROPS = _load_bonus_props()
+
+
+def bonus_factor(iid: str, ptn: int) -> float:
+    """Матожидание активности одного свойства пула на данной заточке."""
+    pool = BONUS_PROPS.get(iid)
+    if not pool:
+        return 0.0
+    return sum(1 for t in (5, 10, 15) if ptn >= t) / len(pool)
+
+
+def bonus_value(bp: dict, m: float, ptn: int) -> float:
+    """Полное значение доп-свойства (как в тултипе): base × M × заточка."""
+    return bp["base"] * m * sharp(ptn)
+
+
 # ---------- цены корзин (кэш 60 с) ----------
 _prices_cache: dict = {"ts": 0.0, "prices": {}}
 
@@ -150,7 +197,14 @@ def bucket_prices() -> dict:
         for iid, bks in artlots.buckets.items():
             for key, b in bks.items():
                 qlt, ptn = key.split(":")
-                out[(iid, int(qlt), int(ptn))] = {"price": b["avg"], "n": b["n"], "src": "lots"}
+                k = (iid, int(qlt), market.ptn_bucket(int(ptn)))
+                prev = out.get(k)
+                if prev:  # легаси-кэш лотов с сырой заточкой — сливаем в корзину
+                    n = prev["n"] + b["n"]
+                    price = round((prev["price"] * prev["n"] + b["avg"] * b["n"]) / n)
+                    out[k] = {"price": price, "n": n, "src": "lots"}
+                else:
+                    out[k] = {"price": b["avg"], "n": b["n"], "src": "lots"}
     if src == "avg7d" or (src == "auto" and _history_mature()):
         since = (datetime.now(MSK) - timedelta(days=7)).strftime("%Y-%m-%dT%H:00")
         for r in market.window_avgs(since):
@@ -162,30 +216,70 @@ def bucket_prices() -> dict:
     return out
 
 
+# ---------- собственные статы хранилища (контейнер/рюкзак) ----------
+def _self_bonus(cont: dict) -> list[dict]:
+    """Собственные полезные/вредные статы хранилища, КРОМЕ заражений — идут в ИТОГО
+    плоско (это финальные значения предмета, эффективностью не масштабируются)."""
+    return [s for s in cont.get("self_stats", []) if s["key"] not in ACCUM_KEYS]
+
+
+def _self_contam(cont: dict) -> dict:
+    """Собственный вклад хранилища в заражения: {key: сырое значение} (эмиссия +,
+    защита −). Внутр. защита/эффективность его не трогают — это свойство предмета."""
+    out: dict = {}
+    for s in cont.get("self_stats", []):
+        if s["key"] in CONTAM_KEYS and s["val"]:
+            out[s["key"]] = out.get(s["key"], 0.0) + s["val"]
+    return out
+
+
+def _self_contam_norm(cont: dict) -> dict:
+    """То же, нормированное на лимит: {key: val/limit} (база для оптимизатора)."""
+    out: dict = {}
+    for key, v in _self_contam(cont).items():
+        limit = CONTAM_KEYS[key][1]
+        if limit is not None:
+            out[key] = v / limit
+    return out
+
+
 # ---------- заражения ----------
 def contamination(variants: list[dict], cont: dict) -> list[dict]:
     """Заражение по типам. Эмиссия (красный, +) гасится внутренней защитой
-    контейнера (кроме мороза); защита (зелёный, −) усиливается эффективностью."""
+    контейнера (кроме мороза); защита (зелёный, −) усиливается эффективностью.
+    Собственный вклад хранилища (эмиссия/защита самого контейнера или рюкзака)
+    добавляется как есть, без гашения защитой и без ×эффективности."""
     prot = (cont.get("protection") or 0.0) / 100.0
     eff = (cont.get("efficiency") or 100.0) / 100.0
+    self_c = _self_contam(cont)
     out = []
     for key, (name, limit) in CONTAM_KEYS.items():
         emit = protect = 0.0
-        present = False
+        present = key in self_c
         for v in variants:
             st = db.artefacts[v["item"]]["stats"].get(key)
-            if not st:
-                continue
-            present = True
-            val = stat_value(st, v["m"], v["ptn"])
-            if st["harmful"]:        # эмиссия заражения (константа)
-                emit += val
-            else:                    # защита — положительное свойство, ×эффективность
-                protect += val * eff
+            if st:
+                present = True
+                val = stat_value(st, v["m"], v["ptn"])
+                if st["harmful"]:    # эмиссия заражения (константа)
+                    emit += val
+                else:                # защита — положительное свойство, ×эффективность
+                    protect += val * eff
+            f = bonus_factor(v["item"], v["ptn"])
+            if f:                    # доп-свойства порогов: в пулах только защиты (−)
+                for bp in BONUS_PROPS.get(v["item"], []):
+                    if bp["key"] != key:
+                        continue
+                    present = True
+                    bval = bonus_value(bp, v["m"], v["ptn"]) * f
+                    if bval > 0:
+                        emit += bval
+                    else:
+                        protect += bval * eff
         if not present:
             continue
         reduce = 1.0 if key == FROST_KEY else (1 - prot)  # мороз защита не гасит
-        net = emit * reduce + protect
+        net = emit * reduce + protect + self_c.get(key, 0.0)
         out.append({"key": key, "name": name, "net": round(net, 3), "limit": limit,
                     "over": limit is not None and net > limit + 1e-9})
     return out
@@ -222,12 +316,25 @@ def _contam_contrib(v: dict, prot: float, eff: float) -> tuple[dict, dict]:
                 em[key] = em.get(key, 0.0) + val * reduce / limit
         elif val < 0:
             pr[key] = pr.get(key, 0.0) - val * eff / limit
+    f = bonus_factor(v["item"], v["ptn"])
+    if f:   # доп-свойства порогов: отрицательные accumulation = защита
+        for bp in BONUS_PROPS.get(v["item"], []):
+            lim = CONTAM_KEYS.get(bp["key"])
+            if not lim or lim[1] is None:
+                continue
+            bval = bonus_value(bp, v["m"], v["ptn"]) * f
+            if bval > 0:
+                reduce = 1.0 if bp["key"] == FROST_KEY else (1.0 - prot)
+                em[bp["key"]] = em.get(bp["key"], 0.0) + bval * reduce / lim[1]
+            elif bval < 0:
+                pr[bp["key"]] = pr.get(bp["key"], 0.0) - bval * eff / lim[1]
     return em, pr
 
 
-def _norms(variants: list[dict]) -> dict:
-    """n_k = net/limit по кэшам _em/_pr вариантов; сборка в норме ⇔ все n_k ≤ 1."""
-    n: dict = {}
+def _norms(variants: list[dict], base: dict | None = None) -> dict:
+    """n_k = net/limit по кэшам _em/_pr вариантов + база хранилища (его собственная
+    эмиссия/защита); сборка в норме ⇔ все n_k ≤ 1."""
+    n: dict = dict(base) if base else {}
     for v in variants:
         for k, x in v["_em"].items():
             n[k] = n.get(k, 0.0) + x
@@ -250,14 +357,14 @@ def _worst_emitter(variants: list[dict], n: dict) -> str | None:
 
 
 def _swap_repair(picked: list[dict], pool: list[dict], banned: set,
-                 budget: float, score) -> list[dict] | None:
+                 budget: float, score, base: dict | None = None) -> list[dict] | None:
     """Гасим превышение заменой слотов: как игроки — «4 арта + 2 контрарта».
     Жадно меняем слот на вариант из пула (обычно контрарт), выбирая замену с
     минимальной потерей ценности на единицу снятого превышения. None — не вышло."""
     cur = list(picked)
     cost = sum(v["price"] for v in cur)
     for _ in range(len(cur) * 3):
-        n = _norms(cur)
+        n = _norms(cur, base)
         ov = _overage(n)
         if ov <= 1e-10:
             return cur
@@ -295,32 +402,74 @@ def _swap_repair(picked: list[dict], pool: list[dict], banned: set,
 def build_dict() -> dict:
     stats = [{"key": k, **v} for k, v in db.artefact_stat_names.items()]
     stats.sort(key=lambda s: (s["harmful"], s["name"]))
-    containers = sorted(db.containers.values(),
-                        key=lambda c: (c["slots"], c.get("weight") or 0, c["name"]))
+    stor_key = lambda c: (c["slots"], c.get("weight") or 0, c["name"])  # noqa: E731
+    containers = sorted(db.containers.values(), key=stor_key)
+    backpacks = sorted(db.backpacks.values(), key=stor_key)
     artefacts = []
     for iid, art in sorted(db.artefacts.items(), key=lambda kv: db.items[kv[0]]["name"]):
         it = db.items.get(iid, {})
         artefacts.append({"id": iid, "name": it.get("name", iid), "icon": it.get("icon", ""),
                           "color": it.get("color", "DEFAULT"),
-                          "class": art["class"], "weight": art["weight"], "stats": art["stats"]})
+                          "class": art["class"], "weight": art["weight"], "stats": art["stats"],
+                          "bonus": BONUS_PROPS.get(iid, [])})
     armor = sorted(db.armor.values(), key=lambda a: (-a["bullet0"], a["name"]))
     contam = [{"key": k, "name": n, "limit": lim} for k, (n, lim) in CONTAM_KEYS.items()]
-    return {"containers": containers, "stats": stats, "artefacts": artefacts,
-            "armor": armor, "contamination": contam,
+    return {"containers": containers, "backpacks": backpacks, "stats": stats,
+            "artefacts": artefacts, "armor": armor, "contamination": contam,
             "model": {"m_min": M_MIN, "m_max": M_MAX, "tier_step": TIER_STEP,
                       "sharp_a": SHARP_A, "sharp_b": SHARP_B, "ptn_levels": list(PTN_LEVELS),
                       "min_sales": config.ART_MIN_SALES,
                       "bullet_key": BULLET_KEY, "health_key": HEALTH_KEY}}
 
 
+# ---------- запрет минуса в итоге (исключение отрицательных эффектов) ----------
+def _harm_sign(key: str) -> int:
+    """Вредное направление обычного стата — знак значений его красной версии:
+    у живучести вреден минус (−1), у отдачи/кровотечения — плюс (+1)."""
+    for art in db.artefacts.values():
+        st = art["stats"].get(key)
+        if st and st["harmful"]:
+            v = stat_base(st)
+            if v:
+                return 1 if v > 0 else -1
+    return 0
+
+
+def _neg_constraints(pool: list[dict], cont: dict, keys: set) -> dict:
+    """{stat_key: (sign, scale)} — «минус не нужен» как жёсткое ограничение на
+    ИТОГ сборки (не на отдельный арт): суммарный стат не должен уйти во вредную
+    сторону, минус одного арта можно перекрыть плюсом других (просьба юзера,
+    пример Креветка −живка + Ягодка +живка). scale — максимум |вклада| по пулу:
+    нормирует ограничение для двойственного подъёма λ."""
+    eff = (cont.get("efficiency") or 100.0) / 100.0
+    out = {}
+    for k in keys:
+        s = _harm_sign(k)
+        if not s:
+            continue
+        scale = 1.0
+        for v in pool:
+            st = db.artefacts[v["item"]]["stats"].get(k)
+            if st:
+                val = stat_value(st, v["m"], v["ptn"])
+                scale = max(scale, abs(val if st["harmful"] else val * eff))
+            f = bonus_factor(v["item"], v["ptn"])
+            if f:
+                for bp in BONUS_PROPS.get(v["item"], []):
+                    if bp["key"] == k:
+                        scale = max(scale, abs(bonus_value(bp, v["m"], v["ptn"])) * f * eff)
+        out[k] = (s, scale)
+    return out
+
+
 # ---------- пул вариантов ----------
 def _make_pool(budget: float, keep) -> list[dict]:
-    """Варианты (артефакт × qlt × ptn) с ценой ≤ бюджета. keep(art)->bool — фильтр
-    (даёт ли арт нужный вклад). Каждый вариант несёт vals всех своих статов."""
+    """Варианты (артефакт × qlt × ptn) с ценой ≤ бюджета. keep(iid, art)->bool —
+    фильтр (даёт ли арт нужный вклад). Каждый вариант несёт vals всех статов."""
     prices = bucket_prices()
     pool = []
     for iid, art in db.artefacts.items():
-        if not keep(art):
+        if not keep(iid, art):
             continue
         for qlt in range(6):
             m = tier_bounds(qlt)[1]  # дефолт: верх тира
@@ -376,28 +525,51 @@ def _dp_build(frontier: list[dict], slots: int, budget: float) -> list[dict]:
 
 
 def _optimize(pool: list[dict], cont: dict, budget: float, score, banned: set,
-              duals: dict | None = None) -> list[dict]:
+              duals: dict | None = None, neg: dict | None = None) -> list[dict]:
     """Парето+DP + жёсткие лимиты заражения. Если DP-ядро превышает лимит:
     1) чиним заменой слабейших слотов на контрарты (_swap_repair);
     2) поднимаем цену эмиссии λ (двойственный подъём с демпфером) — DP берёт
        ядро чище; 3) баним худшего эмиттера. Возвращаем ТОЛЬКО сборку в норме
     (лучшую по score из найденных); [] — не собрать. duals — состояние λ
-    (тёплый старт между вызовами)."""
+    (тёплый старт между вызовами). neg (_neg_constraints) — запрет минуса в
+    ИТОГЕ по обычным статам: та же машинерия, псевдоключи «!стат»."""
     prot = (cont.get("protection") or 0.0) / 100.0
     eff = (cont.get("efficiency") or 100.0) / 100.0
     slots = cont["slots"]
+    neg = neg or {}
+    cont_base = _self_contam_norm(cont)   # собственная эмиссия/защита хранилища
+    for k, (s, scale) in neg.items():
+        # порог: итог×знак ≤ 0 ⇔ норма ≤ 1 при базе 1 + знак×собств.вклад/scale
+        selfv = sum(x["val"] for x in cont.get("self_stats", []) if x["key"] == k)
+        cont_base["!" + k] = 1.0 + s * selfv / scale
     state = duals if duals is not None else {}
     lam = state.setdefault("lam", {})    # цена единицы отн. эмиссии
     stp = state.setdefault("step", {})   # адаптивный шаг (демпфер осцилляций)
     sgn = state.setdefault("sign", {})   # знак прошлого превышения
-    for key, (_n, limit) in CONTAM_KEYS.items():
-        if limit is not None:
-            lam.setdefault(key, 0.0)
-            stp.setdefault(key, DUAL_STEP)
-            sgn.setdefault(key, 0)
+    dual_keys = [key for key, (_n, limit) in CONTAM_KEYS.items()
+                 if limit is not None] + ["!" + k for k in neg]
+    for key in dual_keys:
+        lam.setdefault(key, 0.0)
+        stp.setdefault(key, DUAL_STEP)
+        sgn.setdefault(key, 0)
     for v in pool:
         if "_em" not in v:
             v["_em"], v["_pr"] = _contam_contrib(v, prot, eff)
+            for k, (s, scale) in neg.items():
+                t = 0.0                                    # вклад во вредную сторону
+                st = db.artefacts[v["item"]]["stats"].get(k)
+                if st:
+                    val = stat_value(st, v["m"], v["ptn"])
+                    t += s * (val if st["harmful"] else val * eff)
+                f = bonus_factor(v["item"], v["ptn"])
+                if f:                                      # допы всегда в полезную сторону
+                    for bp in BONUS_PROPS.get(v["item"], []):
+                        if bp["key"] == k:
+                            t += s * bonus_value(bp, v["m"], v["ptn"]) * eff * f
+                if t > 0:
+                    v["_em"]["!" + k] = t / scale
+                elif t < 0:
+                    v["_pr"]["!" + k] = -t / scale
     local_ban = set(banned)
     best, best_sc = [], -1e18
 
@@ -423,12 +595,12 @@ def _optimize(pool: list[dict], cont: dict, budget: float, score, banned: set,
             picked = _dp_build(_pareto(sub), slots, budget)
             if not picked:
                 return best
-            n = _norms(picked)
+            n = _norms(picked, cont_base)
             if _overage(n) <= 1e-10:
                 consider(picked)
             elif not tried_swap:
                 tried_swap = True
-                fixed = _swap_repair(picked, pool, local_ban, budget, score)
+                fixed = _swap_repair(picked, pool, local_ban, budget, score, cont_base)
                 if fixed:
                     consider(fixed)
             # двойственный шаг: λ растёт на превышении, плавно спадает при запасе;
@@ -454,9 +626,13 @@ def _optimize(pool: list[dict], cont: dict, budget: float, score, banned: set,
             break
         local_ban.add(offender)    # чиним баном худшего эмиттера
 
-    # страховка: наружу — только сборка в пределах лимитов
-    if best and any(c["over"] for c in contamination(best, cont)):
-        return []
+    # страховка: наружу — только сборка в пределах лимитов и без запрещённых минусов
+    if best:
+        if any(c["over"] for c in contamination(best, cont)):
+            return []
+        n = _norms(best, cont_base)
+        if any(n.get("!" + k, 0.0) > 1.0 + 1e-9 for k in neg):
+            return []
     return best
 
 
@@ -477,6 +653,17 @@ def _present_build(picked: list[dict], cont: dict) -> dict:
                 continue
             t = totals_stats.setdefault(k, {"name": st["name"], "harmful": st["harmful"], "total": 0.0})
             t["total"] += val * eff if not st["harmful"] else val   # эффективность на положительные
+        # доп-свойства порогов: в итоги — матожиданием (×factor); на карточке — полное значение
+        f = bonus_factor(v["item"], v["ptn"])
+        bonus_out = []
+        for bp in BONUS_PROPS.get(v["item"], []):
+            bval = round(bonus_value(bp, v["m"], v["ptn"]), 4)
+            bonus_out.append({"key": bp["key"], "name": bp["name"], "val": bval,
+                              "factor": round(f, 4)})
+            if not f or bp["key"] in ACCUM_KEYS:   # заражения — в блоке contamination
+                continue
+            t = totals_stats.setdefault(bp["key"], {"name": bp["name"], "harmful": False, "total": 0.0})
+            t["total"] += bval * f * eff
         cost += v["price"]
         weight += art["weight"] or 0.0
         thin = v["sales"] < (3 if v["src"] == "lots" else config.ART_MIN_SALES * 3)
@@ -486,7 +673,10 @@ def _present_build(picked: list[dict], cont: dict) -> dict:
                           "icon": it.get("icon", ""), "color": it.get("color", "DEFAULT"),
                           "qlt": v["qlt"], "ptn": v["ptn"], "price": round(v["price"]),
                           "sales": v["sales"], "src": v["src"], "stats": vals,
-                          "milestones": milestones(v["ptn"])})
+                          "bonus": bonus_out, "milestones": milestones(v["ptn"])})
+    for s in _self_bonus(cont):        # собственные статы хранилища — плоско (без ×eff)
+        t = totals_stats.setdefault(s["key"], {"name": s["name"], "harmful": s["harmful"], "total": 0.0})
+        t["total"] += s["val"]
     for t in totals_stats.values():
         t["total"] = round(t["total"], 3)
     return {"slots": slots_out,
@@ -506,7 +696,9 @@ def _price_note() -> str:
 
 
 def _warnings(builds: list[dict]) -> list[str]:
-    out = ["Случайные доп-свойства заточки (+5/+10/+15) и свежесть не моделируются.",
+    out = ["Заточка +2%/уровень; доп-свойства порогов +5/+10/+15 учтены: на +15 "
+           "активен весь пул (детерминировано), на +5/+10 — матожиданием "
+           "(какие именно выпали — случайный порядок).",
            "Заражения гасятся внутренней защитой контейнера (кроме холода); сборки "
            "сверх лимитов (рад/темп/био/холод — 1.0, пси — 3.0) не выдаются.",
            _price_note()]
@@ -517,8 +709,9 @@ def _warnings(builds: list[dict]) -> list[str]:
 
 
 # ---------- автоподбор по статам ----------
-def auto_build(budget: float, container_id: str, stats_req: list[dict]) -> dict:
-    cont = db.containers.get(container_id)
+def auto_build(budget: float, container_id: str, stats_req: list[dict],
+               exclude: list | None = None, no_negatives: bool = False) -> dict:
+    cont = db.storage(container_id)
     if not cont:
         return {"error": "container_not_found"}
     weights = {}
@@ -529,14 +722,31 @@ def auto_build(budget: float, container_id: str, stats_req: list[dict]) -> dict:
     if not weights or budget <= 0:
         return {"error": "bad_request"}
     keys = list(weights)
+    # Исключённые минусы (просьба юзеров): НЕ вычеркиваем носителей из пула, а
+    # требуем, чтобы ИТОГ сборки по стату не ушёл во вредную сторону — минус
+    # Креветки перекрывается плюсом Ягодки. Только обычные статы: заражения
+    # держат жёсткие лимиты и контрарты. no_negatives — так по всем статам.
+    if not isinstance(exclude, (list, tuple)):
+        exclude = []
+    excl = {k for k in exclude[:30] if isinstance(k, str)
+            and k in db.artefact_stat_names and k not in ACCUM_KEYS}
+    if no_negatives:
+        excl = {k for a in db.artefacts.values() for k, st in a["stats"].items()
+                if st["harmful"] and k not in ACCUM_KEYS}
 
-    pool = _make_pool(budget, lambda art: any(
+    # в пул, кроме носителей запрошенных статов и контрартов, пускаем
+    # компенсаторы (арты с зелёной версией исключённого стата) и носителей
+    # запрошенного стата в доп-свойствах порогов заточки
+    pool = _make_pool(budget, lambda iid, art: any(
         k in art["stats"] and not art["stats"][k]["harmful"] for k in keys)
-        or _is_counter(art))
+        or _is_counter(art)
+        or any(k in art["stats"] and not art["stats"][k]["harmful"] for k in excl)
+        or any(bp["key"] in weights for bp in BONUS_PROPS.get(iid, ())))
     if not pool:
         return {"error": "no_priced_variants",
                 "hint": "Биржа артефактов ещё копит цены (нужна неделя замеров) "
                         "или под бюджет/статы нет корзин с достаточными продажами."}
+    neg = _neg_constraints(pool, cont, excl)
     # нормировка статов на максимум по пулу — веса сопоставимы
     ref = {}
     for k in keys:
@@ -545,6 +755,11 @@ def auto_build(budget: float, container_id: str, stats_req: list[dict]) -> dict:
             st = db.artefacts[v["item"]]["stats"].get(k)
             if st and not st["harmful"]:
                 m = max(m, abs(stat_value(st, v["m"], v["ptn"])))
+            f = bonus_factor(v["item"], v["ptn"])
+            if f:
+                for bp in BONUS_PROPS.get(v["item"], []):
+                    if bp["key"] == k:
+                        m = max(m, abs(bonus_value(bp, v["m"], v["ptn"])) * f)
         ref[k] = m or 1.0
 
     def score(v):
@@ -556,11 +771,17 @@ def auto_build(budget: float, container_id: str, stats_req: list[dict]) -> dict:
                 continue
             val = abs(stat_value(st, v["m"], v["ptn"])) / ref[k]
             s += -w * val if st["harmful"] else w * val   # вредная версия стата — в минус
+        f = bonus_factor(v["item"], v["ptn"])
+        if f:   # доп-свойства порогов — всегда полезные, в плюс (матожиданием)
+            for bp in BONUS_PROPS.get(v["item"], []):
+                w = weights.get(bp["key"])
+                if w:
+                    s += w * abs(bonus_value(bp, v["m"], v["ptn"])) * f / ref[bp["key"]]
         return s
 
     builds, banned, seen = [], set(), set()
     for _ in range(1 + ALTERNATIVES):
-        picked = _optimize(pool, cont, budget, score, banned)
+        picked = _optimize(pool, cont, budget, score, banned, neg=neg)
         key = frozenset((v["item"], v["qlt"], v["ptn"]) for v in picked)
         if not picked or key in seen:
             break
@@ -571,9 +792,12 @@ def auto_build(budget: float, container_id: str, stats_req: list[dict]) -> dict:
         banned.update(v["item"] for v in picked if score(v) > 1e-9)
 
     if not builds:
-        return {"error": "no_clean_build",
-                "hint": "Под этот бюджет не собрать сборку в пределах лимитов "
-                        "заражения — поднимите бюджет, смените контейнер или статы."}
+        hint = ("Под этот бюджет не собрать сборку в пределах лимитов "
+                "заражения — поднимите бюджет, смените контейнер или статы.")
+        if neg:
+            hint += (" Требование «без минуса в итоге» могло не выполниться "
+                     "под этот бюджет — ослабьте исключения.")
+        return {"error": "no_clean_build", "hint": hint}
     return {"container": cont, "stat_keys": keys, "builds": builds,
             "pool_size": len(pool), "warnings": _warnings(builds)}
 
@@ -585,7 +809,7 @@ def _eff_hp(bullet: float, vit_pct: float) -> float:
 
 
 def auto_hp(budget: float, container_id: str, armor_id: str, armor_ptn: int) -> dict:
-    cont = db.containers.get(container_id)
+    cont = db.storage(container_id)
     if not cont:
         return {"error": "container_not_found"}
     armor = db.armor.get(armor_id)
@@ -594,28 +818,39 @@ def auto_hp(budget: float, container_id: str, armor_id: str, armor_ptn: int) -> 
     if budget <= 0:
         return {"error": "bad_request"}
     ast = db.armor_stats(armor_id, armor_ptn)
-    base_bullet, base_vit = ast["bullet"], ast["vitality"]
+    # собственные пулестойкость/живучесть хранилища (напр. контейнер l362 даёт +23
+    # пулестой) — константы, в оптимизации на выбор артов не влияют, но входят в ХП
+    self_b = sum(s["val"] for s in cont.get("self_stats", []) if s["key"] == BULLET_KEY)
+    self_h = sum(s["val"] for s in cont.get("self_stats", []) if s["key"] == HEALTH_KEY)
+    base_bullet, base_vit = ast["bullet"] + self_b, ast["vitality"] + self_h
     eff = (cont.get("efficiency") or 100.0) / 100.0   # усиливает положительные статы
 
     def bv(v):
         """Эффективный вклад арта в (пулестой, живучесть): полезный × эффективность,
         вредный (красный минус) — как есть. Минус НЕ игнорируем — иначе оптимизатор
-        берёт арты, роняющие живучесть."""
+        берёт арты, роняющие живучесть. Доп-свойства порогов — матожиданием."""
         st = db.artefacts[v["item"]]["stats"]
+        f = bonus_factor(v["item"], v["ptn"])
         out = []
         for key in (BULLET_KEY, HEALTH_KEY):
             s = st.get(key)
-            if not s:
-                out.append(0.0)
-                continue
-            val = stat_value(s, v["m"], v["ptn"])
-            out.append(val if s["harmful"] else val * eff)
+            val = 0.0
+            if s:
+                x = stat_value(s, v["m"], v["ptn"])
+                val = x if s["harmful"] else x * eff
+            if f:
+                for bp in BONUS_PROPS.get(v["item"], []):
+                    if bp["key"] == key:
+                        val += bonus_value(bp, v["m"], v["ptn"]) * eff * f
+            out.append(val)
         return out
 
-    pool = _make_pool(budget, lambda art: (
+    pool = _make_pool(budget, lambda iid, art: (
         (BULLET_KEY in art["stats"] and not art["stats"][BULLET_KEY]["harmful"])
         or (HEALTH_KEY in art["stats"] and not art["stats"][HEALTH_KEY]["harmful"])
-        or _is_counter(art)))
+        or _is_counter(art)
+        or any(bp["key"] in (BULLET_KEY, HEALTH_KEY)
+               for bp in BONUS_PROPS.get(iid, ()))))
     if not pool:
         return {"error": "no_priced_variants",
                 "hint": "Нет корзин артефактов с пулестойкостью/живучестью под бюджет "
@@ -650,12 +885,14 @@ def auto_hp(budget: float, container_id: str, armor_id: str, armor_ptn: int) -> 
     res = _present_build(best, cont)
     art_bullet = sum(v["_b"] for v in best)   # eff уже внутри bv
     art_vit = sum(v["_h"] for v in best)
-    total_bullet = base_bullet + art_bullet
+    total_bullet = base_bullet + art_bullet   # base уже = броня + хранилище
     total_vit = base_vit + art_vit
     res["hp"] = {
         "armor": {"id": armor_id, "name": armor["name"], "icon": armor["icon"],
                   "color": armor["color"], "ptn": int(armor_ptn),
-                  "bullet": round(base_bullet, 2), "vitality": round(base_vit, 2)},
+                  "bullet": round(ast["bullet"], 2), "vitality": round(ast["vitality"], 2)},
+        "container_bullet": round(self_b, 2),
+        "container_vitality": round(self_h, 2),
         "artefact_bullet": round(art_bullet, 2),
         "artefact_vitality": round(art_vit, 2),
         "total_bullet": round(total_bullet, 2),

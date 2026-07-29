@@ -15,6 +15,7 @@ import time
 import httpx
 
 from app import config
+from app.db import market
 from app.db.index import db
 from app.services import auction, oauth
 
@@ -23,8 +24,9 @@ logger = logging.getLogger(__name__)
 
 def bucket_lots(lots: list) -> dict:
     """Раскладка лотов по корзинам: {"qlt:ptn": {avg, n, min}}, avg — средняя
-    из ART_LOTS_TOP самых дешёвых выкупов за 1 шт. Лоты без qlt (демо/легаси)
-    и без выкупа пропускаются."""
+    из ART_LOTS_TOP самых дешёвых выкупов за 1 шт. Заточка — корзинами
+    +0/+5/+10/+15 (market.ptn_bucket). Лоты без qlt (демо/легаси) и без
+    выкупа пропускаются."""
     per: dict[str, list[float]] = {}
     for lot in lots:
         a = lot.get("additional") or {}
@@ -32,7 +34,8 @@ def bucket_lots(lots: list) -> dict:
         bp, amount = lot.get("buyoutPrice"), lot.get("amount") or 1
         if qlt is None or not bp or amount <= 0:
             continue
-        per.setdefault(f"{int(qlt)}:{int(a.get('ptn') or 0)}", []).append(bp / amount)
+        ptn = market.ptn_bucket(int(a.get("ptn") or 0))
+        per.setdefault(f"{int(qlt)}:{ptn}", []).append(bp / amount)
     out = {}
     for key, arr in per.items():
         arr.sort()

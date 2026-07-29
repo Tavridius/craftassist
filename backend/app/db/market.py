@@ -7,11 +7,30 @@
 """
 import logging
 import sqlite3
+import statistics
 import threading
 
 from app import config
 
 logger = logging.getLogger(__name__)
+
+# Заточки котируем ТОЛЬКО корзинами +0/+5/+10/+15 (решение юзера): 0-4 → +0,
+# 5-9 → +5, 10-14 → +10, 15 → +15. Новые снапшоты пишутся уже корзинами;
+# старые строки могут лежать с сырой заточкой — чтение агрегирует по корзине.
+PTN_SQL = "min(ptn / 5 * 5, 15)"
+
+# Цена окна — средневзвешенная ПО МЕДИАНАМ СЛОТОВ, а не по суммам цен.
+# Почему не SUM(sum)/SUM(n): одна завышенная сделка внутри слота тянула среднюю
+# слота, а слот из единственной сделки тянул всё окно. Медиана слота к разовой
+# сделке не двигается, а слот с n=1 весит 1 против сотен. Отсечка выбросов при
+# записи (artefact_watch.finalize_buckets) — вторая линия, независимая.
+AVG_SQL = "SUM(COALESCE(med, sum / n) * n) / SUM(n)"
+
+
+def ptn_bucket(ptn: int) -> int:
+    """Сырая заточка 0-15 → корзина котировки (0/5/10/15)."""
+    return min(ptn // 5 * 5, 15)
+
 
 _lock = threading.Lock()
 _conn: sqlite3.Connection | None = None
@@ -20,12 +39,13 @@ _SCHEMA = """
 CREATE TABLE IF NOT EXISTS art_sales_agg (
     item TEXT NOT NULL,
     qlt  INTEGER NOT NULL,           -- качество 0-5
-    ptn  INTEGER NOT NULL,           -- заточка 0-15 (0 = без заточки)
+    ptn  INTEGER NOT NULL,           -- корзина заточки 0/5/10/15 (см. ptn_bucket)
     slot TEXT NOT NULL,              -- ISO-час снапшота МСК 'YYYY-MM-DDTHH:00'
     n    INTEGER NOT NULL,           -- продаж в корзине за слот
     sum  REAL NOT NULL,              -- сумма цен за 1 шт (для средней)
     min  REAL NOT NULL,
     max  REAL NOT NULL,
+    med  REAL,                       -- медиана цен слота: устойчива к разовой сделке
     PRIMARY KEY (item, qlt, ptn, slot)
 );
 CREATE INDEX IF NOT EXISTS idx_art_slot ON art_sales_agg(slot);
@@ -57,8 +77,20 @@ def init() -> None:
         _conn.row_factory = sqlite3.Row
         _conn.execute("PRAGMA journal_mode=WAL")
         _conn.executescript(_SCHEMA)
+        _migrate()
         _conn.commit()
     logger.info("market: db ready (%s)", stats())
+
+
+def _migrate() -> None:
+    """Донакатить столбцы на уже существующую БД (CREATE TABLE IF NOT EXISTS их не добавит)."""
+    cols = {r["name"] for r in _conn.execute("PRAGMA table_info(art_sales_agg)")}
+    if "med" not in cols:
+        _conn.execute("ALTER TABLE art_sales_agg ADD COLUMN med REAL")
+        # У старых слотов медианы нет и восстановить её нечем — берём среднюю
+        # слота. Это не хуже прежнего поведения: агрегаты и раньше жили на ней.
+        _conn.execute("UPDATE art_sales_agg SET med = sum / n WHERE med IS NULL AND n > 0")
+        logger.info("market: added art_sales_agg.med, backfilled from slot averages")
 
 
 def get_meta(key: str) -> str | None:
@@ -77,19 +109,22 @@ def set_meta(key: str, value: str) -> None:
 def add_snapshot(item: str, slot: str, buckets: dict, last_ts: str | None) -> None:
     """Записать агрегаты корзин одного артефакта за слот одной транзакцией.
 
-    buckets: {(qlt, ptn): {n, sum, min, max}}. Повторный замер в том же слоте
-    (рестарт/ретрай) СКЛАДЫВАЕТСЯ с уже записанным — artefact_watch следит,
-    чтобы продажи не считались дважды (граница last_ts).
+    buckets: {(qlt, ptn): {n, sum, min, max, med}}. Повторный замер в том же
+    слоте (рестарт/ретрай) СКЛАДЫВАЕТСЯ с уже записанным — artefact_watch следит,
+    чтобы продажи не считались дважды (граница last_ts). Медианы двух замеров
+    точно не сложить, поэтому смешиваем по весу n — путь редкий (только ретрай).
     """
     with _lock:
         for (qlt, ptn), b in buckets.items():
             _conn.execute(
-                """INSERT INTO art_sales_agg (item, qlt, ptn, slot, n, sum, min, max)
-                   VALUES (?,?,?,?,?,?,?,?)
+                """INSERT INTO art_sales_agg (item, qlt, ptn, slot, n, sum, min, max, med)
+                   VALUES (?,?,?,?,?,?,?,?,?)
                    ON CONFLICT(item, qlt, ptn, slot) DO UPDATE SET
                      n = n + excluded.n, sum = sum + excluded.sum,
-                     min = MIN(min, excluded.min), max = MAX(max, excluded.max)""",
-                (item, qlt, ptn, slot, b["n"], b["sum"], b["min"], b["max"]))
+                     min = MIN(min, excluded.min), max = MAX(max, excluded.max),
+                     med = (COALESCE(med, sum / n) * n + excluded.med * excluded.n)
+                           / (n + excluded.n)""",
+                (item, qlt, ptn, slot, b["n"], b["sum"], b["min"], b["max"], b["med"]))
         if last_ts:
             _conn.execute("INSERT INTO meta (key, value) VALUES (?, ?) "
                           "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -109,24 +144,60 @@ def cleanup(before_slot: str) -> int:
 
 def window_avgs(since_slot: str, until_slot: str | None = None) -> list[dict]:
     """Средние по корзинам за окно слотов: since включительно, until исключительно."""
-    q = ("SELECT item, qlt, ptn, SUM(sum)/SUM(n) AS avg, SUM(n) AS n "
+    q = (f"SELECT item, qlt, {PTN_SQL} AS ptn, {AVG_SQL} AS avg, SUM(n) AS n "
          "FROM art_sales_agg WHERE slot >= ?")
     args: list = [since_slot]
     if until_slot:
         q += " AND slot < ?"
         args.append(until_slot)
-    q += " GROUP BY item, qlt, ptn"
+    q += f" GROUP BY item, qlt, {PTN_SQL}"
     with _lock:
         rows = _conn.execute(q, args).fetchall()
     return [dict(r) for r in rows]
+
+
+def item_bucket_avgs(item: str, since_slot: str) -> dict:
+    """Средние по корзинам (qlt, ptn) ОДНОГО артефакта за окно: {(qlt, ptn): {avg, n}}.
+
+    База котировки для ДЕВ-сканера: у артефакта живых продаж в конкретной
+    корзине за последние часы обычно мало, а накопленных за неделю — достаточно.
+    """
+    with _lock:
+        rows = _conn.execute(
+            f"SELECT qlt, {PTN_SQL} AS ptn, {AVG_SQL} AS avg, SUM(n) AS n "
+            f"FROM art_sales_agg WHERE item = ? AND slot >= ? GROUP BY qlt, {PTN_SQL}",
+            (item, since_slot)).fetchall()
+    return {(r["qlt"], r["ptn"]): {"avg": r["avg"], "n": r["n"]} for r in rows}
+
+
+def bucket_refs(item: str, since_slot: str) -> dict:
+    """Опорная цена корзин артефакта по истории: {(qlt, ptn): цена}.
+
+    Медиана медиан слотов — от неё artefact_watch отсекает выбросы. Считается в
+    Python, а не в SQL: медианы в SQLite нет, а выборка тут крошечная (корзины
+    одного артефакта за ART_REF_DAYS). Корзины, где слотов меньше
+    ART_REF_MIN_SLOTS, не возвращаем — на одном-двух слотах опора сама может
+    оказаться выбросом, тогда лучше резервный механизм по минимуму снапшота.
+    """
+    with _lock:
+        rows = _conn.execute(
+            f"SELECT qlt, {PTN_SQL} AS ptn, COALESCE(med, sum / n) AS med "
+            "FROM art_sales_agg WHERE item = ? AND slot >= ? AND n > 0",
+            (item, since_slot)).fetchall()
+    per: dict = {}
+    for r in rows:
+        per.setdefault((r["qlt"], r["ptn"]), []).append(r["med"])
+    return {k: statistics.median(v) for k, v in per.items()
+            if len(v) >= config.ART_REF_MIN_SLOTS}
 
 
 def item_series(item: str) -> list[dict]:
     """Все слоты всех корзин артефакта (для графиков карточки), от старых к новым."""
     with _lock:
         rows = _conn.execute(
-            "SELECT qlt, ptn, slot, sum/n AS avg, n FROM art_sales_agg "
-            "WHERE item = ? ORDER BY slot", (item,)).fetchall()
+            f"SELECT qlt, {PTN_SQL} AS ptn, slot, {AVG_SQL} AS avg, SUM(n) AS n "
+            f"FROM art_sales_agg WHERE item = ? GROUP BY qlt, {PTN_SQL}, slot "
+            "ORDER BY slot", (item,)).fetchall()
     return [dict(r) for r in rows]
 
 
@@ -160,6 +231,8 @@ def item_sales_daily(item: str, since_slot: str, until_slot: str) -> list[dict]:
     """Дневные агрегаты: роллап-строки + свежие часы, сгруппированные по дню."""
     with _lock:
         rows = _conn.execute(
+            # item_sales — другая таблица (обороты полного аука), медианы слотов
+            # там нет: n считает ШТУКИ, средневзвешенная по ним и нужна.
             "SELECT substr(slot, 1, 10) AS t, SUM(n) AS n, SUM(sum)/SUM(n) AS avg, "
             "MIN(min) AS min, MAX(max) AS max FROM item_sales "
             "WHERE item = ? AND slot >= ? AND slot <= ? "

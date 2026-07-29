@@ -18,6 +18,7 @@ import httpx
 
 from app import config
 from app.services import auction, oauth, sales_log
+from app.services.market_scan import scan
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,8 @@ class PriceStore:
         self.last_cycle_ts: float | None = None
         self.started = False
         self._save_ctr = 0
+        self.hot_count = 0                      # длина горячего круга (ДЕВ-сканер)
+        self.hot_round_sec: int | None = None   # сколько занял последний круг
 
     @property
     def _path(self):
@@ -125,25 +128,71 @@ class PriceStore:
                     logger.exception("PriceStore: cycle failed")
                 await asyncio.sleep(config.PRICE_REFRESH_PAUSE)
 
+    def _hist_due(self, iid: str, now: float) -> bool:
+        """Пора ли перечитывать историю предмета (см. SCAN_HIST_TTL_MIN).
+
+        Темп продаж и средняя цена меняются медленно, поэтому каждый круг их
+        снимать незачем — бюджет запросов нужнее лотам. Но окно /history — это
+        100 ПОСЛЕДНИХ продаж: у сверхликвидных они вытесняются за минуты, и
+        редкий замер оставил бы дыры в годовом графике (sales_log). Поэтому для
+        них интервал сокращаем так, чтобы успевать до вытеснения окна.
+        """
+        h = self.history.get(iid)
+        if not h or not h.get("ts") or h.get("recent_sales") is None:
+            return True   # ещё не снимали (или старый формат кэша) — снять сейчас
+        ttl = config.SCAN_HIST_TTL_MIN * 60
+        sph = h.get("sales_per_hour") or 0.0
+        if sph > 0:
+            ttl = min(ttl, 0.7 * 100 / sph * 3600)  # 70% времени жизни окна
+        if sph < 0.2:
+            ttl = max(ttl, 6 * 3600)   # почти не продаётся — переспрашивать редко
+        return now - h["ts"] >= ttl
+
     async def _run_cycle(self, client) -> None:
         await oauth.ensure(client)  # свежий app-токен (no-op без клиентских кредов)
-        # 1) цены всего крафт-графа
-        work = list(dict.fromkeys(self.base + sorted(self.extra)))
+        # 1) цены всего крафт-графа, вперемешку с горячим кругом ДЕВ-сканера:
+        # ликвидные предметы (только они могут стать сделкой) обновляются в
+        # SCAN_HOT_RATIO раз чаще холодных — сделки свежие, полный обход идёт своим ходом
+        # scan.rotation_ids(): артефактов и части снаряжения нет в крафт-графе,
+        # но именно их выгоднее всего перепродавать — добираем в обход
+        work = list(dict.fromkeys(self.base + sorted(self.extra) + scan.rotation_ids()))
+        hot: list[str] = []
+        hot_i, hot_debt, hot_t0 = 0, 0.0, time.time()
         for iid in work:
             # приоритет: посчитать запрошенные-но-неизвестные вне очереди
             while self.pending:
                 pid = self.pending.pop()
                 await self._fetch(client, pid)
             await self._fetch(client, iid)
+            hot_debt += config.SCAN_HOT_RATIO
+            while hot_debt >= 1:
+                if hot_i >= len(hot):   # круг пройден — пересобрать (пороги могли смениться)
+                    if hot:
+                        self.hot_round_sec = round(time.time() - hot_t0)
+                    hot, hot_i, hot_t0 = scan.hot_ids(), 0, time.time()
+                    self.hot_count = len(hot)
+                    if not hot:
+                        hot_debt = 0.0
+                        break
+                hot_debt -= 1
+                await self._fetch(client, hot[hot_i])
+                hot_i += 1
         # 2) частота продаж: крафт-результаты (рейтинг профитных) + всё, к чьей
         # истории проявляли интерес (график продаж в карточке аука)
-        hist_work = dict.fromkeys(self.results
-                                  + sorted(self.hist_extra | set(self.history)))
+        hist_ids = self.results + sorted(self.hist_extra | set(self.history))
+        if scan.wants_history_all():
+            hist_ids += work   # ДЕВ-сканер: история нужна всему графу
+        # разведка сканера: темп продаж артов и снаряжения (мёртвые
+        # переспрашиваются раз в 6 часов — см. _hist_due)
+        hist_ids += scan.probe_ids()
+        hist_work = dict.fromkeys(hist_ids)
+        now = time.time()
         for iid in hist_work:
             while self.pending:
                 pid = self.pending.pop()
                 await self._fetch(client, pid)
-            await self._fetch_history(client, iid)
+            if self._hist_due(iid, now):
+                await self._fetch_history(client, iid)
 
     async def _fetch(self, client, iid: str) -> None:
         r = await auction.fetch_lots(client, iid)  # троттлинг + ретраи внутри
@@ -156,6 +205,7 @@ class PriceStore:
             "depth": r.get("depth"),   # дешёвые лоты [[цена/шт, кол-во], …]
             "ts": time.time(),
         }
+        scan.on_lots(iid)   # ДЕВ-сканер: свежие лоты → пересчёт/снятие сделки
         self._save_ctr += 1
         if self._save_ctr % 25 == 0:
             self.save()
@@ -169,7 +219,11 @@ class PriceStore:
                                  "last_unit_price": r.get("last_unit_price"),
                                  "recent_unit_price": r.get("recent_unit_price"),
                                  "recent50_unit_price": r.get("recent50_unit_price"),
+                                 "recent_units": r.get("recent_units") or [],
+                                 "recent_sales": r.get("recent_sales") or [],
+                                 "last_sale_ts": r.get("last_sale_ts"),
                                  "ts": time.time()}
+            scan.on_history(iid)   # ДЕВ-сканер: свежая история → пересчёт сделки
         self._save_ctr += 1
         if self._save_ctr % 25 == 0:
             self.save()

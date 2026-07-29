@@ -6,19 +6,22 @@
 import asyncio
 import base64
 import binascii
+import json
 import re
 import secrets
 import time
 from datetime import datetime, timedelta
 
 import httpx
-from fastapi import APIRouter, Body, HTTPException, Query, Request
+from fastapi import (APIRouter, Body, HTTPException, Query, Request, WebSocket,
+                     WebSocketDisconnect)
 from fastapi.responses import JSONResponse
 
 from app import config
-from app.db import chat, guides, mapobjects, market, news, promos, quests, users
+from app.db import (chat, craft_tuning, guides, mapobjects, market, news,
+                    operations as ops, promos, quests, users)
 from app.db.index import db
-from app.routers.auth import current_user, is_admin
+from app.routers.auth import SESSION_COOKIE, current_user, is_admin
 from app.services import (auction, barter, builds, craft, exchange,
                           hideout, oauth, sales_log)
 from app.services import fuel as fuel_svc
@@ -26,6 +29,7 @@ from app.services.artefact_lots import artlots
 from app.services.artefact_watch import MSK
 from app.services.emission_watch import ewatch
 from app.services.ingredient_watch import watch
+from app.services.market_scan import scan
 from app.services.sales_stats import sstats
 from app.services.price_store import store
 from app.services.rankings import rankings
@@ -63,6 +67,50 @@ async def item(item_id: str):
     return {"item": it, "craftable": bool(recipes), "recipes": recipes}
 
 
+# ---------- База предметов (вкладка-каталог) ----------
+# группы вкладки → категории пути данных (см. db.category)
+_ITEM_CAT_GROUPS = {
+    "weapon": ["weapon"],
+    "armor": ["armor"],
+    "container": ["containers", "backpacks"],
+    "artefact": ["artefact"],
+    "attachment": ["attachment", "weapon_modules"],
+    "bullet": ["bullet"],
+    "medicine": ["medicine"],
+    "grenade": ["grenade"],
+    "misc": ["misc", "supply", "device", "other"],
+}
+_ALL_ITEM_CATS = [c for cs in _ITEM_CAT_GROUPS.values() for c in cs]
+_RANK_W = {"RANK_LEGEND": 6, "RANK_MASTER": 5, "RANK_VETERAN": 4, "RANK_STALKER": 3,
+           "RANK_NEWBIE": 2, "QUEST_ITEM": 1, "DEFAULT": 0}
+
+
+def _item_row(iid: str) -> dict:
+    it = db.item(iid) or {}
+    return {"id": iid, "name": it.get("name", iid), "name_en": it.get("name_en", ""),
+            "icon": it.get("icon", ""), "color": it.get("color", "DEFAULT"),
+            "category": db.category(iid), "craftable": bool(db.recipe_by_result.get(iid))}
+
+
+@router.get("/items")
+async def items(cat: str = "", q: str = "", limit: int = Query(60, ge=1, le=200),
+                offset: int = 0):
+    """Каталог предметов для вкладки «База предметов»: фильтр по группе категории
+    и/или поиск по имени. Сортировка — по редкости (круче выше), затем имя."""
+    cats = _ITEM_CAT_GROUPS.get(cat)
+    if q.strip():
+        rows = db.search(q, 500)
+        ids = [it["id"] for it in rows
+               if not cats or db.category(it["id"]) in cats]
+    else:
+        ids = db.category_ids(*(cats or _ALL_ITEM_CATS))
+        ids.sort(key=lambda i: (-_RANK_W.get((db.item(i) or {}).get("color"), 0),
+                                (db.item(i) or {}).get("name", "")))
+    total = len(ids)
+    return {"total": total, "offset": offset, "limit": limit,
+            "items": [_item_row(i) for i in ids[offset:offset + limit]]}
+
+
 @router.get("/price/{item_id}")
 async def price(item_id: str):
     p = store.get(item_id)
@@ -76,7 +124,10 @@ async def craft_analyze(item_id: str, request: Request, fuel: int = 0):
     # ДОСТУПНЫХ ему источников (по улучшениям в профиле), гостю — самый выгодный
     prof = _profile_of(request)
     fuel_src = fuel_svc.best(prof) if fuel else None
-    res = craft.analyze(item_id, fuel_src=fuel_src)
+    res = craft.analyze(item_id, fuel_src=fuel_src, profile=prof)
+    # характеристики предмета (оружие/броня и т.д.) + категория — для карточки
+    res["characteristics"] = db.characteristics(item_id)
+    res["category"] = db.category(item_id)
     if fuel and not fuel_src:   # цены топлива ещё не посчитаны фоном
         res["fuel"] = {"enabled": True, "source": None}
     if res.get("craftable"):
@@ -172,8 +223,11 @@ async def artmarket_top(window: str = "7d", qlt: int = -1, ptn: int = -1):
     """Топ роста/падения средней цены по корзинам артефактов.
 
     window=7d: неделя против предыдущей недели; 24h: сутки против недели до них.
-    qlt/ptn = -1 — любые. Корзины с < ART_MIN_SALES продаж в любом окне не участвуют.
+    qlt/ptn = -1 — любые. Заточка — корзинами +0/+5/+10/+15 (market.ptn_bucket).
+    Корзины с < ART_MIN_SALES продаж в любом окне не участвуют.
     """
+    if ptn >= 0:
+        ptn = market.ptn_bucket(ptn)
     if window == "24h":
         cur_since, prev_since = _slot_ago(days=1), _slot_ago(days=8)
     else:
@@ -475,8 +529,11 @@ def _clean_promo(payload: dict) -> dict:
     if not title:
         raise HTTPException(422, "нужно название")
     code = " ".join(str(payload.get("code") or "").split())
-    if not code:
-        raise HTTPException(422, "нужен сам промокод")
+    url = str(payload.get("url") or "").strip()
+    if url and not re.match(r"^https?://", url):
+        raise HTTPException(422, "ссылка должна начинаться с http:// или https://")
+    if not code and not url:
+        raise HTTPException(422, "нужен сам промокод или ссылка (Steam DLC)")
     expires = str(payload.get("expires_at") or "").strip()[:16]
     if expires:
         if re.match(r"^\d{4}-\d{2}-\d{2}$", expires):
@@ -485,7 +542,7 @@ def _clean_promo(payload: dict) -> dict:
             raise HTTPException(422, "срок: YYYY-MM-DD или YYYY-MM-DDTHH:MM (МСК)")
     # описание — доверенный HTML (пишут админы), рендерится в карточке на /promo
     return {
-        "title": title[:200], "code": code[:64],
+        "title": title[:200], "code": code[:64], "url": url[:400],
         "description": str(payload.get("description") or "").strip()[:8000],
         "image": str(payload.get("image") or "").strip()[:400],
         "expires_at": expires,
@@ -517,6 +574,96 @@ async def admin_promo_delete(request: Request, pid: int):
     return {"ok": True}
 
 
+# ---------- ДЕВ · сверка рецептов верстака с игрой (см. db/craft_tuning) ----------
+
+def _dev_craft_item(iid: str) -> dict:
+    it = db.item(iid) or {}
+    return {"id": iid, "name": it.get("name", iid), "icon": it.get("icon", "")}
+
+
+@router.get("/admin/craft/recipes")
+async def admin_craft_recipes(request: Request):
+    """Все рецепты верстака: исходник EXBO + текущий тюнинг (bonus/правки)."""
+    _require_admin(request)
+    tuning = craft_tuning.get_all()
+    items = []
+    for rid in sorted(db.recipe_by_result):
+        for r in db.recipe_by_result.get(rid, []):   # исходники, БЕЗ наложения правок
+            if r.get("key", "").rsplit(":", 1)[0] != rid:
+                continue    # рецепт с несколькими результатами — показываем один раз
+            req = r.get("requirements") or {}
+            t = tuning.get(r["key"]) or {}
+            items.append({
+                "key": r["key"],
+                "result": {**_dev_craft_item(rid),
+                           "amount": next((x.get("amount") or 1 for x in r.get("result", [])
+                                           if x.get("item") == rid), 1)},
+                "bench": r.get("bench"), "category": r.get("category"),
+                "subcategory": r.get("subcategory"),
+                "energy": r.get("energy"),
+                "perks": req.get("perks") or {},
+                "features": req.get("features") or [],
+                "ingredients": [{**_dev_craft_item(i["item"]), "amount": i.get("amount", 1)}
+                                for i in r.get("ingredients", [])],
+                "bonus": t.get("bonus"),
+                "tuned": t.get("data") or None,
+            })
+    checked = sum(1 for i in items if i["bonus"] is not None)
+    return {"items": items, "total": len(items), "checked": checked,
+            "perk_names": {p["id"]: p["name"] for p in db.hideout_perks}}
+
+
+@router.put("/admin/craft/recipes/{rkey}")
+async def admin_craft_recipe_save(request: Request, rkey: str,
+                                  payload: dict = Body(...)):
+    """Сохранить сверку рецепта: флаг бонусного крафта + правки данных.
+
+    payload: {bonus: 1|0|null, energy?: число|null, result_amount?: число|null,
+    perk_level?: число|null, ingredients?: {item_id: число≥0}|null}.
+    Отсутствие поля/None = правки нет (используются данные EXBO)."""
+    _require_admin(request)
+    known = {r.get("key") for rs in db.recipe_by_result.values() for r in rs}
+    if rkey not in known:
+        raise HTTPException(404, "recipe not found")
+    bonus = payload.get("bonus")
+    if bonus not in (None, 0, 1):
+        raise HTTPException(422, "bonus: 1, 0 или null")
+
+    def _num(key, lo, hi, integer=False):
+        v = payload.get(key)
+        if v is None:
+            return None
+        try:
+            v = int(v) if integer else float(v)
+        except (TypeError, ValueError):
+            raise HTTPException(422, f"{key}: число")
+        if not lo <= v <= hi:
+            raise HTTPException(422, f"{key}: диапазон {lo}..{hi}")
+        return v
+
+    data = {}
+    if (v := _num("energy", 0, 10 ** 6)) is not None:
+        data["energy"] = v
+    if (v := _num("result_amount", 1, 10 ** 4, integer=True)) is not None:
+        data["result_amount"] = v
+    if (v := _num("perk_level", 1, hideout.PERK_MAX, integer=True)) is not None:
+        data["perk_level"] = v
+    if isinstance(payload.get("ingredients"), dict):
+        ings = {}
+        for iid, amt in payload["ingredients"].items():
+            try:
+                amt = int(amt)
+            except (TypeError, ValueError):
+                raise HTTPException(422, "ingredients: количества — числа")
+            if not 0 <= amt <= 10 ** 4:
+                raise HTTPException(422, "ingredients: диапазон 0..10000")
+            ings[str(iid)] = amt
+        if ings:
+            data["ingredients"] = ings
+    craft_tuning.save(rkey, bonus, data or None)
+    return {"ok": True, "key": rkey, "bonus": bonus, "tuned": data or None}
+
+
 # ---------- квесты: блок-схемы линеек + прохождение (см. db/quests) ----------
 
 # Линейки квестов. Фронт рисует вкладки и цвета из этого списка — расширяется
@@ -540,6 +687,7 @@ async def quests_list(request: Request):
     admin = is_admin(current_user(request))
     return {"factions": QUEST_FACTIONS,
             "items": quests.list_quests(include_drafts=admin),
+            "groups": quests.groups_list(),
             "is_admin": admin}
 
 
@@ -579,6 +727,12 @@ def _clean_quest(payload: dict, qid: int | None) -> dict:
     faction = str(payload.get("faction") or "")
     if faction not in _QUEST_FACTION_IDS:
         raise HTTPException(422, "линейка: " + ", ".join(sorted(_QUEST_FACTION_IDS)))
+    # доп. линейки (общий/вступительный квест): показываем ещё и там; primary исключаем
+    factions: list[str] = []
+    for fx in (payload.get("factions") or []):
+        fx = str(fx)
+        if fx in _QUEST_FACTION_IDS and fx != faction and fx not in factions:
+            factions.append(fx)
     kind = str(payload.get("kind") or "main")
     if kind not in _QUEST_KINDS:
         raise HTTPException(422, "тип: main|side")
@@ -623,7 +777,7 @@ def _clean_quest(payload: dict, qid: int | None) -> dict:
     except (TypeError, ValueError):
         sort = 0
     return {
-        "title": title[:200], "faction": faction, "kind": kind,
+        "title": title[:200], "faction": faction, "factions": factions, "kind": kind,
         "summary": str(payload.get("summary") or "").strip()[:400],
         "reward": str(payload.get("reward") or "").strip()[:400],
         "html": html, "parents": parents,
@@ -654,6 +808,114 @@ async def admin_quest_delete(request: Request, qid: int):
     if not quests.delete(qid):
         raise HTTPException(404, "quest not found")
     return {"ok": True}
+
+
+@router.post("/admin/quests/{qid}/pos")
+async def admin_quest_pos(qid: int, request: Request, payload: dict = Body(...)):
+    """Сохранить позицию блока на сетке линейки (перетаскивание в схеме)."""
+    _require_admin(request)
+    faction = str(payload.get("faction") or "")
+    if faction not in _QUEST_FACTION_IDS:
+        raise HTTPException(422, "неизвестная линейка")
+    try:
+        col = max(0, min(200, int(payload.get("col"))))
+        row = max(0, min(200, int(payload.get("row"))))
+    except (TypeError, ValueError):
+        raise HTTPException(422, "col/row — целые")
+    if not quests.set_pos(qid, faction, col, row):
+        raise HTTPException(404, "quest not found")
+    return {"ok": True, "col": col, "row": row}
+
+
+@router.post("/admin/quests/{qid}/parents")
+async def admin_quest_parents(qid: int, request: Request, payload: dict = Body(...)):
+    """Пересохранить связи «открывается после» — рисование/удаление стрелок на дев-карте."""
+    _require_admin(request)
+    if not quests.exists(qid):
+        raise HTTPException(404, "quest not found")
+    parents: list[int] = []
+    for p in (payload.get("parents") or []):
+        try:
+            p = int(p)
+        except (TypeError, ValueError):
+            raise HTTPException(422, "parents: список id")
+        if p == qid or p in parents:
+            continue
+        if not quests.exists(p):
+            raise HTTPException(422, f"родитель #{p} не найден")
+        parents.append(p)
+    if _quest_makes_cycle(qid, parents):
+        raise HTTPException(422, "цикл в связях: квест не может открываться после самого себя")
+    quests.set_parents(qid, parents)
+    return {"ok": True, "parents": parents}
+
+
+# ---------- группы квестов (сворачиваемый модуль на карте линеек) ----------
+
+def _clean_members(payload: dict) -> list[int]:
+    members: list[int] = []
+    for m in (payload.get("members") or []):
+        try:
+            m = int(m)
+        except (TypeError, ValueError):
+            raise HTTPException(422, "members: список id")
+        if m not in members and quests.exists(m):
+            members.append(m)
+    return members
+
+
+@router.post("/admin/quest-groups")
+async def admin_group_create(request: Request, payload: dict = Body(...)):
+    """Создать группу из выбранных на карте квестов (только админ)."""
+    _require_admin(request)
+    faction = str(payload.get("faction") or "")
+    if faction not in _QUEST_FACTION_IDS:
+        raise HTTPException(422, "неизвестная линейка")
+    members = _clean_members(payload)
+    if len(members) < 2:
+        raise HTTPException(422, "в группе нужно хотя бы 2 квеста")
+    title = str(payload.get("title") or "").strip()[:200] or "Группа квестов"
+    return quests.group_create(faction, title, members)
+
+
+@router.post("/admin/quest-groups/{gid}")
+async def admin_group_update(gid: int, request: Request, payload: dict = Body(...)):
+    """Переименовать группу / переназначить состав (только админ)."""
+    _require_admin(request)
+    title = payload.get("title")
+    if title is not None:
+        title = str(title).strip()[:200] or "Группа квестов"
+    members = _clean_members(payload) if payload.get("members") is not None else None
+    saved = quests.group_update(gid, title=title, members=members)
+    if not saved:
+        raise HTTPException(404, "группа не найдена")
+    return saved
+
+
+@router.delete("/admin/quest-groups/{gid}")
+async def admin_group_delete(gid: int, request: Request):
+    """Разгруппировать (квесты остаются, группа удаляется) — только админ."""
+    _require_admin(request)
+    if not quests.group_delete(gid):
+        raise HTTPException(404, "группа не найдена")
+    return {"ok": True}
+
+
+@router.post("/admin/quest-groups/{gid}/pos")
+async def admin_group_pos(gid: int, request: Request, payload: dict = Body(...)):
+    """Позиция модуля группы на сетке линейки (перетаскивание) — только админ."""
+    _require_admin(request)
+    faction = str(payload.get("faction") or "")
+    if faction not in _QUEST_FACTION_IDS:
+        raise HTTPException(422, "неизвестная линейка")
+    try:
+        col = max(0, min(200, int(payload.get("col"))))
+        row = max(0, min(200, int(payload.get("row"))))
+    except (TypeError, ValueError):
+        raise HTTPException(422, "col/row — целые")
+    if not quests.group_set_pos(gid, faction, col, row):
+        raise HTTPException(404, "группа не найдена")
+    return {"ok": True, "col": col, "row": row}
 
 
 # ---------- комментарии под статьями (патчи/гайды; page_key универсальный) ----------
@@ -792,11 +1054,164 @@ async def sales_top(n: int = 10):
 
 @router.get("/box")
 async def season_box():
-    """Карточка актуального ящика. Пока item-id не известен — missing:true."""
-    if not config.DASH_BOX_ID or not db.item(config.DASH_BOX_ID):
-        return {"missing": True, "name": config.DASH_BOX_NAME}
-    store.request([config.DASH_BOX_ID])          # греть цену приоритетно
-    return {"missing": False, **_item_brief(config.DASH_BOX_ID)}
+    """Карточка актуального ящика сезона.
+
+    Сезонные лутбоксы (напр. «Тактический резерв», реестр lootbox.summer26) EXBO
+    не выгружает в базу предметов/eapi — web-API-id для них не существует, поэтому
+    цену с аука не достать (подробности в config.DASH_BOX_NAME). Отдаём
+    missing:true, пока предмет не появится в базе (запрошено у ТП EXBO).
+    """
+    return {"missing": True, "name": config.DASH_BOX_NAME}
+
+
+# ---------- Операции (PvE-режим): история сессий + мета снаряжения ----------
+
+def _gear_brief(iid: str | None) -> dict | None:
+    """Предмет снаряжения по id → имя/иконка/редкость. None — пусто; unknown=True —
+    id не в базе игры (скрытые id EXBO, которых нет в stalzone-database) — фронт
+    покажет плейсхолдер вместо битой иконки и мёртвой ссылки."""
+    if not iid:
+        return None
+    it = db.item(iid)
+    if it is None:
+        return {"id": iid, "name": iid, "icon": "", "color": "DEFAULT", "unknown": True}
+    return {"id": iid, "name": it.get("name", iid), "icon": it.get("icon", ""),
+            "color": it.get("color", "DEFAULT")}
+
+
+def _resolve_combo(c: dict) -> dict:
+    """Строка меты (комбо/класс) → добавить резолв брони и оружия."""
+    return {
+        **c,
+        "armor": _gear_brief(c.get("armor_item")),
+        "weapon": _gear_brief(c.get("prim_item")),
+        "avg_dur": round(c["avg_dur"]) if c.get("avg_dur") is not None else None,
+        "min_dur": round(c["min_dur"]) if c.get("min_dur") is not None else None,
+        # заточка — среднее по забегам; показываем целым (без десятых)
+        "armor_lvl": round(c["armor_lvl"]) if c.get("armor_lvl") is not None else None,
+        "prim_lvl": round(c["prim_lvl"]) if c.get("prim_lvl") is not None else None,
+    }
+
+
+def _resolve_class(c: dict) -> dict:
+    """class_meta-запись → резолв топ-брони и топ-оружия для карточки класса."""
+    armors = [{**a, "gear": _gear_brief(a["armor_item"]),
+               "avg_dur": round(a["avg_dur"]) if a.get("avg_dur") is not None else None,
+               "avg_lvl": round(a["avg_lvl"]) if a.get("avg_lvl") is not None else None}
+              for a in c.get("armors", [])]
+    weapons = [{**w, "gear": _gear_brief(w["prim_item"]),
+                "avg_dur": round(w["avg_dur"]) if w.get("avg_dur") is not None else None,
+                "avg_lvl": round(w["avg_lvl"]) if w.get("avg_lvl") is not None else None}
+               for w in c.get("weapons", [])]
+    return {"armor_class": c["armor_class"], "sessions": c["sessions"],
+            "armors": armors, "weapons": weapons}
+
+
+def _resolve_session(s: dict) -> dict:
+    """Сырая сессия из БД → участники с резолвом снаряжения (для ленты/карточки)."""
+    parts = []
+    for p in s.get("parts", []):
+        parts.append({
+            **p,
+            "armor": _gear_brief(p.get("armor_item")),
+            "primary": _gear_brief(p.get("prim_item")),
+            "secondary": _gear_brief(p.get("sec_item")),
+        })
+    return {**s, "parts": parts}
+
+
+def _tier_arg(tier: str | None) -> int | None:
+    """'low'|'mid'|'high' (или число 0/1/2) → int тира; иначе None (все этапы)."""
+    if tier is None or tier == "" or tier == "all":
+        return None
+    if tier in ops.TIER_KEYS:
+        return ops.TIER_KEYS.index(tier)
+    if tier.isdigit() and int(tier) in (0, 1, 2):
+        return int(tier)
+    return None
+
+
+def _meta_since() -> int:
+    """Граница окна меты — начало текущей меты-недели (сброс по средам)."""
+    return ops.week_start_ts()
+
+
+def _meta_week() -> dict:
+    ws = ops.week_start()
+    return {"start": ws.isoformat(), "reset_dow": config.OPS_WEEK_RESET_DOW,
+            "reset_hour": config.OPS_WEEK_RESET_HOUR,
+            "next": (ws + timedelta(days=7)).isoformat()}
+
+
+@router.get("/operations/overview")
+async def operations_overview():
+    """Модуль на главной: мета снаряжения по классам брони (в ротации).
+
+    Берём высокий этап (эндгейм-мета — то, что ищут); если данных мало, откатываемся
+    на все этапы, чтобы модуль не пустовал. Помечаем, какой этап показан.
+    """
+    since = _meta_since()
+    st = ops.stats()
+    tier_used = ops.TIER_HIGH
+    classes = ops.class_meta(ops.TIER_HIGH, since, config.OPS_MIN_SAMPLE)
+    if not classes:
+        tier_used = None
+        classes = ops.class_meta(None, since, config.OPS_MIN_SAMPLE)
+    bounds = {b["tier"]: b for b in ops.tier_bounds()}
+    return {
+        "sessions": st["sessions"],
+        "week": _meta_week(),
+        "tier": bounds.get(tier_used) if tier_used is not None else None,
+        "classes": [_resolve_class(c) for c in classes],
+        "last_poll": ops.get_meta("last_poll"),
+    }
+
+
+@router.get("/operations/meta")
+async def operations_meta(tier: str = "high"):
+    """Мета этапа для страницы /operations: самые быстрые комбо снаряжения и
+    разбивка по классам брони. tier: low|mid|high|all."""
+    t = _tier_arg(tier)
+    since = _meta_since()
+    combos = ops.fastest_combos(t if t is not None else ops.TIER_HIGH, since,
+                                config.OPS_MIN_SAMPLE) if t is not None else \
+        ops.fastest_combos(ops.TIER_HIGH, since, config.OPS_MIN_SAMPLE)
+    # для 'all' быстрые комбо считаем на высоком этапе (там гонка за временем),
+    # классы — по выбранному фильтру
+    classes = ops.class_meta(t, since, config.OPS_MIN_SAMPLE)
+    summary = ops.tier_summary(since)
+    bounds = ops.tier_bounds()
+    return {
+        "tier": tier, "week": _meta_week(),
+        "min_sample": config.OPS_MIN_SAMPLE,
+        "tiers": [{**b, "sessions": (summary.get(b["tier"]) or {}).get("n", 0),
+                   "avg_dur": round(v["avg_dur"]) if (v := summary.get(b["tier"]))
+                   and v.get("avg_dur") is not None else None} for b in bounds],
+        "fastest": [_resolve_combo(c) for c in combos],
+        "classes": [_resolve_class(c) for c in classes],
+    }
+
+
+@router.get("/operations/sessions")
+async def operations_sessions(tier: str = "all", map: str | None = None,
+                              limit: int = Query(40, ge=1, le=100), offset: int = 0):
+    """Лента истории забегов: кто, с каким снаряжением, на какой сложности, за сколько."""
+    t = _tier_arg(tier)
+    rows = ops.recent_sessions(t, map, limit, offset)
+    return {
+        "total": ops.session_count(t, map),
+        "tiers": ops.tier_bounds(),
+        "maps": ops.maps(),
+        "items": [_resolve_session(s) for s in rows],
+    }
+
+
+@router.get("/operations/player/{username}")
+async def operations_player(username: str, limit: int = Query(40, ge=1, le=100)):
+    """Забеги конкретного игрока (по нику из состава сессий)."""
+    rows = ops.player_sessions(username, limit)
+    return {"username": username, "count": len(rows),
+            "items": [_resolve_session(s) for s in rows]}
 
 
 # ---------- полный аукцион: живые лоты и история по предмету ----------
@@ -842,30 +1257,44 @@ async def market_item(item_id: str):
         if cached and time.monotonic() - cached[0] < config.MARKET_CACHE_SEC:
             return cached[1]
         async with httpx.AsyncClient(trust_env=False) as client:
-            lots_raw = await auction.fetch_lots_page(client, item_id, limit=50)
-            hist_raw = await auction.fetch_history_page(client, item_id, limit=50,
-                                                        additional=False)
+            # limit не влияет на стоимость запроса — берём с запасом: лоты без
+            # выкупа (только под ставку) отсеиваются ниже, а у артефактов и
+            # снаряжения выборку ещё режет фильтр по качеству/заточке
+            lots_raw = await auction.fetch_lots_page(client, item_id, limit=200)
+            hist_raw = await auction.fetch_history_page(client, item_id, limit=100,
+                                                        additional=True)
     sales_log.record(item_id, hist_raw.get("prices") or [])  # копим годовой график
     store.request_history(item_id)   # воркер продолжит снимать историю предмета
     lots = []
     for lot in (lots_raw.get("lots") or []):
-        amount = lot.get("amount") or 1
         bp = lot.get("buyoutPrice")
+        if not bp:
+            continue   # выкупа нет (лот только под ставку) — цены у него нет
+        amount = lot.get("amount") or 1
+        add = lot.get("additional") or {}
         lots.append({
             "amount": amount,
             "buyout": bp,
-            "unit": round(bp / amount) if bp else None,
+            "unit": round(bp / amount),
             "current": lot.get("currentPrice") or lot.get("startPrice"),
             "end": lot.get("endTime"),
+            "qlt": int(add.get("qlt") or 0), "ptn": int(add.get("ptn") or 0),
         })
-    sales = [{"time": e.get("time"),
-              "amount": e.get("amount") or 1,
-              "price": e.get("price"),
-              "unit": round(e["price"] / (e.get("amount") or 1)) if e.get("price") else None}
-             for e in (hist_raw.get("prices") or [])]
+    lots.sort(key=lambda x: x["unit"])   # API сортирует по цене лота, нам нужна за штуку
+    sales = []
+    for e in (hist_raw.get("prices") or []):
+        amount, price = e.get("amount") or 1, e.get("price")
+        add = e.get("additional") or {}
+        sales.append({"time": e.get("time"), "amount": amount, "price": price,
+                      "unit": round(price / amount) if price else None,
+                      "qlt": int(add.get("qlt") or 0), "ptn": int(add.get("ptn") or 0)})
+    # качество/заточка есть у артефактов и снаряжения — фронт покажет выбор корзины
+    has_buckets = any(x["qlt"] or x["ptn"] for x in lots + sales)
     res = {"item": _item_brief(item_id),
            "lots_total": lots_raw.get("total"),
-           "lots": lots, "sales": sales,
+           "lots_buyout": len(lots),      # сколько из них с выкупом (остальные — ставки)
+           "has_buckets": has_buckets,
+           "lots": lots[:60], "sales": sales,
            "error": lots_raw.get("error") or hist_raw.get("error")}
     _market_cache[item_id] = (time.monotonic(), res)
     if len(_market_cache) > 500:                 # не разъедаемся
@@ -997,6 +1426,49 @@ def _require_admin(request: Request) -> dict:
     return user
 
 
+# ---------- ДЕВ · сканер выгодных лотов (services/market_scan) ----------
+
+@router.get("/admin/scan")
+async def admin_scan_state(request: Request):
+    """Снапшот сканера: настройки + текущие сделки + статистика покрытия."""
+    _require_admin(request)
+    return scan.snapshot()
+
+
+@router.post("/admin/scan/settings")
+async def admin_scan_settings(request: Request, payload: dict = Body(...)):
+    """Обновить пороги сканера (min_sph/discount_pct/avg_n/min_margin/enabled/
+    hist_all). Значения кламплены, сохраняются в data/scan_settings.json;
+    всем WS-клиентам уходит пересчитанный снапшот."""
+    _require_admin(request)
+    return {"settings": scan.update_settings(payload)}
+
+
+@router.websocket("/ws/dev/scan")
+async def ws_dev_scan(ws: WebSocket):
+    """Реалтайм сканера для админов. Auth — по сессионной куке (как HTTP).
+    Серверные события: snapshot (на подключении и при смене настроек),
+    deal (новая/обновлённая сделка), remove (лоты разобрали). Клиент шлёт
+    "ping" каждые ~25 c — держит соединение живым сквозь прокси."""
+    user = users.user_by_session(ws.cookies.get(SESSION_COOKIE, ""))
+    if not is_admin(user):
+        await ws.close(code=4403)
+        return
+    await ws.accept()
+    scan.clients.add(ws)
+    try:
+        await ws.send_text(json.dumps({"type": "snapshot", **scan.snapshot()},
+                                      ensure_ascii=False))
+        while True:
+            msg = await ws.receive_text()
+            if msg == "ping":
+                await ws.send_text('{"type":"pong"}')
+    except WebSocketDisconnect:
+        pass
+    finally:
+        scan.clients.discard(ws)
+
+
 @router.post("/dev/ab")
 async def dev_ab_override(request: Request, payload: dict = Body(...)):
     """Админ форсит себе вариант дизайна для предпросмотра (cookie sz_ab_force).
@@ -1122,13 +1594,19 @@ async def build_dictionary():
 
 @router.post("/build/auto")
 async def build_auto(payload: dict = Body(...)):
-    """Автоподбор сборки: {budget, container, stats: [{key, weight 0-100}]}."""
+    """Автоподбор сборки: {budget, container, stats: [{key, weight 0-100}],
+    exclude: [stat_key], no_negatives: bool}. exclude — «минус не нужен»:
+    ИТОГ сборки по стату не уйдёт во вредную сторону (арты с минусом остаются,
+    их перекрывают плюсы других артов); заражения не исключаются — лимиты и
+    контрарты. no_negatives — то же по всем обычным статам разом."""
     try:
         budget = float(payload.get("budget", 0))
     except (TypeError, ValueError):
         raise HTTPException(422, "budget must be a number")
     res = builds.auto_build(budget, str(payload.get("container", "")),
-                            payload.get("stats") or [])
+                            payload.get("stats") or [],
+                            payload.get("exclude") or [],
+                            bool(payload.get("no_negatives")))
     if res.get("error") in ("container_not_found", "bad_request"):
         raise HTTPException(422, res["error"])
     return res  # включая error=no_priced_variants с подсказкой — фронт покажет

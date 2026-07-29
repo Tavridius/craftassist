@@ -9,6 +9,10 @@ RUN pip install --no-cache-dir -r /app/backend/requirements.txt
 # код бэка и фронта
 COPY backend/ /app/backend/
 COPY frontend/ /app/frontend/
+# обслуживающие скрипты (чистка выбросов биржи, пересид гайда) — их запускают
+# внутри контейнера через docker exec, там смонтирован том с БД:
+#   docker exec -w /app/backend stalzone_craft python /app/scripts/<script>.py
+COPY scripts/ /app/scripts/
 
 WORKDIR /app/backend
 EXPOSE 8000

@@ -119,6 +119,7 @@ class RegisterIn(BaseModel):
     email: str
     password: str
     login: str
+    consent: bool = False  # согласие на обработку ПДн (152-ФЗ) — обязательно
 
 
 class SigninIn(BaseModel):
@@ -147,6 +148,9 @@ async def _send_verify_email(request: Request, user_id: int, email: str) -> None
 async def register(request: Request, body: RegisterIn):
     if not _rate_ok("reg:" + _client_ip(request)):
         return JSONResponse({"error": "Слишком много попыток, попробуйте позже"}, 429)
+    if not body.consent:
+        return JSONResponse(
+            {"error": "Необходимо согласие на обработку персональных данных"}, 400)
     try:
         uid = users.create_local_user(body.email, body.password, body.login)
     except users.AuthError as e:

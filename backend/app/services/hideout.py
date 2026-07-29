@@ -34,7 +34,7 @@ def item_available(item_id: str, profile: dict) -> bool:
     """Хватает ли прокачки хотя бы на ОДИН вариант рецепта предмета."""
     perks, feats = _norm(profile)
     return any(variant_ok(r.get("requirements") or {}, perks, feats)
-               for r in db.recipe_by_result.get(item_id, ()))
+               for r in db.recipes_for(item_id))
 
 
 def validate_profile(payload: dict) -> dict:

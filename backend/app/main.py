@@ -13,7 +13,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app import config
-from app.db import chat, guides, loader, mapobjects, market, news, promos, quests, users
+from app.db import (chat, craft_tuning, guides, loader, mapobjects, market, news,
+                    operations, promos, quests, users)
 from app.db.index import db
 from app.routers.api import router as api_router
 from app.routers.auth import router as auth_router
@@ -22,6 +23,7 @@ from app.services import exchange, fuel, oauth
 from app.services.artefact_lots import artlots
 from app.services.artefact_watch import artwatch
 from app.services.ingredient_watch import watch
+from app.services.market_scan import scan
 from app.services.price_store import store
 from app.services.rankings import rankings
 
@@ -45,6 +47,8 @@ async def startup() -> None:
     guides.init()
     quests.init()
     promos.init()
+    operations.init()
+    craft_tuning.init()
     db.load()
     store.load()
     # цены: крафт-граф + бартер-граф; история продаж — результаты обоих
@@ -52,6 +56,7 @@ async def startup() -> None:
     store.set_results(sorted(set(db.recipe_by_result) | set(db.barter_by_result)))
     fuel.warm()   # цены и история продаж топлива генератора — в ротацию воркера
     exchange.load()  # обменки Перекупщика (ручной JSON) — предметы в ротацию цен
+    scan.seed()   # ДЕВ-сканер выгодных лотов: настройки + посев из кэшей цен
     rankings.load()
     watch.load()
     oauth.load()  # кэшированный app-токен (если работаем по клиентским кредам)
@@ -63,6 +68,7 @@ async def startup() -> None:
     if config.PRICE_REFRESH_ENABLED:
         asyncio.create_task(store.refresh_loop())  # фоновое обновление цен
         asyncio.create_task(watch.loop())          # биржа ингредиентов (2 раза/сутки)
+        asyncio.create_task(scan.sweep_loop())     # ДЕВ-сканер: снятие протухших сделок
     if config.ART_WATCH_ENABLED:
         asyncio.create_task(artwatch.loop())       # биржа артефактов (корзины qlt×ptn)
     if config.ART_LOTS_ENABLED:
@@ -76,6 +82,9 @@ async def startup() -> None:
     if config.PATCH_WATCH_ENABLED:
         from app.services.patch_watch import pwatch
         asyncio.create_task(pwatch.loop())         # патчноуты с форума EXBO
+    if config.OPS_WATCH_ENABLED:
+        from app.services.operations_watch import opswatch
+        asyncio.create_task(opswatch.loop())       # сессии PvE-режима «Операции»
 
 
 # API и SSR-страницы — ДО статики, чтобы не перекрылись catch-all маунтом.
@@ -89,8 +98,10 @@ app.include_router(pages_router)
 # Каталог иконок на первом старте пуст (данные скачает startup-событие в volume),
 # поэтому создаём его заранее и монтируем безусловно — StaticFiles отдаёт
 # файлы, которые появятся позже (проверка существования — только на mount).
-# .webp регистрируем явно: на части ОС mimetypes его не знает и отдаёт text/plain.
+# .webp и .woff2 регистрируем явно: на части ОС mimetypes их не знает и отдаёт
+# text/plain — вебп не покажется, а шрифт браузер вообще отвергнет.
 mimetypes.add_type("image/webp", ".webp")
+mimetypes.add_type("font/woff2", ".woff2")
 config.ICONS_DIR.mkdir(parents=True, exist_ok=True)
 app.mount("/icons", StaticFiles(directory=str(config.ICONS_DIR)), name="icons")
 # зеркало картинок патчноутов (заполняет patch_watch в volume)

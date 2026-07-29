@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS users (
     email         TEXT,
     email_verified INTEGER NOT NULL DEFAULT 0,
     password_hash TEXT,
+    consent_at    REAL,
     created_at    REAL NOT NULL,
     last_login_at REAL NOT NULL
 );
@@ -90,6 +91,12 @@ def init() -> None:
         _migrate(_conn)
         _conn.execute("PRAGMA foreign_keys=ON")
         _conn.executescript(_SCHEMA)
+        # consent_at добавлен позже (152-ФЗ: фиксируем момент согласия на обработку
+        # ПДн). CREATE TABLE IF NOT EXISTS не добавляет колонку к существующей БД —
+        # доклеиваем идемпотентно.
+        if "consent_at" not in {r[1] for r in
+                                _conn.execute("PRAGMA table_info(users)").fetchall()}:
+            _conn.execute("ALTER TABLE users ADD COLUMN consent_at REAL")
         purged = _conn.execute(
             "DELETE FROM sessions WHERE expires_at < ?", (time.time(),)).rowcount
         _conn.execute("DELETE FROM email_tokens WHERE expires_at < ?", (time.time(),))
@@ -183,15 +190,15 @@ def upsert_user(profile: dict) -> tuple[int, bool]:
             "SELECT id FROM users WHERE exbo_id=?", (profile["id"],)).fetchone()
         _conn.execute(
             """INSERT INTO users (exbo_id, uuid, login, display_login, distributor,
-                                  created_at, last_login_at)
-               VALUES (?,?,?,?,?,?,?)
+                                  consent_at, created_at, last_login_at)
+               VALUES (?,?,?,?,?,?,?,?)
                ON CONFLICT(exbo_id) DO UPDATE SET
                  uuid=excluded.uuid, login=excluded.login,
                  display_login=excluded.display_login, distributor=excluded.distributor,
                  last_login_at=excluded.last_login_at""",
             (profile["id"], profile.get("uuid"),
              profile.get("login") or f"user{profile['id']}",
-             profile.get("display_login"), profile.get("distributor"), now, now))
+             profile.get("display_login"), profile.get("distributor"), now, now, now))
         uid = _conn.execute(
             "SELECT id FROM users WHERE exbo_id=?", (profile["id"],)).fetchone()[0]
         _conn.commit()
@@ -224,9 +231,9 @@ def create_local_user(email: str, password: str, login: str) -> int:
             raise AuthError("Этот ник уже занят")
         cur = _conn.execute(
             """INSERT INTO users (login, display_login, email, email_verified,
-                                  password_hash, created_at, last_login_at)
-               VALUES (?,?,?,0,?,?,?)""",
-            (login, login, email, pwhash, now, now))
+                                  password_hash, consent_at, created_at, last_login_at)
+               VALUES (?,?,?,0,?,?,?,?)""",
+            (login, login, email, pwhash, now, now, now))
         _conn.commit()
         return cur.lastrowid
 
