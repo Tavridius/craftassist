@@ -19,6 +19,7 @@ import httpx
 
 from app import config
 from app.db import news
+from app.services import imgopt
 
 logger = logging.getLogger(__name__)
 
@@ -158,16 +159,22 @@ class PatchWatch:
             ext = Path(url.split("?")[0]).suffix.lower()
             if ext not in (".png", ".jpg", ".jpeg", ".gif", ".webp"):
                 ext = ".png"
-            local = dest / f"{n}{ext}"
-            if local.exists():
-                out.append(f"/news-img/{pid}/{n}{ext}")
+            # уже зеркалили — с прошлого раза мог остаться и сжатый, и исходный
+            existing = next((e for e in (imgopt.SUFFIX, ext)
+                             if (dest / f"{n}{e}").exists()), None)
+            if existing:
+                out.append(f"/news-img/{pid}/{n}{existing}")
                 continue
             try:
                 r = await client.get(url, headers=UA, timeout=30.0,
                                      follow_redirects=True)
                 r.raise_for_status()
                 dest.mkdir(parents=True, exist_ok=True)
-                local.write_bytes(r.content)
+                # ужимаем до ширины вёрстки: форум отдаёт баннеры по 3-5 МБ,
+                # страница патча набирала до 48 МБ и убивала мобильных
+                packed = await asyncio.to_thread(imgopt.compress, r.content, url)
+                data, ext = packed if packed else (r.content, ext)
+                (dest / f"{n}{ext}").write_bytes(data)
                 out.append(f"/news-img/{pid}/{n}{ext}")
                 await asyncio.sleep(0.2)
             except Exception as e:
