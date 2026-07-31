@@ -16,3 +16,11 @@ backend/data/
 
 # локальный клон игровой БД EXBO (569МБ, свой .git) — не трекаем
 stalzone-database/
+
+# рабочие скриншоты, брошенные в корень
+/*.png
+
+# выгрузки stalzone.wiki (2.6МБ) — регенерируются scripts/wiki_map/wiki_export_all.py;
+# калибровка слоёв (wiki_transforms.json) в репозитории остаётся
+scripts/wiki_map/wiki_*.json
+!scripts/wiki_map/wiki_transforms.json
