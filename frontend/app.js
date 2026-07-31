@@ -26,6 +26,24 @@ function ymHit() {
   } catch (e) { /* счётчик не загрузился */ }
 }
 
+// Поиск по сайту Метрика тоже не видела: набор в строке правит URL через
+// replaceState и зовёт doSearch() напрямую, мимо route()/ymHit(). Автоцель
+// «поиск по сайту» ищет параметр в адресе ХИТА, а хита не было — отсюда 3
+// срабатывания на ~5000 визитов (аудит счёл поиск мёртвым, а он просто не
+// измерялся). Ждём паузы в наборе, чтобы не слать хит на каждую букву.
+let ymSearchTimer = null, ymLastSearch = "";
+function ymSearchHit(q) {
+  clearTimeout(ymSearchTimer);
+  if (!q || q === ymLastSearch) return;
+  ymSearchTimer = setTimeout(() => {
+    ymLastSearch = q;
+    const referer = location.origin + ymLastPath;
+    ymLastPath = "/search";      // следующий переход уйдёт с реферером поиска
+    const url = `/search?q=${encodeURIComponent(q)}`;
+    try { if (window.ym) ym(YM_ID, "hit", url, { referer }); } catch (e) { /* счётчик не загрузился */ }
+  }, 1200);
+}
+
 // A/B-тест дизайна: сервер проставил вариант в <html data-ab="A|B"> (только когда
 // тест включён). Шлём его параметром визита — в Метрике все отчёты (глубина, время,
 // отказы) сегментируются условием «Параметры визита → ab_design = A/B».
@@ -510,6 +528,7 @@ async function doSearch() {
     const r = await fetch(api(`/search?q=${encodeURIComponent(q)}&limit=48${availParam("&")}`));
     const data = await r.json();
     renderResults(data.results || [], data.available_only);
+    ymSearchHit(q);
   } catch (e) {
     results.innerHTML = `<div class="empty">[!] ОШИБКА СЕТИ</div>`;
   }
@@ -1067,10 +1086,16 @@ function wireDetail() {
   detail.querySelectorAll(".item-act[data-act]").forEach((b) => b.addEventListener("click", () => {
     const act = b.dataset.act;
     if (act === "auction") { openMarketModal(DETAIL_D.item.id); return; }
+    if (act === "compare") {
+      const it = DETAIL_D.item;
+      if (!cmpToggle(it)) authNotice(`В СРАВНЕНИИ УЖЕ ${CMP_MAX} ПРЕДМЕТА — УБЕРИТЕ ЛИШНЕЕ`, "err");
+      return;
+    }
     const anchor = act === "craft" ? "craftCalc" : act === "barter" ? "barterBlocks" : null;
     const el = anchor && document.getElementById(anchor);
     if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
   }));
+  syncCmpButtons();
   wireCalc();
   const ft = detail.querySelector("#fuelToggle");
   if (ft) ft.addEventListener("click", () => {
@@ -1084,6 +1109,10 @@ function itemActionsHtml(d) {
   const cat = d.category || "";
   const acts = [`<button class="item-act" data-act="auction">▸ НА АУКЕ</button>`];
   if (d.craftable) acts.push(`<button class="item-act" data-act="craft">▸ КРАФТ</button>`);
+  // сравнивать есть что только у предметов с игровыми характеристиками
+  if ((d.characteristics || []).length)
+    acts.push(`<button class="item-act cmp-act" data-act="compare"
+      data-cmp-id="${escapeHtml(d.item.id)}" data-cmp-label="1">⇄ К СРАВНЕНИЮ</button>`);
   if (["armor", "artefact", "containers", "backpacks"].includes(cat))
     acts.push(`<a class="item-act" href="/builds">▸ В СБОРКИ</a>`);
   // кнопка «бартер» добавляется динамически в loadBarterBlocks, если предмет барется
@@ -1774,11 +1803,23 @@ async function openMarket() {
   renderMarket(ov);
 }
 
-function mkRow(r, val) {
+// Суточный оборот бывает в сотни миллионов — полное число не влезает в строку
+// списка, поэтому крупные суммы сокращаем до млн/тыс.
+function fmtMoneyShort(n) {
+  if (!n) return "—";
+  if (n >= 1e6) return (n / 1e6).toFixed(n >= 1e7 ? 0 : 1).replace(".", ",").replace(",0", "") + " МЛН";
+  if (n >= 1e4) return Math.round(n / 1e3).toLocaleString("ru-RU") + " ТЫС";
+  return fmt(n);
+}
+
+function mkRow(r, val, price) {
+  // price — крупно справа: посетитель по запросу «аукцион цены» должен увидеть
+  // цены сразу в списке, а не в мелкой строке-мете после клика
+  const pct = price ? `<div class="pct mk-price">${price}</div>` : "";
   return `<div class="side-row mk-row" data-id="${r.id}" style="border-left-color:transparent">
     <img loading="lazy" src="${asset(r.icon)}" alt="">
     <div class="info"><div class="nm" style="color:${rank(r.color).color}">${escapeHtml(r.name)}</div>
-      <div class="meta">${val}</div></div></div>`;
+      <div class="meta">${val}</div></div>${pct}</div>`;
 }
 
 function renderMarket(ov) {
@@ -1788,13 +1829,18 @@ function renderMarket(ov) {
                           : `<div class="empty-sm">ЦЕНЫ ЕЩЁ СЧИТАЮТСЯ В ФОНЕ.</div>`}
   </section>`;
   const liquid = (ov && ov.liquid || []).map((r) =>
-    mkRow(r, `${fmtSales(r.sales_per_hour)} ПРОД/Ч${r.min_buyout ? " · ОТ " + fmt(r.min_buyout) + " ₽" : ""}`));
+    mkRow(r, `${fmtSales(r.sales_per_hour)} ПРОД/Ч`,
+          r.min_buyout ? `${fmt(r.min_buyout)} ₽` : ""));
   const expensive = (ov && ov.expensive || []).map((r) =>
-    mkRow(r, `ОТ ${fmt(r.min_buyout)} ₽${r.sales_per_hour ? " · " + fmtSales(r.sales_per_hour) + " ПРОД/Ч" : ""}`));
+    mkRow(r, r.avg ? `СДЕЛКИ ~${fmtMoneyShort(r.avg)} ₽` : "СДЕЛОК ЕЩЁ НЕ БЫЛО",
+          `${fmtMoneyShort(r.min_buyout)} ₽`));
+  const turnover = (ov && ov.turnover || []).map((r) =>
+    mkRow(r, `${fmtSales(r.sales_per_hour)} ПРОД/Ч × ${fmt(r.avg)} ₽`,
+          `${fmtMoneyShort(r.turnover)} ₽`));
   page.innerHTML = `<div class="mkmod">
     <div class="section-head">
-      <div class="section-title">▸ АУКЦИОН · ЖИВЫЕ ЛОТЫ И ПРОДАЖИ</div>
-      <div class="section-note">ЛОТЫ ОБНОВЛЯЮТСЯ ПРИ ОТКРЫТИИ ПРЕДМЕТА</div>
+      <div class="section-title">▸ АУКЦИОН · ЦЕНЫ И ПРОДАЖИ</div>
+      <div class="section-note">${ov && ov.tracked ? `${fmt(ov.tracked)} ПРЕДМЕТОВ ПОД НАБЛЮДЕНИЕМ` : ""}</div>
     </div>
     <div class="search-box mk-search">
       <div class="search-prompt">&gt;_</div>
@@ -1810,6 +1856,7 @@ function renderMarket(ov) {
     <div class="home-cols mk-cols">
       ${col("САМЫЕ ПРОДАВАЕМЫЕ", "ПРОДАЖ В ЧАС", liquid)}
       ${col("САМЫЕ ДОРОГИЕ", "МИН. ВЫКУП", expensive)}
+      ${col("ОБОРОТ ЗА СУТКИ", "ГДЕ КРУТЯТСЯ ДЕНЬГИ", turnover)}
     </div>
   </div>`;
   const inp = $("mkInput");
@@ -3703,12 +3750,13 @@ async function initQuestModalMap(q, ep) {
     attributionControl: false, maxBoundsViscosity: 1.0,
   });
   const px = (x, y) => map.unproject([x, y], lm.max_zoom);
+  const [vx0, vy0, vx1, vy1] = layerView(lm);
   L.tileLayer(asset(lm.tile_url), {
     tileSize: lm.tile_size,
     minNativeZoom: lm.min_zoom, maxNativeZoom: lm.max_zoom,
     bounds: L.latLngBounds(px(0, 0), px(lm.w, lm.h)), noWrap: true,
   }).addTo(map);
-  map.setMaxBounds(L.latLngBounds(px(0, 0), px(lm.w, lm.h)));
+  map.setMaxBounds(L.latLngBounds(px(vx0, vy0), px(vx1, vy1)));
   map.setMaxZoom(lm.max_zoom);
   (q.map_points || []).forEach((p, i) => {
     const m = L.marker(px(p[0], p[1]), {
@@ -4039,6 +4087,8 @@ function renderArtCard(d) {
 
 // ---------- калькулятор сборок: ручной + автоподбор + приведённое ХП ----------
 let BUILD_DICT = null;   // /api/build/dict (кэш на сессию)
+let READY_BUILDS = null; // /api/build/ready — готовые сборки для верха страницы
+let readyLoading = false;
 let buildTab = "manual";
 const buildState = { container: null, slots: [] };  // слот: {id, ptn, m} | null
 const autoState = { budget: 500000, stats: [{ key: "", weight: 60 }],
@@ -4184,6 +4234,25 @@ async function openBuilds() {
     buildState.slots = first ? Array(first.slots).fill(null) : [];
   }
   renderBuilds();
+  loadReadyBuilds();
+}
+
+// Готовые сборки для верха страницы: холодный посетитель из поиска попадал на
+// пустую сетку слотов и уходил. Грузим отдельно от справочника — расчёт на
+// живых ценах идёт ~1.5 с, держать из-за него первую отрисовку незачем.
+async function loadReadyBuilds() {
+  if (READY_BUILDS || readyLoading) return;
+  readyLoading = true;
+  try {
+    READY_BUILDS = await fetch(api("/build/ready")).then((r) => r.json());
+  } catch (e) {
+    READY_BUILDS = { presets: [] };   // сеть отвалилась — просто не показываем блок
+  }
+  readyLoading = false;
+  // ушли со страницы, переключили вкладку или уже выбирают артефакт — не трогаем
+  // DOM: перерисовка закрыла бы открытый пикер прямо под руками
+  if (location.pathname === "/builds" && buildTab === "manual" && pickerSlot < 0)
+    renderBuilds();
 }
 
 function buildContainer() {
@@ -4330,6 +4399,107 @@ function manualSlotCard(s, idx) {
   </div>`;
 }
 
+// ---------- готовые сборки (верх страницы) ----------
+function readyCard(p) {
+  const t = p.build.totals;
+  // Сперва статы профиля — карточка обещает именно их; отсутствующие (бюджет
+  // ушёл в первый стат) пропускаем, вместо «Живучесть —». Добор — крупнейшим из
+  // остальных: сортировать всё подряд по модулю нельзя, единицы разные, и «под
+  // ходки» выносило защиту от радиации вперёд скорости передвижения.
+  const shown = new Set();
+  const pick = [];
+  for (const s of p.stats_req) {
+    const st = t.stats[s.key];
+    if (st) { pick.push(st); shown.add(s.key); }
+  }
+  const rest = Object.keys(t.stats).filter((k) => !shown.has(k))
+    .map((k) => t.stats[k])
+    .sort((a, b) => Math.abs(b.total) - Math.abs(a.total));
+  while (pick.length < 3 && rest.length) pick.push(rest.shift());
+  const rows = pick.map((st) => `<div class="rc-stat ${st.harmful ? "bad" : ""}">
+      <span class="k">${escapeHtml(st.name)}</span>
+      <span class="v">${fmtStat(st.total)}</span></div>`).join("");
+  // сборки сверх лимитов не выдаются, но оптимизатор упирается в них вплотную —
+  // умолчать об этом нельзя, игрок должен знать, чем платит
+  const maxed = (t.contamination || [])
+    .filter((c) => c.limit && c.net >= c.limit * 0.95).map((c) => c.name);
+  const arts = p.build.slots.map((s) =>
+    `<img loading="lazy" src="${asset(s.icon)}" alt="${escapeHtml(s.name)}"
+       title="${escapeHtml(s.name)} · ${bucketBadge(s.qlt, s.ptn)}"
+       style="border-color:${qltColor(s.qlt)}">`).join("");
+  // одинаковые арты занимают несколько слотов — схлопываем с количеством,
+  // иначе список названий короче ряда иконок и выглядит ошибкой
+  const cnt = new Map();
+  for (const s of p.build.slots) cnt.set(s.name, (cnt.get(s.name) || 0) + 1);
+  const names = [...cnt].map(([n, c]) => (c > 1 ? `${n} ×${c}` : n)).join(", ");
+  return `<article class="ready-card">
+    <div class="rc-title">${escapeHtml(p.title)}</div>
+    <div class="rc-note">${escapeHtml(p.note)}</div>
+    <div class="rc-arts">${arts}</div>
+    <div class="rc-names">${escapeHtml(names)}</div>
+    <div class="rc-stats">${rows}</div>
+    ${maxed.length ? `<div class="rc-warn">У ПРЕДЕЛА: ${escapeHtml(maxed.join(", ").toUpperCase())}</div>` : ""}
+    <div class="rc-cost">${fmt(t.cost)} ₽</div>
+    <div class="rc-act">
+      <button class="rc-go" data-ropen="${p.id}">ОТКРЫТЬ В КАЛЬКУЛЯТОРЕ</button>
+      <button class="rc-alt" data-rauto="${p.id}">ПОД СВОЙ БЮДЖЕТ</button>
+    </div>
+  </article>`;
+}
+
+function readyStrip() {
+  if (!READY_BUILDS) return `<div class="ready-load">// СЧИТАЮ ГОТОВЫЕ СБОРКИ НА ЖИВЫХ ЦЕНАХ…</div>`;
+  const ps = READY_BUILDS.presets || [];
+  if (!ps.length) return "";   // биржа не прогрелась — блока просто нет
+  const c = READY_BUILDS.container || {};
+  return `<section class="ready">
+    <div class="ready-head">
+      <h2 class="ready-title">ГОТОВЫЕ СБОРКИ ПОД БЮДЖЕТ ${fmt(READY_BUILDS.budget)} ₽</h2>
+      <div class="ready-sub">Подобраны по живым ценам аукциона${c.name ? ` · хранилище ${escapeHtml(c.name)}` : ""} · ниже можно собрать свою</div>
+    </div>
+    <div class="ready-grid">${ps.map(readyCard).join("")}</div>
+  </section>`;
+}
+
+// перенос готовой сборки в ручной конструктор: качество — верх тира (бэк в пуле
+// вариантов берёт ровно его), заточка как подобрана
+function readyOpen(pid) {
+  const p = (READY_BUILDS.presets || []).find((x) => x.id === pid);
+  if (!p) return;
+  const cont = READY_BUILDS.container || {};
+  const n = cont.slots || p.build.slots.length;
+  buildState.container = cont.id || buildState.container;
+  buildState.slots = Array(n).fill(null);
+  p.build.slots.slice(0, n).forEach((s, i) => {
+    buildState.slots[i] = { id: s.item, ptn: s.ptn, m: tierTop(s.qlt) };
+  });
+  buildTab = "manual";
+  ymGoal("build_ready_open");
+  renderBuilds();
+  p.build.slots.forEach((s) => loadArtPrices(s.item));   // цены подтянутся и перерисуют
+}
+
+// та же сборка в автоподборе: профиль и результат уже посчитаны — посетителю
+// остаётся поменять бюджет и пересчитать
+function readyAuto(pid) {
+  const p = (READY_BUILDS.presets || []).find((x) => x.id === pid);
+  if (!p) return;
+  const cont = READY_BUILDS.container || {};
+  if (cont.id) {
+    buildState.container = cont.id;
+    buildState.slots = Array(cont.slots || 0).fill(null);
+  }
+  autoState.budget = READY_BUILDS.budget;
+  autoState.stats = p.stats_req.map((s) => ({ key: s.key, weight: s.weight }));
+  autoState.exclude = [];
+  autoState.noNeg = false;
+  autoState.result = { container: cont, builds: [p.build],
+                       warnings: READY_BUILDS.price_note ? [READY_BUILDS.price_note] : [] };
+  buildTab = "auto";
+  ymGoal("build_ready_auto");
+  renderBuilds();
+}
+
 function renderBuilds() {
   const cont = buildContainer();
   if (!cont) { page.innerHTML = `<div class="empty">НЕТ ДАННЫХ ХРАНИЛИЩ</div>`; return; }
@@ -4343,6 +4513,7 @@ function renderBuilds() {
       <button class="btab ${buildTab === "auto" ? "on" : ""}" data-tab="auto">АВТОПОДБОР ПОД БЮДЖЕТ</button>
       <button class="btab ${buildTab === "hp" ? "on" : ""}" data-tab="hp">ПРИВЕДЁННОЕ ХП</button>
     </div>
+    ${buildTab === "manual" ? readyStrip() : ""}
     <div class="bbar"><div class="isel" id="bContSel"></div></div>`;
 
   h += buildTab === "manual" ? renderManual(cont)
@@ -4455,7 +4626,7 @@ function renderHP(cont) {
     <div class="aform">
       <label class="albl">БЮДЖЕТ, ₽ <input id="hBudget" type="text" inputmode="numeric" value="${fmt(hpState.budget)}"></label>
       <div class="arow"><span class="albl" style="min-width:70px">БРОНЯ</span>
-        <div class="isel" id="hArmorSel" style="flex:1"></div>
+        <div class="isel" id="hArmorSel"></div>
         <select id="hPtn">${ptnOpts}</select></div>
       <button id="hGo" class="prof-save">РАССЧИТАТЬ СБОРКУ</button>
     </div>${res}`;
@@ -4566,6 +4737,11 @@ function wireBuilds(cont) {
       buildState.slots = Array(c.slots).fill(null).map((_, i) => old[i] || null);
       renderBuilds();
     });
+
+  page.querySelectorAll("[data-ropen]").forEach((b) =>
+    b.addEventListener("click", () => readyOpen(b.dataset.ropen)));
+  page.querySelectorAll("[data-rauto]").forEach((b) =>
+    b.addEventListener("click", () => readyAuto(b.dataset.rauto)));
 
   if (buildTab === "auto") {
     wireBudget($("aBudget"), (v) => { autoState.budget = v; });
@@ -4923,6 +5099,10 @@ async function openMap(territoryId) {
   else renderWorldMap();
 }
 
+// Полезная область слоя: view из /map/meta отрезает декоративные поля коллажа
+// (мусор по краям global_map); без view — всё изображение.
+const layerView = (lm) => lm.view || [0, 0, lm.w, lm.h];
+
 // Общая инициализация Leaflet-вида (CRS.Simple, границы строго по изображению).
 function makeTileMap(layerMeta, viewBoundsPx, elId = "mapView") {
   const map = L.map(elId, {
@@ -5052,7 +5232,7 @@ function renderWorldMap() {
       детальном виде; ✕ — сейчас закрыто в игре.</div>
   </div>`;
   wireMapWip();
-  const { map, px } = makeTileMap(g, [0, 0, g.w, g.h]);
+  const { map, px } = makeTileMap(g, layerView(g));
   (mapMeta.territories || []).forEach((t) => {
     const openable = !!t.bbox;
     const cls = "map-terr" + (t.closed ? " closed" : "") + (openable ? " openable" : "");
@@ -6501,7 +6681,7 @@ async function renderDevQuestForm(qid, preset) {
     $("qfGotoWrap").classList.toggle("hidden", layer !== "detail");
     document.documentElement.classList.add("on-map");      // зум 1.2 ломает клики Leaflet
     const lm = mapMeta[layer];
-    qem = makeTileMap(lm, [0, 0, lm.w, lm.h], "qfMap");
+    qem = makeTileMap(lm, layerView(lm), "qfMap");
     qemLayer = layer;
     qem.map.on("click", (e) => {
       const c = qem.toPx(e.latlng);
@@ -6684,7 +6864,7 @@ async function renderDevQuestForm(qid, preset) {
 
 function initEditorMap() {
   const lm = mapMeta[ed.layer];
-  const { map, px, toPx } = makeTileMap(lm, [0, 0, lm.w, lm.h]);
+  const { map, px, toPx } = makeTileMap(lm, layerView(lm));
   ed.map = map; ed.px = px; ed.toPx = toPx; ed.layerMeta = lm;
   map.doubleClickZoom.disable();       // dblclick замыкает область/линию
   map.on("click", onMapClick);
@@ -6697,9 +6877,9 @@ function initEditorMap() {
 function renderBar() {
   const tool = (m, label) =>
     `<button class="mp-tool ${ed.mode === m ? "on" : ""}" data-mode="${m}">${label}</button>`;
-  const cats = MAP_CATS.map((c) =>
+  const cats = MAP_CATS.map((c, i) =>
     `<button class="mp-cat ${ed.cat === c.id ? "on" : ""}" data-cat="${c.id}"
-       title="${escapeHtml(c.name)}" style="--mo:${c.color}"><span>${c.emoji}</span></button>`).join("");
+       title="${i < 9 ? `[${i + 1}] ` : ""}${escapeHtml(c.name)}" style="--mo:${c.color}"><span>${c.emoji}</span></button>`).join("");
   const terrOpts = (mapMeta.territories || []).filter((t) => t.bbox)
     .map((t) => `<option value="${t.id}">${escapeHtml(t.name)}</option>`).join("");
   ed.el.bar.innerHTML = `
@@ -6716,7 +6896,63 @@ function renderBar() {
     ${ed.layer === "detail" ? `<div class="mp-group">
       <span class="mp-lbl">К ТЕРРИТОРИИ</span>
       <select class="mp-terr" data-role="terr"><option value="">— выбрать —</option>${terrOpts}</select>
-    </div>` : ""}`;
+    </div>` : ""}
+    <div class="mp-group" id="mpBulk"></div>`;
+  renderBulk();
+}
+
+// ---------- массовые операции над черновиками (разбор импорта) ----------
+// Слои-фильтры: категория (метки) или имя (области). Опубликованное не трогаем.
+function renderBulk() {
+  const box = $("mpBulk");
+  if (!box) return;
+  const drafts = ed.objects.filter((o) => !o.published);
+  if (!drafts.length) { box.innerHTML = ""; return; }
+  const byCat = {};
+  const byName = {};
+  drafts.forEach((o) => {
+    if (o.kind === "marker") byCat[o.category] = (byCat[o.category] || 0) + 1;
+    else if (o.name) byName[o.name] = (byName[o.name] || 0) + 1;
+  });
+  const opts = [`<option value="">— все черновики (${drafts.length}) —</option>`]
+    .concat(MAP_CATS.filter((c) => byCat[c.id]).map((c) =>
+      `<option value="cat:${c.id}">${c.emoji} ${escapeHtml(c.name)} (${byCat[c.id]})</option>`))
+    .concat(Object.keys(byName).sort().map((n) =>
+      `<option value="name:${escapeHtml(n)}">▱ ${escapeHtml(n)} (${byName[n]})</option>`));
+  box.innerHTML = `<span class="mp-lbl">ЧЕРНОВИКИ</span>
+    <select class="mp-terr" id="mpBulkSel">${opts.join("")}</select>
+    <button class="mp-tool" id="mpBulkPub">ОПУБЛИКОВАТЬ</button>
+    <button class="mp-tool" id="mpBulkDel">УДАЛИТЬ</button>`;
+  const pick = () => {
+    const v = $("mpBulkSel").value;
+    const body = { layer: ed.layer };
+    let label = "все черновики слоя";
+    let n = drafts.length;
+    if (v.startsWith("cat:")) {
+      body.category = v.slice(4);
+      n = byCat[body.category];
+      label = `черновики «${catById(body.category).name}»`;
+    } else if (v.startsWith("name:")) {
+      body.name = v.slice(5);
+      n = byName[body.name];
+      label = `черновики «${body.name}»`;
+    }
+    return { body, label, n };
+  };
+  const run = async (action, verb) => {
+    const { body, label, n } = pick();
+    if (!n) return;
+    if (!confirm(`${verb} ${n} шт. — ${label}?` +
+                 (action === "delete" ? " Это необратимо." : ""))) return;
+    try {
+      const r = await apiJson("/map/objects/bulk", "POST", { action, ...body });
+      selectObject(null);
+      await loadEditorObjects();
+      flashHint(`✓ ${verb.toLowerCase()}: ${r.changed}`);
+    } catch (e) { alert("Не получилось: " + e.message); }
+  };
+  $("mpBulkPub").addEventListener("click", () => run("publish", "Опубликовать"));
+  $("mpBulkDel").addEventListener("click", () => run("delete", "Удалить"));
 }
 
 function onBarClick(e) {
@@ -6766,11 +7002,14 @@ function updateHint() {
   const need = ed.mode === "area" ? 3 : 2;
   let txt;
   if (ed.mode === "marker") {
-    txt = `Клик по карте — поставить метку «${catById(ed.cat).name}».`;
+    txt = `Клик по карте — поставить метку «${catById(ed.cat).name}». Имя — сразу в панели,
+      Enter — сохранить и ставить дальше. Esc — курсор.`;
   } else if (ed.mode === "area" || ed.mode === "line") {
-    txt = `Клик — вершина. Двойной клик или «ГОТОВО» — завершить (нужно ≥${need}). Точек: ${ed.draftPts.length}.`;
+    txt = `Клик — вершина. Двойной клик, Enter или «ГОТОВО» — завершить (нужно ≥${need}).
+      Esc — отмена. Точек: ${ed.draftPts.length}.`;
   } else {
-    txt = "Клик по объекту — редактировать. Тяни метку или вершины — переместить.";
+    txt = `Клик по объекту — редактировать. Тяни метку или вершины — переместить.
+      Хоткеи: 1–9 — метка нужной категории, Del — удалить выбранное.`;
   }
   ed.el.hint.innerHTML = `<span class="mh-txt">${txt}</span>` + (drawing
     ? `<button class="mh-btn ok" data-act="finish">ГОТОВО</button>
@@ -6855,6 +7094,9 @@ async function createObject(payload) {
     addObjectLayer(o);
     selectObject(o.id);
     updateStatus();
+    // серийная расстановка: сразу вводить имя, Enter в поле сохранит и закроет
+    const nm = $("pfName");
+    if (nm && payload.kind === "marker") nm.focus();
   } catch (e) { alert("Не удалось создать объект: " + e.message); }
 }
 
@@ -6997,7 +7239,38 @@ function clearHandles() {
   ed.handles = [];
 }
 
+// ---------- хоткеи редактора: серийная расстановка без тулбара ----------
+// 1–9 — метка категории (порядок тулбара), Esc — отмена/курсор, Enter —
+// завершить область/линию, Del — удалить выбранное. В полях ввода Enter на
+// «Названии» сохраняет объект и закрывает панель — серия кликов не прерывается.
+document.addEventListener("keydown", (e) => {
+  if (!document.getElementById("mapedBar")) return;          // редактор закрыт
+  const t = e.target;
+  if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT")) {
+    if (e.key === "Enter" && t.id === "pfName" && ed.selected != null) {
+      e.preventDefault();
+      const o = ed.byId(ed.selected);
+      if (o) savePanel(o).then(() => selectObject(null));
+    } else if (e.key === "Escape") t.blur();
+    return;
+  }
+  if (e.key >= "1" && e.key <= "9") {
+    const c = MAP_CATS[+e.key - 1];
+    if (c) { ed.cat = c.id; setMode("marker"); }
+  } else if (e.key === "Escape") {
+    if (ed.draftPts.length) { clearDraft(); updateHint(); }
+    else if (ed.selected != null) selectObject(null);
+    else setMode("view");
+  } else if (e.key === "Enter" && (ed.mode === "area" || ed.mode === "line") && ed.draftPts.length) {
+    finishDraft();
+  } else if (e.key === "Delete" && ed.mode === "view" && ed.selected != null) {
+    const o = ed.byId(ed.selected);
+    if (o) deleteObject(o);
+  }
+});
+
 function updateStatus() {
+  renderBulk();                     // счётчики черновиков в массовых операциях
   const total = ed.objects.length;
   const drafts = ed.objects.filter((o) => !o.published).length;
   const n = (k) => ed.objects.filter((o) => o.kind === k).length;
@@ -7293,7 +7566,7 @@ const IDB_CAT_RU = {
   bullet: "Патроны", medicine: "Медицина", grenade: "Граната", supply: "Припасы",
   device: "Устройство", misc: "Прочее", other: "Прочее",
 };
-const idbState = { cat: "", q: "", offset: 0, total: 0 };
+const idbState = { cat: "", q: "", offset: 0, total: 0, byId: {} };
 
 async function openItemDb() {
   home.classList.add("hidden"); detail.classList.add("hidden");
@@ -7310,6 +7583,7 @@ async function openItemDb() {
     <div class="section-head">
       <div class="section-title">▸ БАЗА ПРЕДМЕТОВ</div>
       <div class="section-note" id="idbNote"></div>
+      <a class="idb-cmp-link" href="/compare">⇄ СРАВНЕНИЕ</a>
     </div>
     <div class="idb-search"><span class="idb-prompt">&gt;_</span>
       <input id="idbInput" type="search" autocomplete="off" placeholder="ПОИСК ПРЕДМЕТА…" value="${escapeHtml(idbState.q)}"></div>
@@ -7359,11 +7633,17 @@ async function idbMore() {
 
 function idbCard(it) {
   const rk = rank(it.color);
-  return `<a class="idb-card" href="/item/${encodeURIComponent(it.id)}" style="--rar:${rk.color}">
-    <div class="idb-ic"><img loading="lazy" src="${asset(it.icon)}" alt=""></div>
-    <div class="idb-nm" style="color:${rk.color}">${escapeHtml(it.name)}</div>
-    <div class="idb-cat">${escapeHtml(IDB_CAT_RU[it.category] || it.category || "")}</div>
-  </a>`;
+  // ⇄ — добавить к сравнению, не уходя из каталога (только там, где есть статы)
+  const cmp = CMP_CATS.has(it.category)
+    ? `<button class="idb-cmp" data-cmp-id="${escapeHtml(it.id)}" title="Добавить к сравнению">⇄</button>`
+    : "";
+  return `<div class="idb-cell" style="--rar:${rk.color}">
+    <a class="idb-card" href="/item/${encodeURIComponent(it.id)}">
+      <div class="idb-ic"><img loading="lazy" src="${asset(it.icon)}" alt=""></div>
+      <div class="idb-nm" style="color:${rk.color}">${escapeHtml(it.name)}</div>
+      <div class="idb-cat">${escapeHtml(IDB_CAT_RU[it.category] || it.category || "")}</div>
+    </a>${cmp}
+  </div>`;
 }
 
 function idbRender(d, reset) {
@@ -7379,10 +7659,343 @@ function idbRender(d, reset) {
     return;
   }
   grid.insertAdjacentHTML("beforeend", items.map(idbCard).join(""));
+  items.forEach((it) => { idbState.byId[it.id] = it; });
+  grid.querySelectorAll(".idb-cmp[data-cmp-id]").forEach((b) => {
+    if (b.dataset.wired) return;
+    b.dataset.wired = "1";
+    b.addEventListener("click", (e) => {
+      e.preventDefault();
+      const it = idbState.byId[b.dataset.cmpId];
+      if (it && !cmpToggle(it)) authNotice(`В СРАВНЕНИИ УЖЕ ${CMP_MAX} ПРЕДМЕТА — УБЕРИТЕ ЛИШНЕЕ`, "err");
+    });
+  });
+  syncCmpButtons();
   idbState.offset += items.length;
   const note = $("idbNote");
   if (note) note.textContent = `${idbState.total} ПРЕДМЕТОВ${idbState.q ? ` · «${idbState.q}»` : ""}`;
   if (more) more.classList.toggle("hidden", idbState.offset >= idbState.total);
+}
+
+// ---------- сравнение снаряжения ----------
+// Набор живёт в localStorage объектами {id,name,icon,color} — панель внизу рисует
+// иконки без похода на бэк. Адрес /compare?ids=…&ptn=… — шарится ссылкой.
+const CMP_MAX = 4;
+const CMP_KEY = "sz_cmp";
+// у остальных категорий нет тултип-статов — сравнивать нечего
+const CMP_CATS = new Set(["weapon", "armor", "attachment", "weapon_modules",
+                          "containers", "backpacks", "artefact"]);
+const CMP_PICK_CATS = [
+  { key: "gear", label: "ВСЁ СНАРЯЖЕНИЕ" }, { key: "weapon", label: "ОРУЖИЕ" },
+  { key: "armor", label: "БРОНЯ" }, { key: "attachment", label: "ОБВЕСЫ" },
+  { key: "container", label: "КОНТЕЙНЕРЫ" }, { key: "artefact", label: "АРТЕФАКТЫ" },
+];
+const cmpState = { ptn: 0, data: null, cat: "gear", q: "", picks: null };
+// уровень заточки помним между заходами: сравнивают обычно на своём уровне
+const cmpPtnSaved = () => {
+  try { return Math.max(0, Math.min(15, +localStorage.getItem("sz_cmp_ptn") || 0)); }
+  catch (e) { return 0; }
+};
+
+function cmpList() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(CMP_KEY)) || [];
+    return raw.filter((x) => x && x.id).slice(0, CMP_MAX);
+  } catch (e) { return []; }
+}
+
+function cmpStore(items) {
+  try { localStorage.setItem(CMP_KEY, JSON.stringify(items.slice(0, CMP_MAX))); }
+  catch (e) { /* приватный режим — набор живёт до перезагрузки */ }
+  renderCmpTray();
+  syncCmpButtons();
+}
+
+// true — предмет добавлен/убран, false — набор уже полон
+function cmpToggle(it) {
+  const items = cmpList();
+  const i = items.findIndex((x) => x.id === it.id);
+  if (i >= 0) items.splice(i, 1);
+  else if (items.length >= CMP_MAX) return false;
+  else items.push({ id: it.id, name: it.name, icon: it.icon, color: it.color });
+  cmpStore(items);
+  if (location.pathname === "/compare") cmpLoad();
+  return true;
+}
+
+// кнопки «в сравнение» разбросаны по каталогу и карточкам — держим их в курсе
+function syncCmpButtons() {
+  const ids = new Set(cmpList().map((x) => x.id));
+  document.querySelectorAll("[data-cmp-id]").forEach((b) => {
+    const on = ids.has(b.dataset.cmpId);
+    b.classList.toggle("on", on);
+    b.title = on ? "Убрать из сравнения" : "Добавить к сравнению";
+    if (b.dataset.cmpLabel) b.textContent = on ? "⇄ В СРАВНЕНИИ" : "⇄ К СРАВНЕНИЮ";
+  });
+}
+
+let cmpTrayEl = null;
+function renderCmpTray() {
+  const items = cmpList();
+  const hide = !items.length || location.pathname === "/compare";
+  if (!cmpTrayEl) {
+    if (hide) return;
+    cmpTrayEl = document.createElement("div");
+    cmpTrayEl.className = "cmp-tray";
+    cmpTrayEl.setAttribute("aria-label", "Набор для сравнения");
+    document.body.appendChild(cmpTrayEl);
+  }
+  cmpTrayEl.classList.toggle("hidden", hide);
+  if (hide) return;
+  const chips = items.map((x) => `<button class="cmp-chip" data-rm="${escapeHtml(x.id)}"
+      title="Убрать «${escapeHtml(x.name)}»" style="--rar:${rank(x.color).color}">
+      <img src="${asset(x.icon)}" alt=""><span class="cmp-chip-x">✕</span></button>`).join("");
+  cmpTrayEl.innerHTML = `<div class="cmp-tray-lbl">СРАВНЕНИЕ</div>
+    <div class="cmp-tray-items">${chips}</div>
+    <a class="cmp-tray-go" href="${cmpUrl(items.map((x) => x.id), cmpPtnSaved())}">СРАВНИТЬ ${items.length}/${CMP_MAX} ▸</a>
+    <button class="cmp-tray-clear" title="Очистить набор">✕</button>`;
+  cmpTrayEl.querySelectorAll("[data-rm]").forEach((b) => b.addEventListener("click", () => {
+    cmpStore(cmpList().filter((x) => x.id !== b.dataset.rm));
+  }));
+  cmpTrayEl.querySelector(".cmp-tray-clear").addEventListener("click", () => cmpStore([]));
+}
+
+const cmpUrl = (ids, ptn) =>
+  `/compare?ids=${encodeURIComponent(ids.join(","))}${ptn ? `&ptn=${ptn}` : ""}`;
+
+async function openCompare() {
+  home.classList.add("hidden"); detail.classList.add("hidden");
+  results.innerHTML = "";
+  page.classList.remove("hidden");
+  window.scrollTo(0, 0);
+  const sp = new URLSearchParams(location.search);
+  cmpState.ptn = sp.has("ptn")
+    ? Math.max(0, Math.min(15, +sp.get("ptn") || 0))
+    : cmpPtnSaved();
+  const urlIds = (sp.get("ids") || "").split(",").map((s) => s.trim()).filter(Boolean);
+  if (urlIds.length) {
+    // пришли по ссылке — набор из адреса главнее локального (имена/иконки
+    // подставит ответ бэка, пока их нет — id как подпись)
+    const cur = cmpList();
+    cmpStore(urlIds.slice(0, CMP_MAX).map((id) =>
+      cur.find((x) => x.id === id) || { id, name: id, icon: "", color: "DEFAULT" }));
+  }
+  cmpState.data = null;
+  cmpState.picks = null;
+  cmpRender();
+  cmpLoad();
+  cmpLoadPicks();
+}
+
+async function cmpLoad() {
+  const ids = cmpList().map((x) => x.id);
+  if (!ids.length) { cmpState.data = null; cmpSyncUrl(); cmpRender(); return; }
+  const d = await fetch(api(`/compare?ids=${encodeURIComponent(ids.join(","))}&ptn=${cmpState.ptn}`))
+    .then((r) => r.json()).catch(() => null);
+  if (location.pathname !== "/compare") return;
+  cmpState.data = d;
+  if (d && d.items && d.items.length) {
+    // бэк вернул настоящие имена/иконки (важно для набора, пришедшего ссылкой)
+    cmpStore(d.items.map((i) => ({ id: i.id, name: i.name, icon: i.icon, color: i.color })));
+  } else if (d && d.missing && d.missing.length) {
+    cmpStore([]);   // в ссылке одни неизвестные id — не держим фантомный набор
+    authNotice("ЭТИ ПРЕДМЕТЫ НЕЛЬЗЯ СРАВНИТЬ: НЕТ ИГРОВЫХ ХАРАКТЕРИСТИК", "err");
+  }
+  cmpSyncUrl();
+  cmpRender();
+}
+
+function cmpSyncUrl() {
+  const ids = cmpList().map((x) => x.id);
+  const url = ids.length ? cmpUrl(ids, cmpState.ptn) : "/compare";
+  if (url !== location.pathname + location.search) history.replaceState(null, "", url);
+}
+
+// полоса «насколько хорошо» — длиннее всегда значит лучше, даже когда лучше
+// меньше (отдача, разброс): для таких строк берём обратное отношение
+function cmpBars(row) {
+  const nums = row.cells.filter((c) => c && c.num != null).map((c) => c.num);
+  if (!row.dir || nums.length < 2 || nums.some((n) => n <= 0)) return null;
+  const mx = Math.max(...nums), mn = Math.min(...nums);
+  if (mx === mn) return null;
+  return (n) => Math.round((row.dir > 0 ? n / mx : mn / n) * 100);
+}
+
+function cmpCol(it) {
+  const rk = rank(it.color);
+  const p = it.price || {};
+  const cat = IDB_CAT_RU[it.category] || "";
+  const price = p.min_buyout != null ? `${fmt(p.min_buyout)} ₽`
+    : p.known ? "НЕТ ЛОТОВ" : "ЦЕНА СЧИТАЕТСЯ…";
+  const sub = [];
+  if (p.recent != null) sub.push(`СДЕЛКИ ~${fmt(p.recent)} ₽`);
+  if (p.sales_per_hour) sub.push(`${fmtSales(p.sales_per_hour)} ПРОД/Ч`);
+  const href = `/item/${encodeURIComponent(it.id)}`;
+  return `<div class="cmp-col" style="--rar:${rk.color}">
+    <button class="cmp-x" data-rm="${escapeHtml(it.id)}" title="Убрать из сравнения">✕</button>
+    <a class="cmp-ic" href="${href}"><img loading="lazy" src="${asset(it.icon)}" alt=""></a>
+    <a class="cmp-nm" href="${href}" style="color:${rk.color}">${escapeHtml(it.name)}</a>
+    <div class="cmp-meta">${rk.label}${cat ? ` · ${escapeHtml(cat).toUpperCase()}` : ""}</div>
+    <div class="cmp-price">${price}</div>
+    ${sub.length ? `<div class="cmp-price-sub">${sub.join(" · ")}</div>` : ""}
+    ${it.max_ptn && !it.ptn_exact
+      ? `<div class="cmp-flag" title="В игровой базе нет этого уровня заточки — показаны базовые значения">БЕЗ ЗАТОЧКИ</div>` : ""}
+    ${!it.max_ptn && cmpState.ptn
+      ? `<div class="cmp-flag" title="Предмет не затачивается">ЗАТОЧКИ НЕТ</div>` : ""}
+  </div>`;
+}
+
+function cmpTable(d) {
+  const n = d.items.length;
+  let h = `<div class="cmp-wrap"><div class="cmp-grid" style="--cols:${n}">
+    <div class="cmp-corner">${n} ИЗ ${CMP_MAX}</div>
+    ${d.items.map(cmpCol).join("")}`;
+  let group = null, i = 0;
+  for (const row of d.rows) {
+    if (row.group !== group) {
+      group = row.group;
+      i = 0;
+      h += `<div class="cmp-sep"><span>${group === "info" ? "ИНФОРМАЦИЯ" : "ХАРАКТЕРИСТИКИ"}</span></div>`;
+    }
+    const alt = i++ % 2 ? " alt" : "";       // зебра: строк много, глазу нужна опора
+    const bar = cmpBars(row);
+    h += `<div class="cmp-name${alt}">${escapeHtml(row.name)}${row.unit ? `<span class="cmp-u">, ${escapeHtml(row.unit)}</span>` : ""}
+      ${row.calc ? `<span class="cmp-calc" title="Расчёт: урон × скорострельность ÷ 60 (в игре не показывается)">РАСЧЁТ</span>` : ""}</div>`;
+    for (const c of row.cells) {
+      if (!c) { h += `<div class="cmp-cell empty${alt}">—</div>`; continue; }
+      const cls = c.best ? " best" : c.worst ? " worst" : "";
+      const w = bar && c.num != null ? bar(c.num) : null;
+      h += `<div class="cmp-cell${cls}${alt}${c.harmful ? " bad" : ""}">
+        ${w != null ? `<span class="cmp-bar" style="width:${w}%"></span>` : ""}
+        <span class="cmp-val">${escapeHtml(c.value)}</span></div>`;
+    }
+  }
+  return h + `</div></div>`;
+}
+
+function cmpRender() {
+  const items = cmpList();
+  const d = cmpState.data;
+  const optP = Array.from({ length: 16 }, (_, i) =>
+    `<option value="${i}" ${cmpState.ptn === i ? "selected" : ""}>ЗАТОЧКА +${i}</option>`).join("");
+  let h = `<div class="cmp">
+    <div class="section-head">
+      <div class="section-title">▸ СРАВНЕНИЕ СНАРЯЖЕНИЯ</div>
+      <div class="section-note">ДО ${CMP_MAX} ПРЕДМЕТОВ · ЗЕЛЁНОЕ — ЛУЧШЕЕ В СТРОКЕ</div>
+    </div>
+    <div class="cmp-bar-tools">
+      <select id="cmpPtn" title="Уровень заточки, общий для всех колонок">${optP}</select>
+      <button id="cmpCopy" class="cmp-tool">СКОПИРОВАТЬ ССЫЛКУ</button>
+      <button id="cmpClear" class="cmp-tool" ${items.length ? "" : "disabled"}>ОЧИСТИТЬ</button>
+    </div>`;
+
+  if (!items.length) {
+    h += `<div class="cmp-empty">
+      <div class="cmp-empty-t">НАБОР ПУСТ</div>
+      <div class="cmp-empty-d">Найдите оружие, броню, обвесы, контейнеры или артефакты
+        в списке ниже — или добавляйте их кнопкой ⇄ в базе предметов и в карточке предмета.
+        Ссылку на готовое сравнение можно скопировать и отправить.</div></div>`;
+  } else if (!d) {
+    h += `<div class="spinner-sm">// СЧИТАЕМ ХАРАКТЕРИСТИКИ</div>`;
+  } else if (!d.items.length) {
+    h += `<div class="empty-sm">У ВЫБРАННЫХ ПРЕДМЕТОВ НЕТ ХАРАКТЕРИСТИК ДЛЯ СРАВНЕНИЯ.</div>`;
+  } else {
+    if (d.mixed)
+      h += `<div class="cmp-note">⚠ ПРЕДМЕТЫ РАЗНЫХ ТИПОВ — ОБЩИХ СТРОК МАЛО, ПРОЧЕРК ЗНАЧИТ «СТАТА НЕТ»</div>`;
+    h += cmpTable(d);
+    h += `<div class="side-foot">ЗНАЧЕНИЯ — ИЗ ИГРОВОЙ БАЗЫ НА ВЫБРАННОМ УРОВНЕ ЗАТОЧКИ.
+      ПОДСВЕТКА УЧИТЫВАЕТ НАПРАВЛЕНИЕ ПОЛЬЗЫ: У УРОНА И ЗАЩИТ ЛУЧШЕ БОЛЬШЕ,
+      У ОТДАЧИ, РАЗБРОСА, ВРЕМЕНИ ПЕРЕЗАРЯДКИ И ВЕСА — МЕНЬШЕ.
+      ЦЕНА — МИНИМАЛЬНЫЙ ВЫКУП НА АУКЕ ПО ВСЕМ ЗАТОЧКАМ.</div>`;
+  }
+
+  h += cmpPickHtml(items.length);
+  page.innerHTML = h + `</div>`;
+  cmpWire();
+}
+
+function cmpPickHtml(count) {
+  const chips = CMP_PICK_CATS.map((c) =>
+    `<button class="idb-chip ${cmpState.cat === c.key ? "on" : ""}" data-pcat="${c.key}">${c.label}</button>`).join("");
+  const full = count >= CMP_MAX;
+  return `<div class="cmp-pick">
+    <div class="section-head">
+      <div class="section-title">▸ ДОБАВИТЬ ПРЕДМЕТ</div>
+      <div class="section-note">${full ? `НАБОР ПОЛОН — УБЕРИТЕ ЛИШНЕЕ` : `СВОБОДНО МЕСТ: ${CMP_MAX - count}`}</div>
+    </div>
+    <div class="idb-search"><span class="idb-prompt">&gt;_</span>
+      <input id="cmpQ" type="search" autocomplete="off" placeholder="ПОИСК ОРУЖИЯ, БРОНИ, ОБВЕСОВ…" value="${escapeHtml(cmpState.q)}"></div>
+    <div class="idb-chips">${chips}</div>
+    <div id="cmpPickGrid" class="idb-grid ${full ? "dimmed" : ""}">${cmpPickGridHtml()}</div>
+  </div>`;
+}
+
+function cmpPickGridHtml() {
+  const rows = cmpState.picks;
+  if (rows == null) return `<div class="spinner-sm">// ЗАГРУЗКА</div>`;
+  if (!rows.length) return `<div class="empty-sm">НИЧЕГО НЕ НАЙДЕНО.</div>`;
+  const ids = new Set(cmpList().map((x) => x.id));
+  return rows.map((it) => {
+    const rk = rank(it.color);
+    return `<button class="idb-card cmp-pick-card ${ids.has(it.id) ? "on" : ""}"
+        data-add="${escapeHtml(it.id)}" style="--rar:${rk.color}">
+      <div class="idb-ic"><img loading="lazy" src="${asset(it.icon)}" alt=""></div>
+      <div class="idb-nm" style="color:${rk.color}">${escapeHtml(it.name)}</div>
+      <div class="idb-cat">${escapeHtml(IDB_CAT_RU[it.category] || it.category || "")}</div>
+    </button>`;
+  }).join("");
+}
+
+async function cmpLoadPicks() {
+  const d = await fetch(api(`/items?cat=${encodeURIComponent(cmpState.cat)}`
+    + `&q=${encodeURIComponent(cmpState.q)}&limit=24`))
+    .then((r) => r.json()).catch(() => null);
+  if (location.pathname !== "/compare") return;
+  cmpState.picks = (d && d.items ? d.items : []).filter((it) => CMP_CATS.has(it.category));
+  const grid = $("cmpPickGrid");
+  if (grid) { grid.innerHTML = cmpPickGridHtml(); cmpWirePicks(); }
+}
+
+function cmpWirePicks() {
+  page.querySelectorAll("[data-add]").forEach((b) => b.addEventListener("click", () => {
+    const it = (cmpState.picks || []).find((x) => x.id === b.dataset.add);
+    if (!it) return;
+    if (!cmpToggle(it)) { authNotice(`В СРАВНЕНИИ УЖЕ ${CMP_MAX} ПРЕДМЕТА — УБЕРИТЕ ЛИШНЕЕ`, "err"); return; }
+    cmpRender();
+  }));
+}
+
+function cmpWire() {
+  const sel = $("cmpPtn");
+  if (sel) sel.addEventListener("change", (e) => {
+    cmpState.ptn = +e.target.value;
+    try { localStorage.setItem("sz_cmp_ptn", String(cmpState.ptn)); } catch (err) { /* приватный режим */ }
+    cmpSyncUrl(); cmpLoad();
+  });
+  const copy = $("cmpCopy");
+  if (copy) copy.addEventListener("click", () => {
+    navigator.clipboard.writeText(location.href)
+      .then(() => authNotice("ССЫЛКА НА СРАВНЕНИЕ СКОПИРОВАНА"))
+      .catch(() => authNotice("СКОПИРУЙТЕ ССЫЛКУ ИЗ АДРЕСНОЙ СТРОКИ", "err"));
+  });
+  const clr = $("cmpClear");
+  if (clr) clr.addEventListener("click", () => { cmpStore([]); cmpState.data = null; cmpSyncUrl(); cmpRender(); });
+  page.querySelectorAll(".cmp-x[data-rm]").forEach((b) => b.addEventListener("click", () => {
+    cmpStore(cmpList().filter((x) => x.id !== b.dataset.rm));
+    cmpLoad();
+  }));
+  page.querySelectorAll("[data-pcat]").forEach((b) => b.addEventListener("click", () => {
+    cmpState.cat = b.dataset.pcat; cmpState.picks = null; cmpRender(); cmpLoadPicks();
+  }));
+  const q = $("cmpQ");
+  if (q) {
+    let t = null;
+    q.addEventListener("input", (e) => {
+      clearTimeout(t);
+      const v = e.target.value.trim();
+      t = setTimeout(() => { cmpState.q = v; cmpState.picks = null; cmpLoadPicks(); }, 300);
+    });
+  }
+  cmpWirePicks();
 }
 
 // ---------- разделы в разработке: заглушки с описанием модуля ----------
@@ -7455,6 +8068,7 @@ function route() {
   ymHit();          // SPA-переход = просмотр страницы для Метрики
   renderOnboard();  // подсказка прячется на профиле, заглушках и в других разделах
   gModalClose();    // навигация закрывает модалы разделов
+  renderCmpTray();  // панель набора сравнения (на самой /compare не нужна)
   const path = location.pathname;
   // серверный SEO-блок виден только на своём роуте: SPA-навигация его прячет,
   // чтобы чужой текст не «залипал» при переходах (краулер грузит каждый URL заново)
@@ -7508,6 +8122,10 @@ function route() {
   if (path === "/items") {
     strip.classList.add("hidden"); detail.classList.add("hidden");
     setNav("itemdb"); openItemDb(); return;
+  }
+  if (path === "/compare") {
+    strip.classList.add("hidden"); detail.classList.add("hidden");
+    setNav("compare"); openCompare(); return;
   }
   // отдельная страница предмета — в разделе «База предметов»
   if ((mm = path.match(/^\/item\/(.+)$/))) {

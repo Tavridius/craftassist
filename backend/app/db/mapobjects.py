@@ -143,6 +143,34 @@ def delete(oid: int) -> bool:
         return cur.rowcount > 0
 
 
+def bulk(layer: str, action: str, category: str | None = None,
+         name: str | None = None) -> int:
+    """Массовое действие над ЧЕРНОВИКАМИ слоя: publish | delete.
+
+    Фильтр — category (метки) или name (области/линии, у них категории нет);
+    без обоих — все черновики слоя. Опубликованные не трогаем никогда:
+    массовые операции — инструмент разбора импорта, а не редактирования живого.
+    """
+    cond = ["layer=?", "published=0"]
+    args: list = [layer]
+    if category:
+        cond.append("category=?")
+        args.append(category)
+    if name:
+        cond.append("name=?")
+        args.append(name)
+    where = " AND ".join(cond)
+    with _lock:
+        if action == "publish":
+            cur = _conn.execute(
+                f"UPDATE map_objects SET published=1, updated_at=? WHERE {where}",
+                [time.time(), *args])
+        else:
+            cur = _conn.execute(f"DELETE FROM map_objects WHERE {where}", args)
+        _conn.commit()
+        return cur.rowcount
+
+
 def stats() -> dict:
     with _lock:
         total = _conn.execute("SELECT COUNT(*) FROM map_objects").fetchone()[0]

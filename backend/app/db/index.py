@@ -107,7 +107,8 @@ class GameDB:
         self._search: list[tuple[str, str]] = []  # (id, "имя_ru имя_en" в нижнем регистре)
         self._data_path: dict[str, str] = {}      # id -> относительный путь к json предмета
         self._desc_cache: dict[str, str | None] = {}
-        self._char_cache: dict[str, list] = {}    # характеристики предмета (тултип)
+        self._char_cache: dict[tuple, list] = {}  # (id, ptn) -> характеристики (тултип)
+        self._ptn_cache: dict[str, int] = {}      # id -> макс. уровень заточки в БД (0 — нет)
         self._energy_cache: dict[str, float | None] = {}  # номинал топлива (core.tooltip.energy)
 
     # ---------- загрузка ----------
@@ -493,41 +494,94 @@ class GameDB:
         self._desc_cache[item_id] = desc
         return desc
 
-    def characteristics(self, item_id: str) -> list[dict]:
-        """Характеристики предмета из тултипа игрового json (порядок сохранён) для
-        игровой карточки: [{name, value, unit, harmful, group}]. group='info' —
-        шапка (ранг/класс/вес/прочность), 'stat' — боевые статы (урон, защиты,
-        скорострельность…). Минусы — harmful. С кэшем: json читаем один раз."""
-        if item_id in self._char_cache:
-            return self._char_cache[item_id]
+    @staticmethod
+    def _parse_chars(doc: dict | None) -> list[dict]:
+        """Тултип предмета → строки характеристик (порядок файла сохранён)."""
         out: list[dict] = []
-        doc = self._item_json(item_id)
-        if doc:
-            for el in self._elements(doc):
-                key = ((el.get("name") or el.get("key") or {}).get("key")) or ""
-                t = el.get("type")
-                name = _tr(el.get("name")) or _CHAR_KEY_NAMES.get(key, "")
-                if not name:
-                    continue
-                if t == "numeric":
-                    val = _fmt_num(el.get("value"))
-                elif t == "range" and el.get("min") is not None:
-                    val = f"{_fmt_num(el.get('min'))}–{_fmt_num(el.get('max'))}"
-                elif t == "key-value":
-                    val = _tr(el.get("value"))
-                else:
-                    continue
-                if val in (None, ""):
-                    continue
-                color = ((el.get("formatted") or {}).get("nameColor") or "").upper()
-                out.append({
-                    "name": name, "value": val, "unit": _CHAR_UNITS.get(key, ""),
-                    "harmful": color.startswith("C1"),
-                    "group": "info" if key.startswith("core.tooltip.info.") else "stat",
-                    "rank": key == "core.tooltip.info.rank",
-                })
-        self._char_cache[item_id] = out
+        for el in GameDB._elements(doc or {}):
+            key = ((el.get("name") or el.get("key") or {}).get("key")) or ""
+            t = el.get("type")
+            name = _tr(el.get("name")) or _CHAR_KEY_NAMES.get(key, "")
+            if not name:
+                continue
+            num = None
+            if t == "numeric":
+                val = _fmt_num(el.get("value"))
+                num = None if el.get("value") is None else round(float(el["value"]), 2)
+            elif t == "range" and el.get("min") is not None:
+                val = f"{_fmt_num(el.get('min'))}–{_fmt_num(el.get('max'))}"
+                num = round(float(el.get("max") or el["min"]), 2)   # верх тира — для сравнения
+            elif t == "key-value":
+                val = _tr(el.get("value"))
+            else:
+                continue
+            if val in (None, ""):
+                continue
+            color = ((el.get("formatted") or {}).get("nameColor") or "").upper()
+            out.append({
+                "key": key, "name": name, "value": val, "num": num,
+                "unit": _CHAR_UNITS.get(key, ""),
+                "harmful": color.startswith("C1"),
+                "group": "info" if key.startswith("core.tooltip.info.") else "stat",
+                "rank": key == "core.tooltip.info.rank",
+            })
         return out
+
+    def _variant_json(self, item_id: str, ptn: int) -> dict | None:
+        """Тултип предмета на уровне заточки: items/<cat>/<sub>/_variants/<id>/<ptn>.json."""
+        rel = self._data_path.get(item_id)
+        if not rel:
+            return None
+        rp = Path(rel)
+        path = config.DATA_DIR / rp.parent / "_variants" / rp.stem / f"{ptn}.json"
+        if not path.exists():
+            return None
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            logger.exception("failed to read variant json for %s +%d", item_id, ptn)
+            return None
+
+    def max_ptn(self, item_id: str) -> int:
+        """До какой заточки предмет расписан в базе (0 — заточка неприменима)."""
+        if item_id in self._ptn_cache:
+            return self._ptn_cache[item_id]
+        lvl = 0
+        rel = self._data_path.get(item_id)
+        if rel:
+            rp = Path(rel)
+            d = config.DATA_DIR / rp.parent / "_variants" / rp.stem
+            if d.is_dir():
+                for f in d.glob("*.json"):
+                    if f.stem.isdigit():
+                        lvl = max(lvl, int(f.stem))
+        self._ptn_cache[item_id] = lvl
+        return lvl
+
+    def characteristics(self, item_id: str, ptn: int = 0) -> list[dict]:
+        """Характеристики предмета из тултипа игрового json (порядок сохранён) для
+        игровой карточки: [{key, name, value, num, unit, harmful, group}]. group='info' —
+        шапка (ранг/класс/вес/прочность), 'stat' — боевые статы (урон, защиты,
+        скорострельность…). Минусы — harmful. С кэшем: json читаем один раз.
+
+        ptn>0 — значения на этом уровне заточки (файл варианта). В варианте после
+        базовых статов идут строки-НАДБАВКИ (тот же стат с дельтой, а у оружия ещё
+        и weapon.stat_factor.*), поэтому набор строк берём из базы, а значения —
+        первое вхождение ключа в варианте. Заточки нет в базе — отдаём базовые.
+        """
+        ptn = max(0, min(15, int(ptn or 0)))
+        ck = (item_id, ptn)
+        if ck in self._char_cache:
+            return self._char_cache[ck]
+        rows = self._parse_chars(self._item_json(item_id))
+        doc = self._variant_json(item_id, ptn) if ptn and rows else None
+        if doc:
+            pool: dict[str, list[dict]] = {}
+            for r in self._parse_chars(doc):
+                pool.setdefault(r["key"], []).append(r)
+            rows = [pool[r["key"]].pop(0) if pool.get(r["key"]) else r for r in rows]
+        self._char_cache[ck] = rows
+        return rows
 
     def energy_value(self, item_id: str) -> float | None:
         """Сколько энергии даёт предмет в генераторе (core.tooltip.energy), с кэшем."""

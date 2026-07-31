@@ -22,7 +22,7 @@ from app.db import (chat, craft_tuning, guides, mapobjects, market, news,
                     operations as ops, promos, quests, users)
 from app.db.index import db
 from app.routers.auth import SESSION_COOKIE, current_user, is_admin
-from app.services import (auction, barter, builds, craft, exchange,
+from app.services import (auction, barter, builds, compare, craft, exchange,
                           hideout, oauth, sales_log)
 from app.services import fuel as fuel_svc
 from app.services.artefact_lots import artlots
@@ -79,6 +79,8 @@ _ITEM_CAT_GROUPS = {
     "medicine": ["medicine"],
     "grenade": ["grenade"],
     "misc": ["misc", "supply", "device", "other"],
+    # псевдогруппа для подбора в сравнение: всё, у чего есть тултип-статы
+    "gear": list(compare.COMPARABLE_CATS),
 }
 _ALL_ITEM_CATS = [c for cs in _ITEM_CAT_GROUPS.values() for c in cs]
 _RANK_W = {"RANK_LEGEND": 6, "RANK_MASTER": 5, "RANK_VETERAN": 4, "RANK_STALKER": 3,
@@ -109,6 +111,14 @@ async def items(cat: str = "", q: str = "", limit: int = Query(60, ge=1, le=200)
     total = len(ids)
     return {"total": total, "offset": offset, "limit": limit,
             "items": [_item_row(i) for i in ids[offset:offset + limit]]}
+
+
+@router.get("/compare")
+async def compare_items(ids: str = "", ptn: int = Query(0, ge=0, le=compare.MAX_PTN)):
+    """Сравнение снаряжения: до MAX_ITEMS предметов, ids через запятую.
+    ptn — общий уровень заточки (статы читаются из вариантов игровой базы)."""
+    wanted = [s.strip() for s in ids.split(",") if s.strip()][:compare.MAX_ITEMS * 2]
+    return compare.build(wanted, ptn)
 
 
 @router.get("/price/{item_id}")
@@ -1230,15 +1240,31 @@ def _item_brief(iid: str) -> dict:
             "sales_per_hour": h.get("sales_per_hour")}
 
 
+# Во сколько раз выкуп может превышать цену реальных сделок, чтобы считаться
+# ценой, а не «резервом». Лоты вида 9 999 999 999 ₽ выставляют, чтобы предмет
+# висел, а не продавался: в рейтинге дорогих они шли первыми и вытесняли
+# настоящие дорогие позиции.
+_ASK_SANITY_FACTOR = 5.0
+
+
+def _sane_ask(r: dict) -> bool:
+    return not r["avg"] or r["min_buyout"] <= r["avg"] * _ASK_SANITY_FACTOR
+
+
 @router.get("/market/overview")
 async def market_overview():
     """Подборки полного аукциона из тёплого кэша цен (без внешних запросов)."""
     rows = [_item_brief(iid) for iid in store.prices]
     liquid = sorted((r for r in rows if r["sales_per_hour"]),
                     key=lambda r: -r["sales_per_hour"])[:15]
-    expensive = sorted((r for r in rows if r["min_buyout"]),
+    expensive = sorted((r for r in rows if r["min_buyout"] and _sane_ask(r)),
                        key=lambda r: -r["min_buyout"])[:15]
-    return {"liquid": liquid, "expensive": expensive,
+    # оборот = прод/ч × 24 × средняя цена сделки: где крутятся деньги аука
+    for r in rows:
+        r["turnover"] = (r["sales_per_hour"] or 0) * 24 * (r["avg"] or 0)
+    turnover = sorted((r for r in rows if r["turnover"]),
+                      key=lambda r: -r["turnover"])[:15]
+    return {"liquid": liquid, "expensive": expensive, "turnover": turnover,
             "tracked": len(rows)}
 
 
@@ -1397,14 +1423,24 @@ MAP_CATEGORIES = [
     {"id": "spawn",      "name": "Точка входа",    "emoji": "⚑",  "color": "#5fd67a"},
     {"id": "transition", "name": "Переход",        "emoji": "🚪", "color": "#9ecbff"},
     {"id": "poi",        "name": "Точка интереса", "emoji": "📍", "color": "#dff5df"},
+    # слои импорта stalzone.wiki (scripts/wiki_map) — динамика мира
+    {"id": "mob",        "name": "Мутанты / логово", "emoji": "🐗", "color": "#d98a5a"},
+    {"id": "event",      "name": "Событие",         "emoji": "⚡", "color": "#ffd34d"},
+    {"id": "camp",       "name": "Лагерь / застава", "emoji": "⛺", "color": "#8fd0a0"},
+    {"id": "shelter",    "name": "Укрытие от выброса", "emoji": "🛡", "color": "#7fd4ff"},
+    {"id": "bubble",     "name": "Простр. пузырь",  "emoji": "🌀", "color": "#b0e0ff"},
 ]
 _MAP_CAT_IDS = {c["id"] for c in MAP_CATEGORIES}
 _MAP_KINDS = {"marker", "area", "line"}
 _MAP_LAYERS = {"global", "detail"}
 
 MAP_META = {
+    # view — полезная область коллажа в px (x0,y0,x1,y1): вид, зум и скролл
+    # ограничены ею. Всё за рамкой — декоративные поля global_map без функции
+    # (тайлы остаются на диске, просто не показываются — подбирать рамку можно
+    # без перегенерации пирамиды).
     "global": {"w": 18432, "h": 8192, "tile_size": 256, "min_zoom": 0, "max_zoom": 6,
-               "tile_url": "wmap/{z}/{x}/{y}.webp"},
+               "tile_url": "wmap/{z}/{x}/{y}.webp", "view": [4200, 500, 12000, 7250]},
     "detail": {"w": 112128, "h": 51712, "tile_size": 256, "min_zoom": 0, "max_zoom": 6,
                "tile_url": "dmap/{z}/{x}/{y}.webp"},
     "territories": MAP_TERRITORIES,
@@ -1584,6 +1620,26 @@ async def map_object_delete(oid: int, request: Request):
     return {"ok": True}
 
 
+@router.post("/map/objects/bulk")
+async def map_objects_bulk(request: Request, payload: dict = Body(...)):
+    """Массовое действие над ЧЕРНОВИКАМИ слоя (только админ) — разбор импорта:
+    {action: publish|delete, layer, category?|name?}. Опубликованные не трогает.
+    Возвращает {changed: n}."""
+    _require_admin(request)
+    action = payload.get("action")
+    layer = payload.get("layer")
+    if action not in ("publish", "delete"):
+        raise HTTPException(422, "action: publish|delete")
+    if layer not in _MAP_LAYERS:
+        raise HTTPException(422, "layer: global|detail")
+    category = payload.get("category") or None
+    if category and category not in _MAP_CAT_IDS:
+        raise HTTPException(422, "неизвестная категория")
+    n = mapobjects.bulk(layer, action, category=category,
+                        name=payload.get("name") or None)
+    return {"changed": n}
+
+
 # ---------- калькулятор сборок ----------
 
 @router.get("/build/dict")
@@ -1610,6 +1666,12 @@ async def build_auto(payload: dict = Body(...)):
     if res.get("error") in ("container_not_found", "bad_request"):
         raise HTTPException(422, res["error"])
     return res  # включая error=no_priced_variants с подсказкой — фронт покажет
+
+
+@router.get("/build/ready")
+async def build_ready():
+    """Готовые сборки под типовые задачи для верха /builds (кэш 15 мин)."""
+    return builds.ready_builds()
 
 
 @router.get("/build/daily")

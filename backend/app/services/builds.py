@@ -57,6 +57,11 @@ def sharp(ptn: int) -> float:
 
 BULLET_KEY = "stalker.artefact_properties.factor.bullet_dmg_factor"
 HEALTH_KEY = "stalker.artefact_properties.factor.health_bonus"
+SPEED_KEY = "stalker.artefact_properties.factor.speed_modifier"
+HEAL_KEY = "stalker.artefact_properties.factor.heal_efficiency"
+STAMINA_KEY = "stalker.artefact_properties.factor.stamina_regeneration_bonus"
+REGEN_KEY = "stalker.artefact_properties.factor.regeneration_bonus"
+WEIGHT_KEY = "stalker.artefact_properties.factor.max_weight_bonus"
 
 # accumulation-стат -> (тип заражения, лимит игрока). None — лимит не задокументирован.
 _CONTAM = {
@@ -85,17 +90,8 @@ DAILY_ARMOR_PTN = (15,)              # уровень заточки брони 
 DAILY_ATTEMPTS = 8                   # детерминированных перекруток, если под ролл нет цен
 # Полезные статы для ролла. «Первичные» могут стоять первым параметром; «вторичные»
 # (восст. выносливости / регенерация / переносимый вес) — только вторым/третьим.
-_STAT_PRIMARY = (
-    "stalker.artefact_properties.factor.bullet_dmg_factor",   # Пулестойкость
-    "stalker.artefact_properties.factor.speed_modifier",      # Скорость передвижения
-    "stalker.artefact_properties.factor.health_bonus",        # Живучесть
-    "stalker.artefact_properties.factor.heal_efficiency",     # Эффективность лечения
-)
-_STAT_SECONDARY = (
-    "stalker.artefact_properties.factor.stamina_regeneration_bonus",  # Восст. выносливости
-    "stalker.artefact_properties.factor.regeneration_bonus",          # Регенерация здоровья
-    "stalker.artefact_properties.factor.max_weight_bonus",            # Переносимый вес
-)
+_STAT_PRIMARY = (BULLET_KEY, SPEED_KEY, HEALTH_KEY, HEAL_KEY)
+_STAT_SECONDARY = (STAMINA_KEY, REGEN_KEY, WEIGHT_KEY)
 _DAILY_STAT_WEIGHTS = (100, 70, 50)  # вес стата по позиции (приоритет первого)
 
 DUAL_ITERS = 8       # шагов двойственного подъёма λ (цены эмиссии) на раунд
@@ -994,3 +990,64 @@ def daily_build() -> dict:
             "stat_names": [db.artefact_stat_names[k]["name"] for k in p["keys"]],
             "build": None,
             "hint": "Биржа артефактов ещё копит цены — сборка дня появится после первых замеров."}
+
+
+# ---------- готовые сборки для верха /builds ----------
+# Страница открывалась пустой сеткой слотов: человек с запросом «калькулятор
+# сборок» видел форму, которую надо заполнять, и уходил (отказы с поиска 43%
+# против 15% по сайту, глубина 1.1). Показываем сверху три посчитанные сборки
+# под типовые задачи — тот же приём, что вытащил /market готовыми списками.
+READY_BUDGET = 5_000_000     # бюджет всех трёх: сравниваются задачи, а не деньги
+READY_TTL = 900.0            # с; один профиль считается ~0.5 с, страница низкотрафичная
+READY_PRESETS = (
+    {"id": "pvp", "title": "ПОД БОЙ",
+     "note": "Держать выстрел и не падать с одной очереди",
+     "stats": ((BULLET_KEY, 100), (HEALTH_KEY, 70))},
+    {"id": "run", "title": "ПОД ХОДКИ",
+     "note": "Бегать дальше и дольше — вылазки за лутом",
+     "stats": ((SPEED_KEY, 100), (STAMINA_KEY, 70))},
+    {"id": "farm", "title": "ПОД ФАРМ",
+     "note": "Унести за раз больше добычи",
+     "stats": ((WEIGHT_KEY, 100), (HEALTH_KEY, 50))},
+)
+
+_ready_cache: dict = {"ts": 0.0, "payload": None}
+
+
+def _ready_container() -> dict | None:
+    """Хранилище для готовых сборок — правилом, а не зашитым id: база предметов
+    едет с патчами. Топ-редкость, максимум слотов, при равенстве — эффективность
+    (id последним, чтобы выбор был детерминирован при полном равенстве)."""
+    conts = [c for c in db.containers.values() if c["color"] in TOP_COLORS]
+    if not conts:
+        conts = list(db.containers.values())
+    if not conts:
+        return None
+    return max(conts, key=lambda c: (c.get("slots") or 0,
+                                     c.get("efficiency") or 0.0, c["id"]))
+
+
+def ready_builds() -> dict:
+    """Три готовые сборки под типовые задачи на живых ценах, кэш READY_TTL.
+    Профиль, под который сборка считалась, отдаём вместе с ней — фронт кладёт
+    его в автоподбор, чтобы посетитель пересчитал под свой бюджет."""
+    if _ready_cache["payload"] and time.time() - _ready_cache["ts"] <= READY_TTL:
+        return _ready_cache["payload"]
+    cont = _ready_container()
+    if not cont:
+        return {"budget": READY_BUDGET, "presets": [], "error": "no_containers"}
+    presets = []
+    for p in READY_PRESETS:
+        stats_req = [{"key": k, "weight": w} for k, w in p["stats"]]
+        res = auto_build(float(READY_BUDGET), cont["id"], stats_req)
+        build = (res.get("builds") or [None])[0]
+        if not build:      # под профиль нет корзин с ценами — молча пропускаем карточку
+            continue
+        presets.append({"id": p["id"], "title": p["title"], "note": p["note"],
+                        "stats_req": stats_req, "build": build})
+    payload = {"budget": READY_BUDGET, "container": cont, "presets": presets,
+               "price_note": _price_note()}
+    if presets:        # пустое (биржа не прогрелась) не кэшируем — повторим позже
+        _ready_cache["payload"] = payload
+        _ready_cache["ts"] = time.time()
+    return payload
