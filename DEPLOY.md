@@ -40,16 +40,46 @@ pavel (пн/чт 03:17) — `certbot renew` для ВСЕХ сертов сер�
 
 ## Обновить код (redeploy)
 
+**Через git — основной способ** (с 01.08.2026). `/home/pavel/stalzone-craft` —
+клон этого репозитория, репозиторий публичный, поэтому сервер тянет код сам, и
+заливать архивы с локальной машины больше не нужно.
+
 ```bash
-# с локальной машины: залить проект (без data/.venv/.wheels)
+# 1) локально: всё закоммичено и уехало на GitHub
+cd "d:/stalzone craft" && git push origin main
+# origin — по SSH (git@github.com:...): для https креды не сохранены и push
+# висит на невидимом окне Git Credential Manager
+
+# 2) на сервере: подтянуть и пересобрать (данные в volume сохранятся)
+ssh pavel@88.87.70.167 "cd /home/pavel/stalzone-craft \
+  && tar czf ../stalzone-craft-predeploy-\$(date +%F-%H%M).tgz --exclude=.git . \
+  && git fetch origin && git reset --hard origin/main \
+  && docker compose up -d --build"
+```
+
+`git reset --hard` не трогает неотслеживаемые файлы, поэтому боевой `.env`
+(он в .gitignore) переживает раскатку. Проверка после: `curl
+http://127.0.0.1:8100/api/health` (demo:false, token:true) + `docker logs
+stalzone_craft`.
+
+⚠️ Всё, что задеплоено, но не закоммичено, при `reset --hard` пропадёт. Перед
+первым таким деплоем сверяйте prod-файлы с локальными (`ssh ... cat file | diff
+- local`) — исторически часть фич уезжала на прод архивом мимо git.
+
+**Архивом (запасной путь, если git на сервере недоступен).** Однострочный пайп
+`tar | ssh` с этой Windows-машины блокируется, а `scp` из временной папки — не
+всегда проходит; тогда собирать архив в каталоге проекта и слать его оттуда:
+
+```bash
 cd "d:/stalzone craft"
-# ⚠️ ИСКЛЮЧАЕМ .env (локальный обрезан — затрёт боевые креды), .git и
+# ⚠️ ИСКЛЮЧАЕМ .env (локальный обрезан — затрёт боевые креды) и
 #    stalzone-database (569МБ, качается в volume при старте)
-tar czf - --exclude=.venv --exclude=data --exclude=.wheels --exclude=__pycache__ \
-  --exclude='*.pyc' --exclude=.env --exclude=.git --exclude=stalzone-database . \
-  | ssh pavel@88.87.70.167 "tar xzf - -C /home/pavel/stalzone-craft"
-# пересобрать (данные в volume сохранятся)
-ssh pavel@88.87.70.167 "cd /home/pavel/stalzone-craft && docker compose up -d --build"
+tar czf - --force-local --exclude=.venv --exclude=data --exclude=.wheels \
+  --exclude=__pycache__ --exclude='*.pyc' --exclude=.env --exclude=.git \
+  --exclude=stalzone-database . > deploy.tgz
+scp deploy.tgz pavel@88.87.70.167:/tmp/
+ssh pavel@88.87.70.167 "tar xzf /tmp/deploy.tgz -C /home/pavel/stalzone-craft \
+  && rm /tmp/deploy.tgz && cd /home/pavel/stalzone-craft && docker compose up -d --build"
 ```
 
 ## A/B-тест дизайна — запуск / остановка
