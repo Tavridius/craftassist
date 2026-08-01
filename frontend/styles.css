@@ -718,6 +718,20 @@ a.auth-user:hover { color: var(--green); border-color: var(--green-border); text
 @media (max-width: 1100px) {
   .art-cols { grid-template-columns: 100%; }
 }
+/* Телефон: панель фильтров занимала три строки (кнопки, селекты, служебная
+   подпись) и отжимала рейтинг ниже сгиба, а строка «СР. … · БЫЛО … · N ПРОД»
+   обрывалась многоточием ровно на числе продаж — ликвидность корзины
+   не видна, а без неё проценту роста верить нельзя. */
+@media (max-width: 700px) {
+  /* базис 40% — окно/качество/заточка ложатся ровно по два в строку, а не
+     четырьмя обрезанными кусками («КАЧЕСТВО: В…» вместо значения фильтра) */
+  .artbar .awin, .artbar select { flex: 1 1 40%; min-width: 0; }
+  .art-note { margin-left: 0; flex-basis: 100%; }
+  .art-cols .side-row .meta { white-space: normal; }
+  /* «БЫЛО …» — это база сравнения, её уже несёт процент справа; на телефоне
+     уступает место цене и числу продаж, чтобы строка осталась одной */
+  .art-cols .side-row .m-was { display: none; }
+}
 
 /* ---------- калькулятор сборок ---------- */
 .btabs { display: flex; gap: 2px; margin-bottom: 12px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
@@ -1702,6 +1716,17 @@ td.bt-selc { padding: 7px 4px; }
 .bt-ing-price .unit { color: var(--dimmer); font-size: 10px; }
 .bt-via { color: var(--dimmer); font-size: 10px; }
 .bt-total { border-top: 1px solid var(--border-deep); margin-top: 2px; font-weight: 700; }
+/* Телефон: у строки входа справа стоит цена с хвостом «← разбор: 20× из …»,
+   а .bt-ing-price запрещает перенос — на 390 px хвост уезжал за край и налезал
+   на имя ингредиента (буквы поверх букв). Такие строки — только те, где есть
+   ссылка на предмет: у пар «ДОПЛАТА ТОРГОВЦУ · 1 400 ₽» перенос не нужен,
+   они и так читаются. */
+@media (max-width: 700px) {
+  .bt-ing:has(.ilink) { flex-wrap: wrap; align-items: flex-start; gap: 2px 8px; }
+  .bt-ing:has(.ilink) .ilink { flex: 1 1 100%; }
+  .bt-ing:has(.ilink) .bt-ing-price { flex: 1 1 100%; white-space: normal; padding-left: 28px; }
+  .bt-via { display: block; }
+}
 
 /* ---------- обменки ---------- */
 .obm-about {
@@ -1719,6 +1744,47 @@ td.bt-selc { padding: 7px 4px; }
 .obm-basis.vendor { border-color: var(--amber-border); color: var(--amber); }
 .bt-note a, .obm-link { color: var(--green); cursor: pointer; }
 .obm-link:hover { text-shadow: var(--glow); }
+/* единицы в ячейках нужны только в мобильной раскладке — на десктопе их несёт шапка */
+.bt-cards .c-unit { display: none; }
+
+/* Телефон: таблицы обменок и бартера (min-width 620 px) в 390 не влезали, и
+   ГЛАВНОЕ число — ₽/монета на обменках, стоимость с выгодой на бартере — было
+   последней колонкой, то есть уезжало за правый край .bt-wrap. Что таблицу можно
+   скроллить вбок, никто не догадывался: по Метрике 30% отказов и 17 секунд.
+   Раскладываем строку карточкой: имя и ключевое число в первой строке,
+   остальные колонки — подписанной второй строкой (подписи из data-l, потому
+   что шапки таблицы в этой раскладке уже нет). */
+@media (max-width: 700px) {
+  .bt-cards { min-width: 0; }
+  .bt-cards thead { display: none; }
+  .bt-cards tbody, .bt-cards tr, .bt-cards td { display: block; }
+  .bt-cards tr {
+    display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px;
+    padding: 9px 10px; border-bottom: 1px solid var(--border-deep);
+  }
+  .bt-cards td { padding: 0; border: none; overflow: visible; }
+  .bt-cards td.r { text-align: left; }
+  .bt-cards .c-sel { order: 0; flex: none; align-self: center; }
+  /* flex-basis 0 (а не auto): при переносе строк браузер считает место по
+     НЕсжатому размеру, и длинное имя вроде «Остатки радиопередатчика» сбрасывало
+     ключевое число на следующую строку вместо того, чтобы обрезаться многоточием */
+  .bt-cards .c-itm { order: 1; flex: 1 1 0; min-width: 0; }
+  .bt-cards .c-key { order: 2; flex: none; font-size: 14px; text-align: right; }
+  .bt-cards .c-key .pct { font-weight: 700; }
+  .bt-cards .c-key .bt-roi { font-size: 11px; }
+  .bt-cards tr::after { content: ""; order: 3; flex-basis: 100%; height: 0; }
+  .bt-cards .c-coins { order: 4; }
+  .bt-cards .c-auc { order: 5; }
+  .bt-cards .c-ven { order: 6; }
+  .bt-cards .c-buys { order: 7; }
+  .bt-cards .c-total { order: 8; }
+  .bt-cards .c-place { order: 9; flex: 1 1 100%; }
+  .bt-cards .c-coins, .bt-cards .c-auc, .bt-cards .c-ven,
+  .bt-cards .c-buys, .bt-cards .c-total, .bt-cards .c-place { font-size: 10px; color: var(--dim); }
+  .bt-cards td[data-l]::before { content: attr(data-l) " "; color: var(--dimmer); }
+  .bt-cards .c-unit { display: inline; font-size: 9px; color: var(--dimmer); letter-spacing: 0.06em; }
+  .obm-coins { max-width: none; }
+}
 
 /* ---------- модалы разделов (бартер / обменки) ---------- */
 .gm-head {
@@ -2350,6 +2416,14 @@ body:has(.cmp-tray:not(.hidden)) .auth-notice { bottom: 76px; }
   letter-spacing: 0.06em; text-transform: uppercase;
 }
 .cookie-ok:hover { background: rgba(124, 230, 142, 0.08); box-shadow: var(--glow); }
+/* На телефоне баннер занимал ~180 px первого экрана (текст в четыре строки плюс
+   кнопка отдельной строкой) — это пятая часть окна на КАЖДОЙ странице, пока
+   согласие не нажато. Ужимаем текст и ставим кнопку в строку. */
+@media (max-width: 640px) {
+  .cookie-bar { padding: 8px 12px; gap: 10px; font-size: 11px; line-height: 1.45; }
+  .cookie-txt { flex: 1 1 180px; }
+  .cookie-ok { padding: 6px 14px; font-size: 11px; }
+}
 
 /* страницы Политики / Соглашения */
 .legal {

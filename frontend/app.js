@@ -2371,11 +2371,11 @@ function btRows(rows) {
       ? `<div class="bt-roi ${r.pct >= 0 ? "up" : "down"}" title="ПРОДАЖА ~${fmt(r.sell_net)} ₽ ЗА ВЫЧЕТОМ КОМИССИИ, ПОСЛЕДНЯЯ СДЕЛКА ${r.sale_age_days < 1 ? "СЕГОДНЯ" : Math.round(r.sale_age_days) + " ДН. НАЗАД"}">${r.pct > 0 ? "+" : ""}${fmt(r.pct)}%</div>`
       : "";
     return `<tr class="brt-row" data-id="${r.id}">
-      <td class="bt-selc"><input type="checkbox" class="bt-selbox" data-id="${r.id}" ${btSel.has(r.id) ? "checked" : ""}></td>
-      <td><div class="bt-item"><img loading="lazy" src="${asset(r.icon)}" alt="">
+      <td class="bt-selc c-sel"><input type="checkbox" class="bt-selbox" data-id="${r.id}" ${btSel.has(r.id) ? "checked" : ""}></td>
+      <td class="c-itm"><div class="bt-item"><img loading="lazy" src="${asset(r.icon)}" alt="">
         <span class="nm" style="color:${rank(r.color).color}">${escapeHtml(r.name)}</span>${missing}${cur}</div></td>
-      <td class="bt-place">${escapeHtml(r.settlement_name)}${r.level ? ` <span class="lv">УР.${r.level}</span>` : ""}${places}</td>
-      <td class="r">${cost}${roi}</td>
+      <td class="bt-place c-place" data-l="ГДЕ">${escapeHtml(r.settlement_name)}${r.level ? ` <span class="lv">УР.${r.level}</span>` : ""}${places}</td>
+      <td class="r c-key">${cost}${roi}</td>
     </tr>`;
   }).join("") || `<tr><td colspan="4" class="empty-sm">НИЧЕГО НЕ НАЙДЕНО ПО ФИЛЬТРАМ.</td></tr>`;
 }
@@ -2418,7 +2418,7 @@ function renderBarter(d) {
       ЗЕЛЁНЫМ ПОД СТОИМОСТЬЮ — ВЫГОДА ПЕРЕПРОДАЖИ, И ТОЛЬКО У ПРЕДМЕТОВ, КОТОРЫЕ РЕАЛЬНО ПРОДАВАЛИСЬ
       В ПОСЛЕДНИЕ ДВЕ НЕДЕЛИ: ПО НЕЛИКВИДУ «ЦЕНА» НА АУКЕ БЫВАЕТ ДВУХЛЕТНЕЙ ДАВНОСТИ.
       КЛИК ПО СТРОКЕ — ДЕТАЛИ ОБМЕНА. ГАЛОЧКА — В КОРЗИНУ: СУММАРНАЯ СТОИМОСТЬ НЕСКОЛЬКИХ ОБМЕНОВ СРАЗУ.</div>
-    <div class="bt-wrap"><table class="bt-table">
+    <div class="bt-wrap"><table class="bt-table bt-cards">
       <thead><tr><th class="bt-selc" style="width:34px"></th><th style="width:46%">ПРЕДМЕТ</th>
         <th style="width:30%">ГДЕ</th><th class="r" style="width:20%">СТОИМОСТЬ · ВЫГОДА</th></tr></thead>
       <tbody id="btBody"></tbody>
@@ -3796,18 +3796,21 @@ async function openObmen() {
   renderObmen(d);
 }
 
+// data-l — подпись колонки для телефона: там таблица раскладывается карточками
+// (.obm-table в styles.css), и шапки, из которой понятно значение числа, уже нет
 function obmenRow(r, extra = "") {
   const aucBasis = r.sell_basis === "sales" ? "по сделкам аука, минус комиссия"
                  : r.sell_basis === "buyout" ? "по мин. выкупу, минус комиссия" : "";
   const chip = r.basis ? `<span class="obm-basis ${r.basis}">${r.basis === "vendor" ? "СКУПЩИК" : "АУК"}</span>` : "";
   return `<tr class="brt-row" data-id="${r.id}">
-    <td><div class="bt-item"><img loading="lazy" src="${asset(r.icon)}" alt="">
+    <td class="c-itm"><div class="bt-item"><img loading="lazy" src="${asset(r.icon)}" alt="">
       <span class="nm" style="color:${rank(r.color).color}">${r.amount > 1 ? r.amount + "× " : ""}${escapeHtml(r.name)}</span>
       ${r.note ? `<span class="bt-cur">${escapeHtml(r.note)}</span>` : ""}</div></td>
-    <td class="r">${fmt(r.coins)}</td>
-    <td class="r" title="${aucBasis}">${r.value_auction != null ? fmt(r.value_auction) + " ₽" : "—"}</td>
-    <td class="r" title="мгновенная продажа NPC, без комиссии">${r.value_vendor != null ? fmt(r.value_vendor) + " ₽" : "—"}</td>
-    <td class="r">${r.rate != null ? `<span class="pct ${r.rate >= 1 ? "up" : "down"}">${r.rate.toLocaleString("ru-RU")}</span> ${chip}` : "—"}</td>
+    <td class="r c-coins">${fmt(r.coins)} <span class="c-unit">МОН</span></td>
+    <td class="r c-auc" data-l="АУК~" title="${aucBasis}">${r.value_auction != null ? fmt(r.value_auction) + " ₽" : "—"}</td>
+    <td class="r c-ven" data-l="СКУПЩИК" title="мгновенная продажа NPC, без комиссии">${r.value_vendor != null ? fmt(r.value_vendor) + " ₽" : "—"}</td>
+    <td class="r c-key">${r.rate != null ? `<span class="pct ${r.rate >= 1 ? "up" : "down"}">${r.rate.toLocaleString("ru-RU")}</span>
+      <span class="c-unit">₽/МОН</span> ${chip}` : "—"}</td>
     ${extra}
   </tr>`;
 }
@@ -3858,7 +3861,7 @@ function renderObmen(d) {
     </div>
     ${topVen}
     <div id="obmPlanBox"></div>
-    <div class="bt-wrap"><table class="bt-table">
+    <div class="bt-wrap"><table class="bt-table bt-cards">
       <thead>${OBM_HEAD}</thead>
       <tbody>${rows}</tbody>
     </table></div>
@@ -3886,10 +3889,11 @@ async function loadObmenPlan() {
     d = await fetch(api(`/exchange/plan?coins=${coins}`)).then((r) => r.json());
   } catch (e) { box.innerHTML = ""; return; }
   const rows = (d.basket || []).map((r) => obmenRow(r,
-    `<td class="r">${r.buys}×</td><td class="r">${fmt(r.total_value)} ₽</td>`)).join("");
+    `<td class="r c-buys" data-l="ПОКУПОК">${r.buys}×</td>
+     <td class="r c-total" data-l="ИТОГО">${fmt(r.total_value)} ₽</td>`)).join("");
   box.innerHTML = d.basket && d.basket.length ? `<div class="obm-plan">
     <div class="reqs-lbl">КОРЗИНА НА ${fmt(d.coins)} МОНЕТ → ~${fmt(d.value)} ₽${d.left ? ` · ОСТАНЕТСЯ ${fmt(d.left)}` : ""}</div>
-    <div class="bt-wrap"><table class="bt-table">
+    <div class="bt-wrap"><table class="bt-table bt-cards">
       <thead>${OBM_PLAN_HEAD}</thead>
       <tbody>${rows}</tbody>
     </table></div></div>`
@@ -3933,7 +3937,7 @@ function artRow(e) {
     <div class="info">
       <div class="nm" style="color:${qltColor(e.qlt)}">${escapeHtml(e.name)}
         <span class="bucket" style="border-color:${qltColor(e.qlt)};color:${qltColor(e.qlt)}">${bucketBadge(e.qlt, e.ptn)}</span></div>
-      <div class="meta">СР. ${fmt(e.avg)} ₽ · БЫЛО ${fmt(e.prev_avg)} ₽ · ${e.n} ПРОД</div>
+      <div class="meta">СР. ${fmt(e.avg)} ₽ <span class="m-was">· БЫЛО ${fmt(e.prev_avg)} ₽</span> · ${e.n} ПРОД</div>
     </div>
     <span class="pct ${e.pct > 0 ? "up" : "down"}">${e.pct > 0 ? "+" : ""}${e.pct}%</span>
   </div>`;
