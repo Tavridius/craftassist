@@ -3352,9 +3352,13 @@ function adPlaceMobile(host) {
     kids.sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
     if (kids.length === 1) { box = kids[0]; continue; }
     const hit = kids.find((e) => e.getBoundingClientRect().bottom + scrollY > limit);
-    if (!hit || hit === kids[kids.length - 1]) return;   // контента на экран не набралось
+    if (!hit) return;                                   // контента на экран не набралось
+    // сначала спуск, и только потом проверка «последний»: раздел обычно
+    // завёрнут в один общий контейнер, и он же последний ребёнок — выходить на
+    // нём значило бы никогда никуда не переехать
     if (hit.offsetHeight > vh * 1.6 && hit.children.length > 1
         && !hit.matches("section, article")) { box = hit; continue; }
+    if (hit === kids[kids.length - 1]) return;          // после него всё равно низ
     hit.after(host);
     return;
   }
