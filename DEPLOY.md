@@ -232,31 +232,45 @@ MAIL_FROM_NAME=StalZone Helper
 Ящик `noreply@stalzone-helper.ru` заведён (пароль нужен только для IMAP, сайту он
 не требуется — релей идёт без auth).
 
-### ⚠️ Осталось сделать: DNS у регистратора
+### DNS (внесено 06.08.2026 в рег.ру)
 
-Без этих записей **письма не доходят** — Gmail отбивает с `550-5.7.26 sender is
-unauthenticated` (проверено живым письмом 06.08.2026).
+| тип | имя | значение | статус |
+|---|---|---|---|
+| A | `mail` | `88.87.70.167` | ✅ |
+| MX | `@` | `mail.stalzone-helper.ru.` (приоритет 10) | ✅ |
+| TXT | `@` | `v=spf1 a mx ip4:88.87.70.167 -all` | ✅ |
+| TXT | `_dmarc` | `v=DMARC1; p=none; rua=mailto:postmaster@stalzone-helper.ru` | ✅ |
+| TXT | `mail._domainkey` | DKIM, селектор `mail`, 2048 бит | ✅ |
+| PTR | `88.87.70.167` | `mail.stalzone-helper.ru` | ⏳ всё ещё `mail.artwood34.ru` |
 
-| тип | имя | значение |
-|---|---|---|
-| A | `mail` | `88.87.70.167` |
-| MX | `@` | `mail.stalzone-helper.ru` (приоритет 10) |
-| TXT | `@` | `v=spf1 a mx ip4:88.87.70.167 -all` |
-| TXT | `_dmarc` | `v=DMARC1; p=none; rua=mailto:postmaster@stalzone-helper.ru` |
-| TXT | `mail._domainkey` | DKIM, см. ниже |
-| PTR | — | `88.87.70.167` → `mail.stalzone-helper.ru` (вносит владелец IP) |
-
-DKIM-ключ (2048 бит, селектор `mail`) взять одной строкой:
+DKIM-ключ одной строкой (если понадобится перевыпуск):
 ```
 ssh pavel@88.87.70.167 "docker exec mailserver cat \
-  /tmp/docker-mailserver/opendkim/keys/stalzone-helper.ru/mail.txt"
+  /tmp/docker-mailserver/opendkim/keys/stalzone-helper.ru/mail.txt \
+  | tr -d '\n\t' | sed 's/.*(//; s/).*//; s/\" *\"//g; s/\"//g'"
 ```
-Значение склеить из кусков в кавычках в одну строку без переносов.
 
-**После появления A-записи** выпустить сертификат на `mail.stalzone-helper.ru` и
-переключить `SSL_DOMAIN` в compose MTA (сейчас там временно серт основного
-домена — для релея внутри бриджа это неважно, но для IMAP/submission снаружи
-имя должно совпадать).
+Сертификат `mail.stalzone-helper.ru` выпущен (LE, до 04.11.2026), `SSL_DOMAIN` в
+compose MTA переключён на него. Чтобы ACME-проверка проходила, поддомен `mail`
+добавлен в `server_name` **HTTP-блока** vhost'а
+`text_rpg/eblia/backend/nginx/stalzone-helper.conf` — без этого запрос попадал в
+`default_server` с `return 444` и challenge не отдавался.
+
+### Грабли: негативный DNS-кэш Gmail
+
+После публикации записей часть писем всё ещё отбивалась с `550-5.7.26`, хотя
+SPF/DKIM уже были в зоне. Причина — **разные фронты Gmail с разным состоянием
+кэша**: те, что запрашивали записи до публикации, закэшировали их отсутствие
+(negative TTL у reg.ru = 10800 с, 3 часа).
+
+    16:06, 16:11 → 142.250.157.27 — отбито (записей ещё не было)
+    16:27        → 173.194.222.27 — принято
+    16:32        → 142.250.157.27 — отбито (кэш)
+
+Вывод: **сразу после правки DNS не паниковать и ничего не перенастраивать** —
+подождать 3 часа и проверить снова. Настройку проверять не по реакции Gmail, а
+независимо: `docker exec mailserver opendkim-testkey -d stalzone-helper.ru -s mail -vvv`
+(должно быть `key OK`; `key not secure` — это лишь отсутствие DNSSEC, не ошибка).
 
 ### Проверка
 
