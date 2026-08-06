@@ -977,9 +977,11 @@ async def admin_quest_pos(qid: int, request: Request, payload: dict = Body(...))
     faction = str(payload.get("faction") or "")
     if faction not in _QUEST_FACTION_IDS:
         raise HTTPException(422, "неизвестная линейка")
+    # минус разрешён: блок двигают левее самого левого, а схема при отрисовке
+    # сама сдвигает начало координат (renderQuestGraph, recalcOrigin)
     try:
-        col = max(0, min(200, int(payload.get("col"))))
-        row = max(0, min(200, int(payload.get("row"))))
+        col = max(-200, min(200, int(payload.get("col"))))
+        row = max(-200, min(200, int(payload.get("row"))))
     except (TypeError, ValueError):
         raise HTTPException(422, "col/row — целые")
     if not quests.set_pos(qid, faction, col, row):
@@ -1068,9 +1070,9 @@ async def admin_group_pos(gid: int, request: Request, payload: dict = Body(...))
     faction = str(payload.get("faction") or "")
     if faction not in _QUEST_FACTION_IDS:
         raise HTTPException(422, "неизвестная линейка")
-    try:
-        col = max(0, min(200, int(payload.get("col"))))
-        row = max(0, min(200, int(payload.get("row"))))
+    try:                                     # минус разрешён, как и у квестов
+        col = max(-200, min(200, int(payload.get("col"))))
+        row = max(-200, min(200, int(payload.get("row"))))
     except (TypeError, ValueError):
         raise HTTPException(422, "col/row — целые")
     if not quests.group_set_pos(gid, faction, col, row):

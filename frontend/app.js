@@ -3796,15 +3796,27 @@ function renderQuestGraph(host, faction, opts) {
     const src = isGroupUnit(u) ? groupOfUnit(u) : questOfUnit(u);
     const m = src && src.pos && src.pos[faction];
     return (Array.isArray(m) && m.length === 2)
-      ? { col: Math.max(0, m[0]), row: Math.max(0, m[1]) }
+      ? { col: m[0], row: m[1] }
       : { col: autoCol.get(u), row: depth.get(u) };
   };
   const cell = new Map([...unitIds].map((u) => [u, posOfUnit(u)]));
-  const xOf = (u) => PAD + cell.get(u).col * cellW;
-  const yOf = (u) => PAD + cell.get(u).row * cellH;
+  // Колонка и ряд бывают отрицательными: иначе блок нельзя подвинуть левее
+  // самого левого, и приходилось расталкивать вправо всю остальную линейку.
+  // Начало координат — самый левый/верхний блок, отрисовка от него.
+  let orgCol = 0, orgRow = 0;
+  const recalcOrigin = () => {
+    const us = [...unitIds];
+    orgCol = Math.min(0, ...us.map((u) => cell.get(u).col));
+    orgRow = Math.min(0, ...us.map((u) => cell.get(u).row));
+  };
+  recalcOrigin();
+  const xOf = (u) => PAD + (cell.get(u).col - orgCol) * cellW;
+  const yOf = (u) => PAD + (cell.get(u).row - orgRow) * cellH;
   const canvasSize = () => ({
-    cw: PAD * 2 + Math.max(0, ...[...unitIds].map((u) => cell.get(u).col)) * cellW + W,
-    ch: PAD * 2 + Math.max(0, ...[...unitIds].map((u) => cell.get(u).row)) * cellH + H + 34,
+    // orgCol/orgRow затравкой: у пустой линейки Math.max() без аргументов
+    // вернул бы -Infinity и размеры уехали бы в NaN
+    cw: PAD * 2 + (Math.max(orgCol, ...[...unitIds].map((u) => cell.get(u).col)) - orgCol) * cellW + W,
+    ch: PAD * 2 + (Math.max(orgRow, ...[...unitIds].map((u) => cell.get(u).row)) - orgRow) * cellH + H + 34,
   });
 
   host.innerHTML = `<div class="qgraph${edit ? " is-edit" : ""}">
@@ -3899,6 +3911,7 @@ function renderQuestGraph(host, faction, opts) {
   };
 
   const paint = () => {
+    recalcOrigin();               // после переезда влево сетка едет вместе с блоком
     const { cw, ch } = canvasSize();
     let edges = "";
     unitIds.forEach((u) => uParents.get(u).forEach((pu) => {
@@ -4061,15 +4074,21 @@ function renderQuestGraph(host, faction, opts) {
           const dx = ev.clientX - sx, dy = ev.clientY - sy;
           if (!moved && Math.hypot(dx, dy) < 5) return;
           moved = true; n.classList.add("dragging");
-          n.style.left = Math.max(0, ox + dx / (z * T.s)) + "px";
-          n.style.top = Math.max(0, oy + dy / (z * T.s)) + "px";
+          const lx = ox + dx / (z * T.s), ly = oy + dy / (z * T.s);
+          n.style.left = Math.max(-cellW * 3, lx) + "px";
+          n.style.top = Math.max(-cellH * 3, ly) + "px";
+          // уехали левее/выше сцены — сдвигаем саму сцену, иначе блок ушёл бы
+          // под край окна (у .qgraph-view overflow: hidden) и тащить вслепую
+          if (lx < 0 && T.tx < -lx * T.s) { T.tx = -lx * T.s; applyT(); }
+          if (ly < 0 && T.ty < -ly * T.s) { T.ty = -ly * T.s; applyT(); }
         };
         const up = () => {
           n.removeEventListener("pointermove", mv); n.removeEventListener("pointerup", up);
           n.classList.remove("dragging");
           if (!moved) { handleUnitClick(n); return; }
-          const col = Math.max(0, Math.round((parseFloat(n.style.left) - PAD) / cellW));
-          const row = Math.max(0, Math.round((parseFloat(n.style.top) - PAD) / cellH));
+          // обратно в координаты линейки: на экране считали от левого блока
+          const col = Math.round((parseFloat(n.style.left) - PAD) / cellW) + orgCol;
+          const row = Math.round((parseFloat(n.style.top) - PAD) / cellH) + orgRow;
           cell.set(n.dataset.unit, { col, row });
           if (isGrp) saveGroupPos(+n.dataset.gid, col, row); else savePos(+n.dataset.id, col, row);
           paint(); applyT();

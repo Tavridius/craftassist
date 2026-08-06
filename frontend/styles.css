@@ -2245,6 +2245,17 @@ body:has(.cmp-tray:not(.hidden)) .auth-notice { bottom: 76px; }
 }
 .qgraph-view.panning { cursor: grabbing; }
 .qgraph-stage { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+/* Координатная решётка — только в редакторе: шаг равен ячейке раскладки
+   (220×118), смещение выводит линии на границы ячеек, а не на сами блоки
+   (блок 190×72 стоит по центру ячейки). Видно колонки и ряды, по которым
+   блоки прилипают при перетаскивании. */
+.qgraph.is-edit .qgraph-stage {
+  background-image:
+    linear-gradient(to right, rgba(124, 230, 142, 0.08) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(124, 230, 142, 0.08) 1px, transparent 1px);
+  background-size: 220px 118px;
+  background-position: 5px -3px;
+}
 .qgraph-stage svg { position: absolute; left: 0; top: 0; pointer-events: none; overflow: visible; }
 .qgraph-ctl { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 8px 0 2px; }
 .qgraph-zb {
