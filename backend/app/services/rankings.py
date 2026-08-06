@@ -32,6 +32,10 @@ class Rankings:
         self._bump_ctr = 0
         self._cache: dict | None = None
         self._cache_ts = 0.0
+        # выгода по ВСЕМ крафтящимся, а не только по топам: compute() всё равно
+        # считает полный проход, а поиск с главной без этого пришлось бы считать
+        # заново на каждый запрос
+        self.rows: dict[str, dict] = {}
 
     @property
     def _path(self):
@@ -96,6 +100,7 @@ class Rankings:
                 "opens": self.opens.get(rid, 0),
             }
 
+        self.rows = rows
         priced = [r for r in rows.values() if r["diff"] is not None]
         # обе подборки — только ликвидные (продажи ≥ порога): ВЫГОДНЫЕ ранжируем
         # по абсолютной дельте ₽, ПРОФИТНЫЕ — по % маржи (решение юзера 15.07)

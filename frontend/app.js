@@ -1628,6 +1628,85 @@ function h2NewsBody(feed) {
   }).join("");
 }
 
+// Поиск внутри модуля: строка ввода, под ней либо результаты, либо обычная
+// подборка. Оборачивает готовое тело — разметка одна на оба макета, обработчик
+// вешается в renderHome2 по data-find.
+const h2Findable = (kind, ph, body) => `<div class="h2-find" data-find="${kind}">
+    <span class="h2-find-p">&gt;_</span>
+    <input type="search" class="h2-find-i" inputmode="search" autocomplete="off"
+           placeholder="${ph}" aria-label="${ph}">
+    <button type="button" class="h2-find-x hidden" title="Сбросить (Esc)">✕</button>
+  </div>
+  <div class="h2-find-res hidden"></div>
+  <div class="h2-find-base">${body}</div>`;
+
+// строка результата в «самом продаваемом»: темп продаж, а без истории — цена
+function h2MarketRow(r) {
+  const val = r.per_day != null ? `~${fmt(r.per_day)}/СУТ`
+    : r.min_buyout != null ? `${fmt(r.min_buyout)} ₽`
+    : `<span class="h2-find-dim">НЕТ СДЕЛОК</span>`;
+  return `<div class="dash-row" data-nav="/item/${r.id}">
+    <img loading="lazy" src="${asset(r.icon)}" alt="">
+    <div class="nm">${escapeHtml(r.name)}</div>
+    <span class="dash-p">${val}</span></div>`;
+}
+
+// data-nav вешаем через флаг: результаты поиска доклеиваются после общей
+// привязки, без флага повторный проход навесил бы второй обработчик
+function h2BindNav(root) {
+  root.querySelectorAll("[data-nav]").forEach((el) => {
+    if (el.dataset.navBound) return;
+    el.dataset.navBound = "1";
+    el.addEventListener("click", () => { navigate(el.dataset.nav); });
+  });
+}
+
+function h2BindFind(box) {
+  const kind = box.dataset.find;
+  const input = box.querySelector(".h2-find-i");
+  const clear = box.querySelector(".h2-find-x");
+  const res = box.parentNode.querySelector(".h2-find-res");
+  const base = box.parentNode.querySelector(".h2-find-base");
+  let timer = null, ctl = null;
+  const show = (on) => {
+    res.classList.toggle("hidden", !on);
+    base.classList.toggle("hidden", on);
+    clear.classList.toggle("hidden", !on);
+  };
+  const reset = () => { input.value = ""; res.innerHTML = ""; show(false); };
+  const run = async () => {
+    const q = input.value.trim();
+    if (!q) { reset(); return; }
+    show(true);
+    res.innerHTML = `<div class="h2-find-msg">// ИЩУ…</div>`;
+    if (ctl) ctl.abort();          // ответ на прошлую букву уже не нужен
+    ctl = new AbortController();
+    try {
+      const d = await fetch(
+        api(`/home/search?kind=${kind}&q=${encodeURIComponent(q)}&limit=8`),
+        { signal: ctl.signal }).then((r) => r.json());
+      if (input.value.trim() !== q) return;      // пока ждали, запрос сменился
+      const items = d.items || [];
+      res.innerHTML = items.length
+        ? items.map(kind === "craft" ? (r) => dashCraftRow(r, false) : h2MarketRow).join("")
+          + `<a class="h2-find-all" href="/search?q=${encodeURIComponent(q)}">ИСКАТЬ «${
+              escapeHtml(q)}» ПО ВСЕЙ БАЗЕ ▸</a>`
+        : `<div class="h2-find-msg">НИЧЕГО НЕ НАЙДЕНО${
+            kind === "craft" ? " СРЕДИ КРАФТЯЩЕГОСЯ" : ""}</div>`;
+      h2BindNav(res);
+    } catch (e) {
+      if (e.name !== "AbortError")
+        res.innerHTML = `<div class="h2-find-msg">[!] ОШИБКА СЕТИ</div>`;
+    }
+  };
+  input.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(run, 250); });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") { reset(); input.blur(); }
+    if (e.key === "Enter") { clearTimeout(timer); run(); }
+  });
+  clear.addEventListener("click", () => { reset(); input.focus(); });
+}
+
 function h2Crafts(top) {
   if (!top) return `<div class="empty-sm">ЦЕНЫ СЧИТАЮТСЯ В ФОНЕ — ЗАГЛЯНИ ПОЗЖЕ.</div>`;
   const grp = (t, list, pctBadge) => (list && list.length)
@@ -1690,9 +1769,11 @@ function home2Hud(d) {
              первым экраном идут «что выгодно скрафтить» и «что разбирают на
              ауке»; сборка дня — приятная, но пассивная сводка, ей место ниже. -->
         <div class="h2-split hero">
-          ${h2Mod("", "КРАФТЫ ДНЯ", "ВЫГОДА · ЛИКВИДНОСТЬ", h2Crafts(d.top),
+          ${h2Mod("", "КРАФТЫ ДНЯ", "ВЫГОДА · ЛИКВИДНОСТЬ",
+                  h2Findable("craft", "НАЙТИ ПРЕДМЕТ ДЛЯ КРАФТА…", h2Crafts(d.top)),
                   "/craft", "В КРАФТ")}
-          ${h2Mod("", "САМОЕ ПРОДАВАЕМОЕ", "ТЕМП ПРОДАЖ", salesBody(d.sales),
+          ${h2Mod("", "САМОЕ ПРОДАВАЕМОЕ", "ТЕМП ПРОДАЖ",
+                  h2Findable("market", "НАЙТИ ПРЕДМЕТ НА АУКЕ…", salesBody(d.sales)),
                   "/market", "НА АУКЦИОН")}
         </div>
         ${h2Mod("", "ГРАФИКИ ИНГРЕДИЕНТОВ", "СР. ЦЕНА ПРОДАЖ", h2Charts(d.watch),
@@ -1714,11 +1795,15 @@ function home2Board(d) {
   // порядок подобран по высоте модулей: крылья должны заканчиваться примерно
   // на одной высоте, иначе симметрия платы разваливается пустотой в одном из них
   const left = [
-    h2Mod("R1", "КРАФТЫ ДНЯ", "ВЫГОДА · ЛИКВИДНОСТЬ", h2Crafts(d.top), "/craft", "В КРАФТ"),
+    h2Mod("R1", "КРАФТЫ ДНЯ", "ВЫГОДА · ЛИКВИДНОСТЬ",
+          h2Findable("craft", "НАЙТИ ПРЕДМЕТ ДЛЯ КРАФТА…", h2Crafts(d.top)),
+          "/craft", "В КРАФТ"),
     h2Mod("R2", "ВЫБРОС", "ЗАМЕР РАЗ В МИНУТУ", emissionBody(d.em)),
     h2Mod("R3", "ЗАПРАВКА ГЕНЕРАТОРА", "₽ ЗА 1000 ЕД", fuelBody(d.fuelTop),
           "/profile", "ПРИСТРОЙКИ"),
-    h2Mod("R4", "САМОЕ ПРОДАВАЕМОЕ", "ТЕМП ПРОДАЖ", salesBody(d.sales), "/market", "НА АУКЦИОН"),
+    h2Mod("R4", "САМОЕ ПРОДАВАЕМОЕ", "ТЕМП ПРОДАЖ",
+          h2Findable("market", "НАЙТИ ПРЕДМЕТ НА АУКЕ…", salesBody(d.sales)),
+          "/market", "НА АУКЦИОН"),
   ].join("");
   const right = [
     h2Mod("C1", "ТРЕНДЫ БИРЖИ", "ЦЕНА ЗА СУТКИ", h2Trends(d.art), "/auction", "НА БИРЖУ"),
@@ -1758,8 +1843,8 @@ function renderHome2() {
     renderHome2();
     window.scrollTo(0, 0);
   }));
-  home.querySelectorAll("[data-nav]").forEach((el) =>
-    el.addEventListener("click", () => { navigate(el.dataset.nav); }));
+  h2BindNav(home);
+  home.querySelectorAll(".h2-find").forEach(h2BindFind);
   bindPromoCopy(home);
   home.querySelectorAll(".stab").forEach((b) => b.addEventListener("click", () => {
     home.querySelectorAll(".stab").forEach((x) => x.classList.toggle("on", x === b));

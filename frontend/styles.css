@@ -3091,6 +3091,36 @@ a.ops-gear:hover .nm { text-decoration: underline; }
 .h2-board .h2-wing.right .h2-mh { flex-direction: row-reverse; }
 .h2-board .h2-wing.right .h2-mn { margin-left: 0; margin-right: auto; text-align: left; }
 
+/* ---------- поиск внутри модуля (крафты / самое продаваемое) ---------- */
+.h2-find {
+  display: flex; align-items: center; gap: 7px; margin: 2px 0 6px;
+  padding: 5px 8px; border: 1px solid var(--border-dim); background: var(--bg);
+}
+.h2-find:focus-within { border-color: var(--green-border); box-shadow: inset 0 0 12px rgba(124, 230, 142, 0.06); }
+.h2-find-p { font-size: 11px; color: var(--green); font-weight: 700; flex: none; }
+.h2-find-i {
+  flex: 1; min-width: 0; border: none; outline: none; background: none;
+  font-family: inherit; font-size: 12px; color: var(--bright); padding: 1px 0;
+}
+.h2-find-i::placeholder { color: var(--dimmer); letter-spacing: 0.05em; }
+.h2-find-i::-webkit-search-cancel-button { display: none; }
+.h2-find-x {
+  flex: none; border: none; background: none; cursor: pointer; padding: 0 2px;
+  font-family: inherit; font-size: 12px; color: var(--dim); line-height: 1;
+}
+.h2-find-x:hover { color: var(--red); }
+.h2-find-msg {
+  font-size: 11px; letter-spacing: 0.06em; color: var(--dim); padding: 10px 2px;
+}
+.h2-find-dim { color: var(--dimmer); font-size: 10px; }
+.h2-find-all {
+  display: block; margin-top: 6px; padding-top: 7px;
+  border-top: 1px dashed var(--border-deep);
+  font-size: 10px; letter-spacing: 0.08em; color: var(--green); text-decoration: none;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.h2-find-all:hover { text-shadow: var(--glow); }
+
 /* ---------- адаптив обоих макетов ---------- */
 @media (max-width: 1200px) {
   .h2-hud-grid { grid-template-columns: minmax(0, 1fr) minmax(250px, 290px); }

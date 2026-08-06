@@ -587,6 +587,43 @@ async def admin_promo_delete(request: Request, pid: int):
     return {"ok": True}
 
 
+# ---------- поиск прямо из модулей главной ----------
+# Обычный /search отдаёт только имя с иконкой — в модулях главной этого мало:
+# там строки с цифрой (выгода за цикл / темп продаж), и результат поиска должен
+# выглядеть так же, иначе он читается как чужой блок. Цифры берём из тёплых
+# кэшей: выгоду — из rankings.rows (полный проход там уже сделан), темп продаж —
+# из истории цен. Ни одного обращения к внешнему API.
+
+@router.get("/home/search")
+async def home_search(q: str = Query(..., min_length=1), kind: str = "craft",
+                      limit: int = Query(8, ge=1, le=20)):
+    """Поиск для модуля главной. kind=craft — только крафтящееся, со строкой
+    выгоды; kind=market — что угодно, со строкой темпа продаж и ценой."""
+    if kind not in ("craft", "market"):
+        raise HTTPException(422, "kind: craft или market")
+    found = db.search(q, limit * 4)
+    out = []
+    if kind == "craft":
+        rankings.compute()          # прогреть/освежить rows (внутри TTL-кэш)
+        for it in found:
+            iid = it["id"]
+            if iid not in db.recipe_by_result:
+                continue            # некрафтящееся в этом модуле бессмысленно
+            r = rankings.rows.get(iid) or {}
+            out.append({"id": iid, "name": it.get("name", iid),
+                        "icon": it.get("icon", ""), "color": it.get("color", "DEFAULT"),
+                        "diff": r.get("diff"), "pct": r.get("pct"),
+                        "sell_price": r.get("sell_price"), "buy_price": r.get("buy_price")})
+            if len(out) >= limit:
+                break
+    else:
+        for it in found[:limit]:
+            b = _item_brief(it["id"])
+            sph = b.get("sales_per_hour")
+            out.append({**b, "per_day": round(sph * 24) if sph else None})
+    return {"query": q, "kind": kind, "items": out}
+
+
 # ---------- новости САЙТА: гибридная лента (ручные посты + автособытия) ----------
 # Ручное — db/sitenews. Автособытия НЕ дублируются в базу: берём их из живых
 # источников (гайды, промокоды, патчи) прямо на чтении. Так удаление гайда или
