@@ -1,0 +1,120 @@
+<p>«За сколько выставлять артефакт» — вопрос без одного ответа: цена зависит не
+от названия, а от <b>корзины</b> — качества и уровня заточки. Один и тот же
+артефакт в обычном исполнении и в заточенном торгуется как два разных предмета.
+Ниже — живые цены с <a href="/auction">биржи артефактов</a>, а посчитать
+конкретную сборку можно в <a href="/builds">калькуляторе сборок</a>.</p>
+
+<h2>Из чего складывается цена</h2>
+<ul>
+  <li><b>Качество</b> — обычный, необычный, особый, редкий, исключительный, легендарный. Каждая ступень
+    поднимает и характеристики, и цену.</li>
+  <li><b>Заточка</b> — котируется корзинами +0…+4, +5…+9, +10…+14 и отдельно
+    +15. Поштучно по каждому уровню сделок слишком мало, чтобы получилась
+    честная средняя, а +15 стоит особняком — это потолок.</li>
+  <li><b>Свежесть сделки.</b> У неликвида «цена» на ауке бывает годовой
+    давности. Мы считаем среднюю по сделкам за 7 дней и не показываем корзины,
+    где сделок меньше 5.</li>
+</ul>
+
+<h2>Сколько добавляет качество</h2>
+<p>Медиана по артефактам с живыми сделками: во сколько раз корзина дороже
+обычного исполнения того же артефакта при той же заточке. Ступени качества
+дают не проценты, а <b>кратный</b> рост — поэтому «Ягодка за 20 тысяч» и
+«Ягодка за два миллиона» могут быть одним и тем же предметом.</p>
+<div class="gt-wrap">
+  <table class="gt">
+    <thead><tr><th>качество</th><th>во сколько раз дороже обычного</th><th>артефактов в выборке</th></tr></thead>
+    <tbody>
+    <tr><td>необычный</td><td><b>×1.7</b></td><td>13</td></tr>
+    <tr><td>особый</td><td><b>×4.4</b></td><td>12</td></tr>
+    <tr><td>редкий</td><td><b>×19.1</b></td><td>12</td></tr>
+    <tr><td>исключительный</td><td><b>×253.2</b></td><td>11</td></tr>
+    <tr><td>легендарный</td><td><b>×827.4</b></td><td>8</td></tr>
+    </tbody>
+  </table>
+</div>
+<p>Заточка от +10 добавляет к цене корзины в среднем <b>×4.8</b> (медиана внутри одного качества).
+При этом дешёвый артефакт выгоднее точить, чем дорогой: в процентах надбавка на
+дешёвых корзинах кратно больше — разбор в гайде
+<a href="/guides/zatochka-artefaktov-cena">сколько стоит заточка</a>.</p>
+
+<h2>Сколько стоят ходовые артефакты</h2>
+<p>«Обычный +0» — базовая цена, от которой считается всё остальное. «Лучшая
+корзина» — самое дорогое сочетание качества и заточки, по которому на этой
+неделе были реальные сделки. Последняя колонка показывает разрыв между этими
+двумя строками: это не ошибка данных, а нормальный масштаб рынка артефактов.</p>
+<div class="gt-wrap">
+  <table class="gt">
+    <thead><tr><th>артефакт</th><th>класс</th><th>обычный +0</th><th>лучшая корзина</th><th>цена</th><th>разброс корзин</th></tr></thead>
+    <tbody>
+    <tr><td><div class="gn"><img class="gi" src="/icons/artefact/thermal/qoq6.png" alt="Солнце" loading="lazy" width="32" height="32"><a href="/item/qoq6">Солнце</a></div></td><td>Термические</td><td>54 459</td><td>легендарный +15</td><td><b>76 166 667</b></td><td>×1398.6</td></tr>
+    <tr><td><div class="gn"><img class="gi" src="/icons/artefact/electrophysical/zyrm.png" alt="Зеркало" loading="lazy" width="32" height="32"><a href="/item/zyrm">Зеркало</a></div></td><td>Электрофизические</td><td>33 156</td><td>легендарный +15</td><td><b>9 999 999</b></td><td>×301.6</td></tr>
+    <tr><td><div class="gn"><img class="gi" src="/icons/artefact/thermal/wgwz.png" alt="Фаренгейт" loading="lazy" width="32" height="32"><a href="/item/wgwz">Фаренгейт</a></div></td><td>Термические</td><td>13 591</td><td>легендарный +15</td><td><b>25 844 000</b></td><td>×1901.6</td></tr>
+    <tr><td><div class="gn"><img class="gi" src="/icons/artefact/gravity/y5yw.png" alt="Гантель" loading="lazy" width="32" height="32"><a href="/item/y5yw">Гантель</a></div></td><td>Гравитационные</td><td>41 156</td><td>легендарный +0…+4</td><td><b>59 990 000</b></td><td>×1457.6</td></tr>
+    <tr><td><div class="gn"><img class="gi" src="/icons/artefact/other_arts/1kw1.png" alt="Кристалл Изнанки" loading="lazy" width="32" height="32"><a href="/item/1kw1">Кристалл Изнанки</a></div></td><td>Прочие</td><td>35 424</td><td>исключительный +15</td><td><b>6 975 000</b></td><td>×196.9</td></tr>
+    <tr><td><div class="gn"><img class="gi" src="/icons/artefact/other_arts/zymn.png" alt="Смалец" loading="lazy" width="32" height="32"><a href="/item/zymn">Смалец</a></div></td><td>Прочие</td><td>22 214</td><td>легендарный +15</td><td><b>24 999 999</b></td><td>×1125.4</td></tr>
+    <tr><td><div class="gn"><img class="gi" src="/icons/artefact/thermal/rn1z.png" alt="Опал" loading="lazy" width="32" height="32"><a href="/item/rn1z">Опал</a></div></td><td>Термические</td><td>299 561</td><td>редкий +15</td><td><b>79 854 321</b></td><td>×266.6</td></tr>
+    <tr><td><div class="gn"><img class="gi" src="/icons/artefact/gravity/1kv2.png" alt="Прима" loading="lazy" width="32" height="32"><a href="/item/1kv2">Прима</a></div></td><td>Гравитационные</td><td>6 411</td><td>легендарный +15</td><td><b>2 175 000</b></td><td>×339.3</td></tr>
+    <tr><td><div class="gn"><img class="gi" src="/icons/artefact/gravity/gyg5.png" alt="Креветка" loading="lazy" width="32" height="32"><a href="/item/gyg5">Креветка</a></div></td><td>Гравитационные</td><td>7 010</td><td>легендарный +15</td><td><b>7 347 755</b></td><td>×1048.2</td></tr>
+    <tr><td><div class="gn"><img class="gi" src="/icons/artefact/thermal/wglp.png" alt="Ветка Калины" loading="lazy" width="32" height="32"><a href="/item/wglp">Ветка Калины</a></div></td><td>Термические</td><td>96 780</td><td>исключительный +15</td><td><b>54 306 764</b></td><td>×561.1</td></tr>
+    <tr><td><div class="gn"><img class="gi" src="/icons/artefact/other_arts/jky6.png" alt="Изюм" loading="lazy" width="32" height="32"><a href="/item/jky6">Изюм</a></div></td><td>Прочие</td><td>383 348</td><td>редкий +15</td><td><b>55 833 333</b></td><td>×145.6</td></tr>
+    <tr><td><div class="gn"><img class="gi" src="/icons/artefact/gravity/y5jk.png" alt="Жильник" loading="lazy" width="32" height="32"><a href="/item/y5jk">Жильник</a></div></td><td>Гравитационные</td><td>7 039</td><td>легендарный +15</td><td><b>17 878 806</b></td><td>×2540.0</td></tr>
+    <tr><td><div class="gn"><img class="gi" src="/icons/artefact/thermal/4l7p.png" alt="Гребешок" loading="lazy" width="32" height="32"><a href="/item/4l7p">Гребешок</a></div></td><td>Термические</td><td>8 196</td><td>легендарный +15</td><td><b>10 809 634</b></td><td>×1318.9</td></tr>
+    <tr><td><div class="gn"><img class="gi" src="/icons/artefact/other_arts/q1lk.png" alt="Жабры" loading="lazy" width="32" height="32"><a href="/item/q1lk">Жабры</a></div></td><td>Прочие</td><td>—</td><td>легендарный +15</td><td><b>29 270 832</b></td><td>—</td></tr>
+    </tbody>
+  </table>
+</div>
+<p class="gsnap">Снимок данных: 2026-08-06. Живые цифры — на <a href="/auction">бирже артефактов</a>.</p>
+
+<h2>Что подорожало за неделю</h2>
+<p>Сравниваются средние цены недели против предыдущей, по корзинам. Это же
+таблица ответа на «когда продавать»: рост на 30–100% почти всегда откатывается.</p>
+<div class="gt-wrap">
+  <table class="gt">
+    <thead><tr><th>артефакт</th><th>корзина</th><th>было</th><th>стало</th><th>рост</th><th>сделок</th></tr></thead>
+    <tbody>
+    <tr><td><div class="gn"><img class="gi" src="/icons/artefact/electrophysical/zyrm.png" alt="Зеркало" loading="lazy" width="32" height="32"><a href="/item/zyrm">Зеркало</a></div></td><td>особый +10…+14</td><td>770 635</td><td>1 616 000</td><td><b>+110%</b></td><td>5</td></tr>
+    <tr><td><div class="gn"><img class="gi" src="/icons/artefact/thermal/wgwz.png" alt="Фаренгейт" loading="lazy" width="32" height="32"><a href="/item/wgwz">Фаренгейт</a></div></td><td>особый +0…+4</td><td>178 219</td><td>332 131</td><td><b>+86%</b></td><td>156</td></tr>
+    <tr><td><div class="gn"><img class="gi" src="/icons/artefact/gravity/y5yw.png" alt="Гантель" loading="lazy" width="32" height="32"><a href="/item/y5yw">Гантель</a></div></td><td>необычный +5…+9</td><td>231 764</td><td>429 700</td><td><b>+85%</b></td><td>10</td></tr>
+    <tr><td><div class="gn"><img class="gi" src="/icons/artefact/other_arts/1kw1.png" alt="Кристалл Изнанки" loading="lazy" width="32" height="32"><a href="/item/1kw1">Кристалл Изнанки</a></div></td><td>особый +0…+4</td><td>192 370</td><td>346 158</td><td><b>+80%</b></td><td>19</td></tr>
+    <tr><td><div class="gn"><img class="gi" src="/icons/artefact/other_arts/zymn.png" alt="Смалец" loading="lazy" width="32" height="32"><a href="/item/zymn">Смалец</a></div></td><td>особый +0…+4</td><td>106 519</td><td>184 391</td><td><b>+73%</b></td><td>34</td></tr>
+    <tr><td><div class="gn"><img class="gi" src="/icons/artefact/thermal/rn1z.png" alt="Опал" loading="lazy" width="32" height="32"><a href="/item/rn1z">Опал</a></div></td><td>обычный +0…+4</td><td>175 641</td><td>299 561</td><td><b>+71%</b></td><td>70</td></tr>
+    <tr><td><div class="gn"><img class="gi" src="/icons/artefact/gravity/1kv2.png" alt="Прима" loading="lazy" width="32" height="32"><a href="/item/1kv2">Прима</a></div></td><td>редкий +15</td><td>493 536</td><td>806 666</td><td><b>+63%</b></td><td>12</td></tr>
+    <tr><td><div class="gn"><img class="gi" src="/icons/artefact/gravity/gyg5.png" alt="Креветка" loading="lazy" width="32" height="32"><a href="/item/gyg5">Креветка</a></div></td><td>необычный +5…+9</td><td>97 947</td><td>159 956</td><td><b>+63%</b></td><td>23</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2>Что подешевело</h2>
+<div class="gt-wrap">
+  <table class="gt">
+    <thead><tr><th>артефакт</th><th>корзина</th><th>было</th><th>стало</th><th>падение</th><th>сделок</th></tr></thead>
+    <tbody>
+    <tr><td><div class="gn"><img class="gi" src="/icons/artefact/other_arts/j306.png" alt="Всполох" loading="lazy" width="32" height="32"><a href="/item/j306">Всполох</a></div></td><td>необычный +5…+9</td><td>424 545</td><td>232 096</td><td><b class="bad">-45%</b></td><td>17</td></tr>
+    <tr><td><div class="gn"><img class="gi" src="/icons/artefact/thermal/5rzo.png" alt="Корка" loading="lazy" width="32" height="32"><a href="/item/5rzo">Корка</a></div></td><td>обычный +0…+4</td><td>20 096</td><td>11 338</td><td><b class="bad">-44%</b></td><td>199</td></tr>
+    <tr><td><div class="gn"><img class="gi" src="/icons/artefact/thermal/gyln.png" alt="Иней" loading="lazy" width="32" height="32"><a href="/item/gyln">Иней</a></div></td><td>необычный +0…+4</td><td>20 389</td><td>11 557</td><td><b class="bad">-43%</b></td><td>45</td></tr>
+    <tr><td><div class="gn"><img class="gi" src="/icons/artefact/biochemical/kqj3.png" alt="Улитка" loading="lazy" width="32" height="32"><a href="/item/kqj3">Улитка</a></div></td><td>редкий +10…+14</td><td>886 667</td><td>546 250</td><td><b class="bad">-38%</b></td><td>12</td></tr>
+    <tr><td><div class="gn"><img class="gi" src="/icons/artefact/other_arts/yq3o.png" alt="Личинка" loading="lazy" width="32" height="32"><a href="/item/yq3o">Личинка</a></div></td><td>редкий +5…+9</td><td>932 500</td><td>576 364</td><td><b class="bad">-38%</b></td><td>11</td></tr>
+    <tr><td><div class="gn"><img class="gi" src="/icons/artefact/other_arts/zjzn.png" alt="Полено" loading="lazy" width="32" height="32"><a href="/item/zjzn">Полено</a></div></td><td>необычный +5…+9</td><td>463 706</td><td>298 462</td><td><b class="bad">-36%</b></td><td>13</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2>Как оценить свой артефакт</h2>
+<ul>
+  <li><b>Смотрите не на предмет, а на корзину.</b> Ягодка обычная и ягодка
+    особая — разные строки в стакане; сравнивать их цены бессмысленно.</li>
+  <li><b>Ориентир — средняя по сделкам, а не минимальный выкуп.</b> Минимальный
+    выкуп показывает, за сколько кто-то <i>хочет</i> продать; средняя по
+    сделкам — за сколько <i>покупают</i>.</li>
+  <li><b>Комиссия 5%.</b> Выставляя по средней цене, на руки получите на
+    двадцатую меньше — при цене в миллионы это заметная сумма.</li>
+  <li><b>Разовые сделки врут.</b> Одна продажа в неделю — не цена, а случай;
+    в таблицах выше указано число сделок за период.</li>
+</ul>
+
+<blockquote><p><b>Коротко.</b> Цена артефакта — это цена его корзины
+«качество × заточка» за последние 7 дней, минус комиссия 5%. Живые котировки по
+всем корзинам — на <a href="/auction">бирже артефактов</a>, подбор под сборку —
+в <a href="/builds">калькуляторе</a>, поштучное сравнение — в
+<a href="/compare">сравнении предметов</a>.</p></blockquote>
