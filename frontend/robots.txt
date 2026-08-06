@@ -1,5 +1,9 @@
 User-agent: *
 Disallow: /api/
 Disallow: /auth/
+# /map НЕ закрываем здесь намеренно: он уже в индексе и его надо оттуда убрать.
+# Disallow запрещает обход, робот не увидит meta noindex — и страница застрянет
+# в выдаче ссылкой без описания. Закрыт через noindex в pages.py (map_page) при
+# открытом обходе; когда выпадет из индекса — можно и Disallow, если понадобится.
 
 Sitemap: https://stalzone-helper.ru/sitemap.xml

@@ -214,12 +214,23 @@ def build_zatochka():
     t_qlt = table(["качество", "медианная надбавка за +15", "во столько раз дороже",
                    "пар"], by_q)
 
+    # топ-12 РАЗНЫХ артефактов по цене заточенного: без дедупа один и тот же
+    # предмет мог занять несколько мест сразу (напр. Полено на +10 и +15),
+    # вытесняя из топа другие позиции (баг benqerrrr, 03.08.2026)
     pairs.sort(key=lambda r: -r["p"])
+    seen, top_pairs = set(), []
+    for r in pairs:
+        if r["item"]["id"] in seen:
+            continue
+        seen.add(r["item"]["id"])
+        top_pairs.append(r)
+        if len(top_pairs) == 12:
+            break
     top = table(
         ["артефакт", "качество", "заточка", "цена +0", "цена заточенного", "надбавка"],
         [[name_cell(r["item"]), str(r["qlt"]), f'+{r["ptn"]}',
           rub(r["p0"]), f'<b>{rub(r["p"])}</b>', f'{r["pct"]:+.0f}%']
-         for r in pairs[:12]])
+         for r in top_pairs])
     cheap15 = min((r for r in b15 if r["p0"] < 200_000),
                   key=lambda r: r["p0"], default=None)
 

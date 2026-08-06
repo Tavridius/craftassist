@@ -734,6 +734,16 @@ a.auth-user:hover { color: var(--green); border-color: var(--green-border); text
 }
 
 /* ---------- калькулятор сборок ---------- */
+/* Развилка интента над вкладками /builds: часть поискового трафика приходит за
+   ЦЕНОЙ артефакта, а не за сборкой (см. AUDIT-METRIKA-2026-08.md). Строка тонкая
+   и не спорит с калькулятором, но живёт выше сгиба — иначе её не успевают увидеть. */
+.bs-intent {
+  font-size: 10px; color: var(--dimmer); letter-spacing: 0.06em;
+  margin: -4px 0 12px; line-height: 1.7;
+}
+.bs-intent a { color: var(--green); }
+.bs-intent a:hover { text-shadow: var(--glow); }
+
 .btabs { display: flex; gap: 2px; margin-bottom: 12px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
 .btab {
   background: none; border: 1px solid var(--border); border-bottom: none; color: var(--dim);
@@ -1742,6 +1752,8 @@ td.bt-selc { padding: 7px 4px; }
   color: var(--dimmer); padding: 0 4px; vertical-align: 1px;
 }
 .obm-basis.vendor { border-color: var(--amber-border); color: var(--amber); }
+/* канал «разбор» — цена выведена из родителя, не прямая сделка: зелёный как у аука */
+.obm-basis.auction, .obm-basis.market { border-color: var(--green); color: var(--green); }
 .bt-note a, .obm-link { color: var(--green); cursor: pointer; }
 .obm-link:hover { text-shadow: var(--glow); }
 /* единицы в ячейках нужны только в мобильной раскладке — на десктопе их несёт шапка */

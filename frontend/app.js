@@ -378,6 +378,11 @@ function openAuthModal(tab = "signin") {
   authModal.classList.remove("hidden");
   document.body.classList.add("modal-open");
   setAuthTab(tab);
+  // Верх воронки. Без него измерять было нечем: автоцель Метрики «отправил
+  // контактные данные» не ловит сабмит через fetch с preventDefault (в июле
+  // она показала 8 отправок при 13 успешных регистрациях), а цель signup
+  // шлётся только на успехе — доля бросивших форму нигде не видна.
+  ymGoal("auth_open");
 }
 
 function closeAuthModal() {
@@ -402,9 +407,15 @@ async function onAuthSubmit(e) {
   const val = (n) => (form.querySelector(`[name="${n}"]`) || {}).value || "";
   errEl.textContent = "";
 
+  // Дошёл до отправки — считаем попытку независимо от исхода. Пара
+  // auth_try/auth_fail показывает, где именно теряются люди: до попытки
+  // (бросили форму) или на ней (не проходят проверки).
+  if (pane === "register") ymGoal("auth_try");
+
   // клиентская проверка совпадения паролей
   if ((pane === "register" || pane === "reset-confirm") && val("password") !== val("password2")) {
     errEl.textContent = "Пароли не совпадают";
+    if (pane === "register") ymGoal("auth_fail");
     return;
   }
 
@@ -415,6 +426,7 @@ async function onAuthSubmit(e) {
     const consent = (form.querySelector('[name="consent"]') || {}).checked;
     if (!consent) {
       errEl.textContent = "Нужно принять соглашение и согласие на обработку данных";
+      ymGoal("auth_fail");
       return;
     }
     url = "/auth/register";
@@ -436,7 +448,11 @@ async function onAuthSubmit(e) {
       body: JSON.stringify(payload),
     });
     const data = await r.json().catch(() => ({}));
-    if (!r.ok) { errEl.textContent = data.error || "Ошибка. Попробуйте ещё раз."; return; }
+    if (!r.ok) {
+      errEl.textContent = data.error || "Ошибка. Попробуйте ещё раз.";
+      if (pane === "register") ymGoal("auth_fail");   // отказ бэка: занятый email/ник, слабый пароль
+      return;
+    }
 
     if (pane === "reset") {
       // не раскрываем, есть ли такой email
@@ -2724,14 +2740,25 @@ function openObmenModal(id) {
   chan.push(`<div class="bt-ing"><span>ЦЕНА У ПЕРЕКУПЩИКА</span>
     <span class="bt-ing-price"><b>${fmt(r.coins)}</b> МОНЕТ${r.amount > 1 ? ` ЗА ${r.amount} ШТ` : ""}</span></div>`);
   if (r.limit) chan.push(`<div class="bt-ing"><span>ЛИМИТ ПОКУПОК</span><span class="bt-ing-price">${fmt(r.limit)}</span></div>`);
-  chan.push(`<div class="bt-ing"><span>СБЫТ НА АУКЕ (−${obmenData.fee_pct}%)</span>
-    <span class="bt-ing-price">${r.value_auction != null
-      ? `${fmt(r.value_auction)} ₽ <span class="unit">${r.sell_basis === "sales" ? "ПО СДЕЛКАМ" : "ПО ВЫКУПУ"}</span>`
-      : "ЦЕНА ГРЕЕТСЯ…"}</span></div>`);
+  if (r.value_market != null && r.disasm) {
+    // предмет личный: продать нельзя, поэтому показываем цену замещения и её вывод
+    chan.push(`<div class="bt-ing"><span>РЫНОЧНАЯ ЦЕНА (ЧЕРЕЗ РАЗБОР)</span>
+      <span class="bt-ing-price">${fmt(r.value_market)} ₽
+        <span class="bt-via">← ${r.disasm.count}× из «${escapeHtml(r.disasm.parent_name)}»
+        (${fmt(r.disasm.parent_unit)} ₽ на ауке)</span></span></div>`);
+  } else if (r.value_auction != null) {
+    chan.push(`<div class="bt-ing"><span>СБЫТ НА АУКЕ (−${obmenData.fee_pct}%)</span>
+      <span class="bt-ing-price">${fmt(r.value_auction)} ₽
+        <span class="unit">${r.sell_basis === "sales" ? "ПО СДЕЛКАМ" : "ПО ВЫКУПУ"}</span></span></div>`);
+  } else {
+    chan.push(`<div class="bt-ing"><span>РЫНОЧНАЯ ЦЕНА</span>
+      <span class="bt-ing-price">ЦЕНА ГРЕЕТСЯ…</span></div>`);
+  }
   chan.push(`<div class="bt-ing"><span>СБЫТ СКУПЩИКУ (МГНОВЕННО)</span>
     <span class="bt-ing-price">${r.value_vendor != null ? fmt(r.value_vendor) + " ₽" : "—"}</span></div>`);
   const rateLine = r.rate != null
-    ? `<div class="bt-ing bt-total"><span>КУРС (ЛУЧШИЙ КАНАЛ — ${r.basis === "vendor" ? "СКУПЩИК" : "АУКЦИОН"})</span>
+    ? `<div class="bt-ing bt-total"><span>КУРС (ЛУЧШИЙ КАНАЛ — ${
+        r.basis === "vendor" ? "СКУПЩИК" : r.basis === "market" ? "РАЗБОР" : "АУКЦИОН"})</span>
         <span class="bt-ing-price"><span class="pct ${r.rate >= 1 ? "up" : "down"}">${r.rate.toLocaleString("ru-RU")} ₽/МОНЕТА</span></span></div>` : "";
   gModalOpen(`
     <div class="gm-head">
@@ -3798,16 +3825,23 @@ async function openObmen() {
 
 // data-l — подпись колонки для телефона: там таблица раскладывается карточками
 // (.obm-table в styles.css), и шапки, из которой понятно значение числа, уже нет
+const OBM_BASIS_RU = { vendor: "СКУПЩИК", auction: "АУК", market: "РАЗБОР" };
+
 function obmenRow(r, extra = "") {
-  const aucBasis = r.sell_basis === "sales" ? "по сделкам аука, минус комиссия"
-                 : r.sell_basis === "buyout" ? "по мин. выкупу, минус комиссия" : "";
-  const chip = r.basis ? `<span class="obm-basis ${r.basis}">${r.basis === "vendor" ? "СКУПЩИК" : "АУК"}</span>` : "";
+  // рыночная цена выведена из родителя разбора — предмет личный, на аук не попадает
+  const mkt = r.value_market != null;
+  const priceCell = mkt ? r.value_market : r.value_auction;
+  const priceTitle = mkt && r.disasm
+    ? `цена замещения: ${r.disasm.count}× из «${r.disasm.parent_name}» по ${fmt(r.disasm.parent_unit)} ₽ на ауке`
+    : r.sell_basis === "sales" ? "по сделкам аука, минус комиссия"
+    : r.sell_basis === "buyout" ? "по мин. выкупу, минус комиссия" : "";
+  const chip = r.basis ? `<span class="obm-basis ${r.basis}">${OBM_BASIS_RU[r.basis] || r.basis}</span>` : "";
   return `<tr class="brt-row" data-id="${r.id}">
     <td class="c-itm"><div class="bt-item"><img loading="lazy" src="${asset(r.icon)}" alt="">
       <span class="nm" style="color:${rank(r.color).color}">${r.amount > 1 ? r.amount + "× " : ""}${escapeHtml(r.name)}</span>
       ${r.note ? `<span class="bt-cur">${escapeHtml(r.note)}</span>` : ""}</div></td>
     <td class="r c-coins">${fmt(r.coins)} <span class="c-unit">МОН</span></td>
-    <td class="r c-auc" data-l="АУК~" title="${aucBasis}">${r.value_auction != null ? fmt(r.value_auction) + " ₽" : "—"}</td>
+    <td class="r c-auc" data-l="РЫНОК~" title="${escapeHtml(priceTitle)}">${priceCell != null ? fmt(priceCell) + " ₽" : "—"}</td>
     <td class="r c-ven" data-l="СКУПЩИК" title="мгновенная продажа NPC, без комиссии">${r.value_vendor != null ? fmt(r.value_vendor) + " ₽" : "—"}</td>
     <td class="r c-key">${r.rate != null ? `<span class="pct ${r.rate >= 1 ? "up" : "down"}">${r.rate.toLocaleString("ru-RU")}</span>
       <span class="c-unit">₽/МОН</span> ${chip}` : "—"}</td>
@@ -3816,10 +3850,10 @@ function obmenRow(r, extra = "") {
 }
 
 const OBM_HEAD = `<tr><th style="width:38%">ПРЕДМЕТ</th><th class="r" style="width:13%">МОНЕТ</th>
-  <th class="r" style="width:16%">АУК~</th><th class="r" style="width:16%">СКУПЩИК</th>
+  <th class="r" style="width:16%">РЫНОК~</th><th class="r" style="width:16%">СКУПЩИК</th>
   <th class="r" style="width:17%">₽/МОНЕТА</th></tr>`;
 const OBM_PLAN_HEAD = `<tr><th style="width:30%">ПРЕДМЕТ</th><th class="r" style="width:10%">МОНЕТ</th>
-  <th class="r" style="width:12%">АУК~</th><th class="r" style="width:12%">СКУПЩИК</th>
+  <th class="r" style="width:12%">РЫНОК~</th><th class="r" style="width:12%">СКУПЩИК</th>
   <th class="r" style="width:12%">₽/МОН</th><th class="r" style="width:10%">ПОКУПОК</th>
   <th class="r" style="width:14%">ИТОГО</th></tr>`;
 
@@ -3850,7 +3884,7 @@ function renderObmen(d) {
   page.innerHTML = `<div class="btmod">
     <div class="section-head">
       <div class="section-title">▸ ОБМЕНКИ · МОНЕТЫ ПЕРЕКУПЩИКА</div>
-      <div class="section-note">КУРС = ЛУЧШИЙ СБЫТ: АУК (−${d.fee_pct}%) ИЛИ СКУПЩИК${
+      <div class="section-note">КУРС = ЖИВЫЕ ДЕНЬГИ: АУК (−${d.fee_pct}%) ИЛИ СКУПЩИК · РЫНОК~ СПРАВОЧНО${
         d.updated_at ? ` · АССОРТИМЕНТ ОТ ${new Date(d.updated_at).toLocaleDateString("ru-RU")}` : ""}</div>
     </div>
     <div class="bt-filters">
@@ -3865,8 +3899,10 @@ function renderObmen(d) {
       <thead>${OBM_HEAD}</thead>
       <tbody>${rows}</tbody>
     </table></div>
-    <div class="bt-note" style="margin-top:8px">АУК~ — ОЖИДАЕМАЯ ВЫРУЧКА НА АУКЦИОНЕ ПОСЛЕ КОМИССИИ (ПО РЕАЛЬНЫМ СДЕЛКАМ);
-      СКУПЩИК — ГАРАНТИРОВАННАЯ МГНОВЕННАЯ ПРОДАЖА NPC. КЛИК ПО СТРОКЕ — ДЕТАЛИ ПОЗИЦИИ.</div>
+    <div class="bt-note" style="margin-top:8px">ЭТИ ПРЕДМЕТЫ ЛИЧНЫЕ — НА АУКЦИОН ИХ НЕ ВЫСТАВИТЬ.
+      РЫНОК~ — СКОЛЬКО СТОИЛО БЫ ДОБЫТЬ ТО ЖЕ САМОЕ БЕЗ ПЕРЕКУПЩИКА: КУПИТЬ РОДИТЕЛЯ НА АУКЕ
+      И РАЗОБРАТЬ. ЭТО ЭКОНОМИЯ, А НЕ ВЫРУЧКА, ПОЭТОМУ КУРС ₽/МОНЕТА СЧИТАЕТСЯ ПО ЖИВЫМ
+      ДЕНЬГАМ (СКУПЩИК). КЛИК ПО СТРОКЕ — ДЕТАЛИ ПОЗИЦИИ.</div>
   </div>`;
   const inp = $("obmCoins");
   wireBudget && wireBudget(inp, (v) => { obmenCoins = v; localStorage.setItem("sz_coins", String(v || 0)); });
@@ -3892,7 +3928,9 @@ async function loadObmenPlan() {
     `<td class="r c-buys" data-l="ПОКУПОК">${r.buys}×</td>
      <td class="r c-total" data-l="ИТОГО">${fmt(r.total_value)} ₽</td>`)).join("");
   box.innerHTML = d.basket && d.basket.length ? `<div class="obm-plan">
-    <div class="reqs-lbl">КОРЗИНА НА ${fmt(d.coins)} МОНЕТ → ~${fmt(d.value)} ₽${d.left ? ` · ОСТАНЕТСЯ ${fmt(d.left)}` : ""}</div>
+    <div class="reqs-lbl">КОРЗИНА НА ${fmt(d.coins)} МОНЕТ → ~${fmt(d.value)} ₽ ЖИВЫМИ${
+      d.market ? ` · ПО РЫНКУ ~${fmt(d.market)} ₽` : ""}${
+      d.left ? ` · ОСТАНЕТСЯ ${fmt(d.left)}` : ""}</div>
     <div class="bt-wrap"><table class="bt-table bt-cards">
       <thead>${OBM_PLAN_HEAD}</thead>
       <tbody>${rows}</tbody>
@@ -4508,10 +4546,18 @@ function renderBuilds() {
   const cont = buildContainer();
   if (!cont) { page.innerHTML = `<div class="empty">НЕТ ДАННЫХ ХРАНИЛИЩ</div>`; return; }
 
+  // Развилка интента. По Метрике «калькулятор артефактов сталкрафт» и соседние
+  // фразы дают отказы 44–60% при глубине 1.0: человек ищет ЦЕНУ артефакта, а страница
+  // сразу требует выбрать контейнер и набивать слоты. Одна строка выше сгиба
+  // уводит их туда, где ответ, вместо того чтобы терять визит целиком.
   let h = `<div class="section-head">
       <div class="section-title">▸ КАЛЬКУЛЯТОР СБОРОК АРТЕФАКТОВ</div>
       <div class="section-note">ЦЕНЫ: 5 ДЕШЁВЫХ ЛОТОВ → СР. 7Д ПОСЛЕ НАКОПЛЕНИЯ БИРЖИ</div>
     </div>
+    <div class="bs-intent">ИСКАЛИ НЕ СБОРКУ? →
+      <a href="/auction">ЦЕНЫ АРТЕФАКТОВ НА АУКЦИОНЕ</a> ·
+      <a href="/compare">СРАВНИТЬ ДВА АРТЕФАКТА</a> ·
+      <a href="/guides/zatochka-artefaktov-cena">СКОЛЬКО СТОИТ ЗАТОЧКА</a></div>
     <div class="btabs">
       <button class="btab ${buildTab === "manual" ? "on" : ""}" data-tab="manual">СОБРАТЬ ВРУЧНУЮ</button>
       <button class="btab ${buildTab === "auto" ? "on" : ""}" data-tab="auto">АВТОПОДБОР ПОД БЮДЖЕТ</button>

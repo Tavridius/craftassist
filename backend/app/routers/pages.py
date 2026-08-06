@@ -299,8 +299,17 @@ def _builds_seo() -> tuple[str, dict]:
              "Крафт — изготовление предмета по рецепту верстака; для него на сайте есть "
              "отдельный калькулятор крафта. Сборка — комбинация уже готовых артефактов в "
              "контейнере ради суммарных характеристик персонажа."),
+            # запрос «калькулятор артефактов» неоднозначен: половина ищет цену, а не
+            # сборку, и уходит с /builds не найдя её (отказы 44–60%, глубина 1.0)
+            ("Сколько стоит артефакт в Сталкрафт?",
+             "Цену конкретного артефакта смотрят не в калькуляторе сборок, а в разделе "
+             "аукциона: там история сделок, минимальный выкуп и цена по каждому уровню "
+             "заточки отдельно. Калькулятор сборок берёт эти же цены, но считает "
+             "стоимость набора целиком, а не одного предмета."),
         ],
-        links=[("/barter", "калькулятор бартера"),
+        links=[("/auction", "цены артефактов на аукционе"),
+               ("/compare", "сравнение артефактов"),
+               ("/barter", "калькулятор бартера"),
                ("/obmen", "обменные монеты"),
                ("/craft", "калькулятор крафта")])
 
@@ -780,6 +789,11 @@ async def search_page(request: Request):
     return render_index(request, "/search", title=f"Поиск по базе — {SITE}", noindex=True)
 
 
+# Карта закрыта от индексации до готовности раздела (06.08.2026). Поиск её уже
+# нашёл — «интерактивная карта сталкрафт» приводит людей на полупустую страницу
+# (38 входов, 46 с — вошли и вышли). Пускать туда трафик, пока меток нет, значит
+# копить плохие поведенческие по всему домену. Снять noindex здесь, в /map/{id},
+# в sitemap и robots.txt — одним движением, когда карта будет наполнена.
 @router.get("/map", response_class=HTMLResponse)
 async def map_page(request: Request):
     return render_index(
@@ -787,7 +801,8 @@ async def map_page(request: Request):
         title="Интерактивная карта мира STALZONE (Сталкрафт) — спутниковый вид",
         desc="Интерактивная карта мира STALZONE (ранее Stalcraft — Сталкрафт): глобальный "
              "спутниковый вид Зоны и детальные карты территорий — Южная Зона, Северная "
-             "Зона, Дикий Север, Любеч-3. Зум, перетаскивание, как в КПК игры.")
+             "Зона, Дикий Север, Любеч-3. Зум, перетаскивание, как в КПК игры.",
+        noindex=True)
 
 
 @router.get("/map/{territory_id}", response_class=HTMLResponse)
@@ -803,7 +818,8 @@ async def map_territory_page(request: Request, territory_id: str):
         request, f"/map/{territory_id}",
         title=f"{name} — детальная карта STALZONE (Сталкрафт)",
         desc=f"Детальная карта территории «{name}» STALZONE (ранее Stalcraft — Сталкрафт) "
-             f"из КПК игры: зум до отдельных зданий, перетаскивание.")
+             f"из КПК игры: зум до отдельных зданий, перетаскивание.",
+        noindex=True)   # вместе с /map — см. комментарий у map_page
 
 
 @router.get("/guides", response_class=HTMLResponse)
@@ -971,9 +987,10 @@ def _sitemap_item_ids() -> tuple:
 async def sitemap(request: Request):
     """Карта сайта: только осмысленные посадочные (без тысяч карточек — под спрос)."""
     base = _base_url(request)
+    # /map здесь нет намеренно: раздел не готов и закрыт noindex (см. map_page)
     paths = ["/", "/craft", "/vygodno-kraftit", "/auction", "/market", "/builds",
              "/barter", "/obmen", "/operations", "/items", "/compare", "/patches",
-             "/guides", "/quests", "/map", "/promo", "/privacy", "/terms"]
+             "/guides", "/quests", "/promo", "/privacy", "/terms"]
     urls = "".join(
         f"<url><loc>{_html.escape(base + p, quote=True)}</loc>"
         f"<changefreq>{'daily' if p in ('/', '/craft', '/vygodno-kraftit', '/auction', '/market', '/barter', '/operations', '/patches', '/promo') else 'weekly'}</changefreq>"
