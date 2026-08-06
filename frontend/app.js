@@ -3265,10 +3265,23 @@ function adMount(host, blockId, drop) {
   const slotId = `adSlot${++adPage}`;
   const num = adPage;
   host.innerHTML = `<div class="ad-label">РЕКЛАМА</div><div id="${slotId}"></div>`;
-  setTimeout(() => {
+  // Проверку «рекламы не приехало» считаем от момента, когда место доехало до
+  // экрана, а не от монтирования. РСЯ умеет откладывать отрисовку до показа, и
+  // тогда высота остаётся нулевой сколько угодно долго — а на телефоне нижняя
+  // врезка лежит экранов на десять ниже, так что слепой таймер сносил бы её
+  // всегда, ещё до того как человек до неё долистает.
+  const check = () => setTimeout(() => {
     const el = document.getElementById(slotId);
     if (el && !el.offsetHeight) drop();      // рекламы не приехало
   }, 4000);
+  if (typeof IntersectionObserver === "function") {
+    const io = new IntersectionObserver((es) => {
+      if (!es.some((e) => e.isIntersecting)) return;
+      io.disconnect();
+      check();
+    }, { rootMargin: "300px" });
+    io.observe(host);
+  } else check();
 
   adLoadCtx().then(() => {
     window.yaContextCb.push(() => {
