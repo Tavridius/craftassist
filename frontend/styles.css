@@ -2878,3 +2878,230 @@ a.ops-gear:hover .nm { text-decoration: underline; }
   .cmp-tray { max-width: calc(100vw / var(--zoom) - 24px); left: 0; right: 0; }
   .cmp-tray-lbl { display: none; }
 }
+
+/* =====================================================================
+   ДЕВ · ЧЕРНОВИК НОВОЙ ГЛАВНОЙ (/home2) — два макета на одной разметке
+   ---------------------------------------------------------------------
+   Боевая «/» (.dash*) не трогается: здесь свой префикс .h2-*, общими
+   остаются только внутренности модулей (dash-row, db-*, dash-chart…) —
+   их переиспользуем как есть, чтобы сравнивать именно КОМПОНОВКУ.
+   Макет переключается классом на корне: .h2-hud | .h2-board.
+   ===================================================================== */
+.h2-adm {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
+  padding: 7px 12px; margin-bottom: 12px;
+  border: 1px dashed var(--amber-border); background: rgba(255, 184, 77, 0.05);
+}
+.h2-adm-l { font-size: 10px; letter-spacing: 0.1em; color: var(--amber); }
+.h2-adm-b { display: flex; gap: 0; margin-left: auto; }
+.h2-adm-btn {
+  font-family: inherit; font-size: 10px; letter-spacing: 0.12em; cursor: pointer;
+  padding: 5px 14px; color: var(--dim); background: none;
+  border: 1px solid var(--border); border-right-width: 0;
+}
+.h2-adm-btn:last-child { border-right-width: 1px; }
+.h2-adm-btn.on { color: var(--bg); background: var(--green); border-color: var(--green); font-weight: 700; }
+.h2-adm-btn:hover:not(.on) { color: var(--green); }
+.h2-adm-a { font-size: 10px; letter-spacing: 0.08em; color: var(--dim); text-decoration: none; }
+.h2-adm-a:hover { color: var(--green); }
+
+/* ---------- строка приборов (общая для обоих макетов) ---------- */
+.h2-bar {
+  display: grid; grid-template-columns: repeat(5, 1fr) auto; gap: 1px;
+  background: var(--border-deep); border: 1px solid var(--border);
+  margin-bottom: 16px;
+}
+.h2-gauge {
+  background: var(--panel-deep); padding: 9px 14px; min-width: 0;
+  border-top: 2px solid transparent;
+}
+.h2-gauge[data-nav] { cursor: pointer; }
+.h2-gauge[data-nav]:hover { background: var(--row-hover); border-top-color: var(--green-border); }
+.h2-g-l { font-size: 8px; letter-spacing: 0.18em; color: var(--dimmer); }
+.h2-g-v {
+  font-size: 21px; font-weight: 800; color: var(--bright); line-height: 1.25;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.h2-g-u { font-size: 11px; font-weight: 600; color: var(--dim); letter-spacing: 0.04em; }
+.h2-g-s {
+  font-size: 9px; letter-spacing: 0.05em; color: var(--dim);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.h2-bar.alarm .h2-gauge:first-child .h2-g-v,
+.h2-bar.alarm .h2-gauge:first-child .h2-g-s { color: var(--red); }
+.h2-bar-live {
+  display: flex; align-items: center; gap: 7px; padding: 0 16px;
+  background: var(--panel-deep); font-size: 9px; letter-spacing: 0.14em; color: var(--dim);
+  white-space: nowrap;
+}
+.h2-dot {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--green);
+  box-shadow: var(--glow); animation: h2pulse 2.4s ease-in-out infinite;
+}
+@keyframes h2pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+
+/* ---------- модуль: общий каркас ---------- */
+.h2-mod { position: relative; display: flex; min-width: 0; }
+.h2-frame {
+  position: relative; flex: 1; min-width: 0;
+  display: flex; flex-direction: column; padding: 11px 14px 12px;
+}
+.h2-frame > * { position: relative; z-index: 1; }
+.h2-mh {
+  display: flex; align-items: baseline; gap: 9px; padding-bottom: 6px; margin-bottom: 7px;
+  border-bottom: 1px solid var(--border-deep);
+}
+.h2-mark {
+  font-size: 9px; font-weight: 700; letter-spacing: 0.1em; color: var(--amber);
+  border: 1px solid var(--amber-border); padding: 1px 5px; flex: none;
+}
+.h2-mt { font-size: 11px; font-weight: 700; letter-spacing: 0.15em; color: var(--green); }
+.h2-mn {
+  font-size: 8px; letter-spacing: 0.1em; color: var(--dimmer); margin-left: auto;
+  text-align: right; min-width: 0;
+}
+.h2-mb { flex: 1; min-width: 0; }
+.h2-more {
+  margin-top: 10px; padding-top: 8px; align-self: flex-end;
+  font-size: 10px; letter-spacing: 0.12em; color: var(--green); text-decoration: none;
+}
+.h2-more:hover { text-shadow: var(--glow); }
+.h2-trace { display: none; }
+.h2 .dash-charts { grid-template-columns: 1fr 1fr; }
+.h2 .empty-sm { padding: 10px 2px; }
+
+/* ---------- лента новостей сайта (общая) ---------- */
+.h2-news {
+  padding: 8px 0 9px; border-bottom: 1px solid var(--border-deep);
+  border-left: 2px solid transparent; padding-left: 9px; margin-left: -9px;
+}
+.h2-news:last-child { border-bottom: none; }
+.h2-news[data-nav] { cursor: pointer; }
+.h2-news[data-nav]:hover { border-left-color: var(--green); background: var(--row-hover); }
+.h2-news.pin { border-left-color: var(--amber-border); }
+.h2-news-h { display: flex; align-items: center; gap: 7px; margin-bottom: 3px; }
+.h2-news-d { font-size: 9px; letter-spacing: 0.12em; color: var(--dim); font-weight: 700; }
+.h2-news-t {
+  font-size: 8px; letter-spacing: 0.12em; color: var(--dimmer);
+  border: 1px solid var(--border-dim); padding: 1px 5px;
+}
+.h2-news-pin { font-size: 9px; color: var(--amber); margin-left: auto; }
+.h2-news.k-guide .h2-news-t { color: var(--green); border-color: var(--green-border); }
+.h2-news.k-promo .h2-news-t { color: var(--amber); border-color: var(--amber-border); }
+.h2-news-ti { font-size: 12px; font-weight: 700; color: var(--bright); line-height: 1.4; }
+.h2-news[data-nav]:hover .h2-news-ti { color: var(--green); }
+.h2-news-b {
+  font-size: 11px; color: var(--dim); line-height: 1.5; margin-top: 3px;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+
+/* =====================================================================
+   МАКЕТ 1 · ПУЛЬТ — приборы слева, главный экран в центре, новости справа.
+   Рамок-коробок нет: модуль держат угловая скоба и волосяная линия сверху.
+   ===================================================================== */
+.h2-hud-grid {
+  display: grid; grid-template-columns: minmax(230px, 260px) minmax(0, 1fr) minmax(260px, 300px);
+  gap: 16px; align-items: start;
+}
+.h2-rail, .h2-view, .h2-news-col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.h2-hud .h2-split { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; min-width: 0; }
+.h2-hud .h2-split > .h2-mod { min-width: 0; }
+.h2-hud .h2-frame {
+  background: var(--panel-main);
+  border-top: 1px solid var(--border-dim);
+  box-shadow: inset 0 -1px 0 rgba(19, 28, 19, 0.9);
+}
+/* угловые скобы вместо рамки */
+.h2-hud .h2-frame::before, .h2-hud .h2-frame::after {
+  content: ""; position: absolute; width: 13px; height: 13px; z-index: 0;
+  border-style: solid; border-color: var(--green-border); border-width: 0;
+}
+.h2-hud .h2-frame::before { top: -1px; left: 0; border-top-width: 2px; border-left-width: 2px; }
+.h2-hud .h2-frame::after { bottom: 0; right: 0; border-bottom-width: 2px; border-right-width: 2px; }
+.h2-hud .h2-mod:hover .h2-frame::before, .h2-hud .h2-mod:hover .h2-frame::after {
+  border-color: var(--green);
+}
+/* приборная колонка — плотнее и мельче: это индикаторы, а не разделы */
+.h2-rail .h2-mt { font-size: 10px; letter-spacing: 0.12em; }
+.h2-rail .h2-frame { padding: 10px 12px; }
+/* лента длиннее остальных модулей — крутится внутри себя, чтобы не растягивать колонку */
+.h2-news-col .h2-mod.news .h2-mb { max-height: 560px; overflow-y: auto; scrollbar-width: thin; }
+.h2-hud .h2-view .h2-mod.wide .h2-frame { padding: 13px 16px 14px; }
+
+/* =====================================================================
+   МАКЕТ 2 · ПЛАТА — центральная шина новостей, модули-компоненты по краям,
+   соединённые дорожками. Фон — сетка-миллиметровка, углы модулей срезаны.
+   ===================================================================== */
+.h2-board-grid {
+  --gap: 34px;
+  display: grid; grid-template-columns: 1fr minmax(280px, 330px) 1fr;
+  gap: var(--gap); align-items: start; padding: 18px 6px;
+  background-image:
+    linear-gradient(rgba(34, 49, 34, 0.6) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(34, 49, 34, 0.6) 1px, transparent 1px);
+  background-size: 26px 26px;
+}
+.h2-wing { display: flex; flex-direction: column; gap: 22px; min-width: 0; }
+/* align-self: stretch — колонка тянется на высоту самого длинного крыла, иначе
+   рельсы обрываются на середине платы и нижние дорожки ведут в никуда */
+.h2-bus {
+  position: relative; align-self: stretch;
+  display: flex; flex-direction: column; gap: 22px; min-width: 0;
+}
+/* шина — два рельса ровно по центрам зазоров: к ним и приходят дорожки крыльев */
+.h2-bus-line {
+  position: absolute; top: -18px; bottom: -18px;
+  left: calc(var(--gap) / -2); right: calc(var(--gap) / -2);
+  border-left: 2px solid var(--green-border);
+  border-right: 2px solid var(--green-border);
+}
+.h2-bus > .h2-mod { z-index: 1; }
+/* восьмиугольная рамка: внешний слой — цвет рамки, ::before — заливка внутри */
+.h2-board .h2-frame {
+  --cut: polygon(9px 0, calc(100% - 9px) 0, 100% 9px, 100% calc(100% - 9px),
+                 calc(100% - 9px) 100%, 9px 100%, 0 calc(100% - 9px), 0 9px);
+  background: var(--border); clip-path: var(--cut); padding: 12px 15px 13px;
+}
+.h2-board .h2-frame::before {
+  content: ""; position: absolute; inset: 1px; z-index: 0;
+  background: var(--panel-main); clip-path: var(--cut);
+}
+.h2-board .h2-mod:hover .h2-frame { background: var(--green-border); }
+/* дорожка от модуля к шине: горизонтальная линия + пятачок пайки */
+.h2-board .h2-wing .h2-trace {
+  display: block; position: absolute; top: 26px; height: 1px;
+  width: calc(var(--gap) / 2); background: var(--green-border);
+}
+.h2-board .h2-wing .h2-trace::after {
+  content: ""; position: absolute; top: -3px; width: 6px; height: 6px;
+  background: var(--panel-deep); border: 1px solid var(--green); border-radius: 50%;
+}
+.h2-board .h2-wing.left .h2-trace { right: calc(var(--gap) / -2); }
+.h2-board .h2-wing.left .h2-trace::after { right: -4px; }
+.h2-board .h2-wing.right .h2-trace { left: calc(var(--gap) / -2); }
+.h2-board .h2-wing.right .h2-trace::after { left: -4px; }
+.h2-board .h2-mod:hover .h2-trace { background: var(--green); }
+.h2-board .h2-mod.news .h2-mb { max-height: 620px; overflow-y: auto; scrollbar-width: thin; }
+/* правое крыло зеркалит левое: маркировка компонента уходит к внешнему краю */
+.h2-board .h2-wing.right .h2-mh { flex-direction: row-reverse; }
+.h2-board .h2-wing.right .h2-mn { margin-left: 0; margin-right: auto; text-align: left; }
+
+/* ---------- адаптив обоих макетов ---------- */
+@media (max-width: 1200px) {
+  .h2-hud-grid { grid-template-columns: minmax(0, 1fr) minmax(250px, 290px); }
+  .h2-rail { display: contents; }
+  .h2-rail > .h2-mod { grid-column: 1; }
+  .h2-board-grid { --gap: 24px; }
+}
+@media (max-width: 900px) {
+  .h2-bar { grid-template-columns: 1fr 1fr; }
+  .h2-bar-live { grid-column: 1 / -1; padding: 8px 14px; }
+  .h2-hud-grid, .h2-board-grid { grid-template-columns: 1fr; gap: 14px; }
+  .h2-rail { display: flex; }
+  .h2-mod.news .h2-mb { max-height: none; }
+  .h2-hud .h2-split { grid-template-columns: 1fr; }
+  .h2-board-grid { background-image: none; padding: 0; }
+  .h2-bus-line, .h2-board .h2-trace { display: none; }
+  .h2 .dash-charts { grid-template-columns: 1fr; }
+  .h2-adm-b { margin-left: 0; }
+}

@@ -913,6 +913,14 @@ async def dev_pages(request: Request, _sub: str = ""):
     return render_index(request, "/dev", title=f"ДЕВ-инструменты — {SITE}", noindex=True)
 
 
+@router.get("/home2", response_class=HTMLResponse)
+async def home2_page(request: Request):
+    """Черновик новой главной (только админ, гейт во фронте). noindex: страница
+    временная и дублирует контент «/» — в индексе ей делать нечего."""
+    return render_index(request, "/home2",
+                        title=f"ДЕВ · новая главная — {SITE}", noindex=True)
+
+
 @router.get("/quests", response_class=HTMLResponse)
 async def quests_page(request: Request):
     return render_index(

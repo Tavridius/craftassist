@@ -7,6 +7,7 @@ import asyncio
 import base64
 import binascii
 import json
+import logging
 import re
 import secrets
 import time
@@ -19,7 +20,7 @@ from fastapi.responses import JSONResponse
 
 from app import config
 from app.db import (chat, craft_tuning, guides, mapobjects, market, news,
-                    operations as ops, promos, quests, users)
+                    operations as ops, promos, quests, sitenews, users)
 from app.db.index import db
 from app.routers.auth import SESSION_COOKIE, current_user, is_admin
 from app.services import (auction, barter, builds, compare, craft, exchange,
@@ -33,6 +34,8 @@ from app.services.market_scan import scan
 from app.services.sales_stats import sstats
 from app.services.price_store import store
 from app.services.rankings import rankings
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api")
 
@@ -581,6 +584,114 @@ async def admin_promo_delete(request: Request, pid: int):
     _require_admin(request)
     if not promos.delete(pid):
         raise HTTPException(404, "promo not found")
+    return {"ok": True}
+
+
+# ---------- новости САЙТА: гибридная лента (ручные посты + автособытия) ----------
+# Ручное — db/sitenews. Автособытия НЕ дублируются в базу: берём их из живых
+# источников (гайды, промокоды, патчи) прямо на чтении. Так удаление гайда или
+# протухание промокода убирает запись из ленты само, без синхронизации.
+
+_NEWS_TAGS = {"guide": "ГАЙД", "promo": "ПРОМОКОД", "patch": "ПАТЧ ИГРЫ"}
+
+
+def _news_auto() -> list[dict]:
+    """Автозаписи ленты из уже готовых разделов. Ошибка любого источника не
+    должна ронять колонку на главной — поэтому каждый в своём try."""
+    out: list[dict] = []
+    try:
+        for g in guides.list_guides()[:6]:
+            out.append({"kind": "guide", "id": f"guide:{g['slug']}",
+                        "title": g["title"], "body": g.get("description", ""),
+                        "url": f"/guides/{g['slug']}", "tag": _NEWS_TAGS["guide"],
+                        "created_at": g["created_at"], "pinned": False})
+    except Exception:
+        logger.exception("news feed: guides")
+    try:
+        for p in promos.list_promos()[:4]:
+            body = f"Промокод {p['code']}" if p.get("code") else ""
+            if p.get("expires_at"):
+                body += f" · действует до {p['expires_at'][:10]}"
+            out.append({"kind": "promo", "id": f"promo:{p['id']}",
+                        "title": p["title"], "body": body.strip(),
+                        "url": "/promo", "tag": _NEWS_TAGS["promo"],
+                        "created_at": p["created_at"], "pinned": False})
+    except Exception:
+        logger.exception("news feed: promos")
+    try:
+        items, _ = news.list_patches(0, 4)
+        for p in items:
+            out.append({"kind": "patch", "id": f"patch:{p['id']}",
+                        "title": p["title"], "body": (p.get("anons") or "")[:300],
+                        "url": f"/patches/{p['id']}", "tag": _NEWS_TAGS["patch"],
+                        # у патчей дата с временем — в ленте нужна только дата
+                        "created_at": (p.get("created_at") or "")[:10], "pinned": False})
+    except Exception:
+        logger.exception("news feed: patches")
+    return out
+
+
+@router.get("/news/feed")
+async def news_feed(limit: int = Query(14, ge=1, le=50)):
+    """Лента новостей сайта для колонки на главной: закреплённое сверху,
+    дальше всё вперемешку по дате (свежее первым)."""
+    manual = sitenews.list_posts()
+    for m in manual:
+        m["id"] = f"post:{m['id']}"
+    feed = manual + _news_auto()
+    feed.sort(key=lambda x: (x.get("pinned", False), x.get("created_at") or ""),
+              reverse=True)
+    return {"items": feed[:limit], "total": len(feed)}
+
+
+def _clean_news(payload: dict) -> dict:
+    title = str(payload.get("title") or "").strip()
+    if not title:
+        raise HTTPException(422, "нужен заголовок")
+    url = str(payload.get("url") or "").strip()
+    if url and not url.startswith("/"):
+        raise HTTPException(422, "ссылка: внутренний путь, начинается с /")
+    created = str(payload.get("created_at") or "").strip()[:10]
+    if created and not re.match(r"^\d{4}-\d{2}-\d{2}$", created):
+        raise HTTPException(422, "дата: YYYY-MM-DD")
+    return {
+        "title": title[:sitenews.TITLE_MAX],
+        "body": str(payload.get("body") or "").strip()[:sitenews.BODY_MAX],
+        "url": url[:200], "tag": str(payload.get("tag") or "").strip()[:32],
+        "pinned": bool(payload.get("pinned")),
+        "published": bool(payload.get("published", True)),
+        "created_at": created,
+    }
+
+
+@router.get("/admin/news")
+async def admin_news_list(request: Request):
+    """Все посты, включая черновики (только админ)."""
+    _require_admin(request)
+    return {"items": sitenews.list_posts(include_drafts=True)}
+
+
+@router.post("/admin/news")
+async def admin_news_save(request: Request, payload: dict = Body(...)):
+    """Создать (без id) или сохранить (с id) новость сайта — только админ."""
+    _require_admin(request)
+    pid = payload.get("id")
+    try:
+        pid = int(pid) if pid is not None else None
+    except (TypeError, ValueError):
+        raise HTTPException(422, "id: число")
+    saved = sitenews.save(pid, _clean_news(payload))
+    if not saved:
+        raise HTTPException(404, "post not found")
+    return saved
+
+
+@router.delete("/admin/news/{pid}")
+async def admin_news_delete(request: Request, pid: int):
+    """Удалить новость сайта (только админ)."""
+    _require_admin(request)
+    if not sitenews.delete(pid):
+        raise HTTPException(404, "post not found")
     return {"ok": True}
 
 

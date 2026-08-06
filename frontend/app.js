@@ -209,8 +209,8 @@ async function loadAuth() {
   // DEV-вкладка (редактор карты) — только админам (ADMIN_USER_IDS)
   document.querySelectorAll(".nav-adm").forEach((el) =>
     el.classList.toggle("hidden", !(ME && ME.is_admin)));
-  // прямой заход на /dev* мог отрисовать «проверка доступа», пока /me не ответил
-  if (location.pathname.startsWith("/dev")) route();
+  // прямой заход на /dev* и /home2 мог отрисовать «проверка доступа», пока /me не ответил
+  if (location.pathname.startsWith("/dev") || location.pathname === "/home2") route();
   // стартовый рендер мог уйти без фильтра, пока /me не ответил — перерисовать
   else if (ME && ME.authenticated && availMode()) {
     lastQuery = null; home.dataset.ts = "";
@@ -1481,6 +1481,279 @@ function renderDashboard(top, art, watch, em, sales, fuelTop, patches, daily, pr
       ${card("ПОСЛЕДНИЙ ПАТЧ", "ОБНОВЛЕНИЯ ИГРЫ", patchBody, "/patches", "ВСЕ ПАТЧИ")}
     </div>
   </div>`;
+  home.querySelectorAll("[data-nav]").forEach((el) =>
+    el.addEventListener("click", () => { navigate(el.dataset.nav); }));
+  bindPromoCopy(home);
+  home.querySelectorAll(".stab").forEach((b) => b.addEventListener("click", () => {
+    home.querySelectorAll(".stab").forEach((x) => x.classList.toggle("on", x === b));
+    home.querySelectorAll(".sales-view").forEach((v) =>
+      v.classList.toggle("hidden", v.dataset.view !== b.dataset.view));
+  }));
+  startEmTick();
+}
+
+// ---------- ДЕВ · черновик новой главной (/home2) ----------
+// Песочница под редизайн: боевая «/» не трогается вообще, доступ только у
+// админа (ссылка в меню — .nav-adm, гейт ниже). Два макета переключаются
+// кнопкой на самой странице, выбор липнет в localStorage; данные при смене
+// макета не перезапрашиваются — переключение мгновенное.
+const HOME2_KEY = "sz_home2";
+const HOME2_LAYOUTS = { hud: "ПУЛЬТ", board: "ПЛАТА" };
+const home2Layout = () => {
+  // ?lay=board — чтобы кинуть ссылку сразу на нужный макет; выбор запоминается
+  const q = new URLSearchParams(location.search).get("lay");
+  if (HOME2_LAYOUTS[q]) { localStorage.setItem(HOME2_KEY, q); return q; }
+  const v = localStorage.getItem(HOME2_KEY);
+  return HOME2_LAYOUTS[v] ? v : "hud";
+};
+let home2Data = null;
+
+async function openHome2() {
+  if (mapCleanup) { mapCleanup(); mapCleanup = null; }
+  detail.classList.add("hidden"); page.classList.add("hidden"); results.innerHTML = "";
+  home.classList.remove("hidden");
+  window.scrollTo(0, 0);
+  if (!ME) { home.innerHTML = `<div class="spinner">// ПРОВЕРКА ДОСТУПА</div>`; return; }
+  if (!ME.is_admin) {
+    home.dataset.view = "";
+    home.innerHTML = `<div class="stub"><div class="stub-code">[ 403 ]</div>
+      <div class="stub-title">▸ ЧЕРНОВИК НОВОЙ ГЛАВНОЙ — ТОЛЬКО ДЛЯ АДМИНОВ</div>
+      <a class="stub-back" href="/">◂ НА ТЕКУЩУЮ ГЛАВНУЮ</a></div>`;
+    return;
+  }
+  if (home.dataset.view === "home2" && home2Data
+      && home.dataset.ts && Date.now() - +home.dataset.ts < 60000) {
+    renderHome2(); return;
+  }
+  home.innerHTML = `<div class="spinner">// СБОРКА НОВОЙ ГЛАВНОЙ</div>`;
+  const j = (u) => fetch(api(u)).then((r) => r.json()).catch(() => null);
+  const [top, art, watch, em, sales, fuelTop, patches, daily, promos, ops, feed] =
+    await Promise.all([
+      j(`/top${availParam("?")}`), j("/artmarket/top?window=24h"), j("/watch"),
+      j("/emission"), j("/sales/top?n=12"), j("/fuel/top?n=20"),
+      j("/patches?limit=5"), j("/build/daily"), j("/promos"),
+      j("/operations/overview"), j("/news/feed?limit=14"),
+    ]);
+  if (location.pathname !== "/home2") return;   // успели уйти со страницы
+  home2Data = { top, art, watch, em, sales, fuelTop, patches, daily, promos, ops, feed };
+  home.dataset.ts = Date.now();
+  home.dataset.view = "home2";
+  renderHome2();
+}
+
+// ---- общие куски обоих макетов ----
+
+// модуль: разметка одна на оба макета, вид задаёт CSS — у ПУЛЬТА угловые скобы,
+// у ПЛАТЫ восьмиугольная рамка со срезами. h2-frame нужен отдельным слоем: у
+// ПЛАТЫ он обрезан clip-path, а дорожка к шине (h2-trace) торчит наружу и
+// обрезкой была бы срезана — поэтому она снаружи рамки.
+const h2Mod = (mark, title, note, body, link, linkText, cls = "") =>
+  `<section class="h2-mod${cls ? " " + cls : ""}">
+    <div class="h2-frame">
+      <header class="h2-mh">
+        ${mark ? `<span class="h2-mark">${mark}</span>` : ""}
+        <span class="h2-mt">${title}</span>
+        ${note ? `<span class="h2-mn">${note}</span>` : ""}
+      </header>
+      <div class="h2-mb">${body}</div>
+      ${link ? `<a class="h2-more" href="${link}">${linkText || "ОТКРЫТЬ"} ▸</a>` : ""}
+    </div>
+    <i class="h2-trace" aria-hidden="true"></i>
+  </section>`;
+
+// прибор: одно крупное число + подпись; клик уводит в раздел
+const h2Gauge = (label, value, unit, sub, nav) =>
+  `<div class="h2-gauge"${nav ? ` data-nav="${nav}"` : ""}>
+    <div class="h2-g-l">${label}</div>
+    <div class="h2-g-v">${value}${unit ? `<span class="h2-g-u">${unit}</span>` : ""}</div>
+    ${sub ? `<div class="h2-g-s">${sub}</div>` : ""}
+  </div>`;
+
+// «время с последнего выброса» живым счётчиком — span.em-ago оживляет startEmTick()
+function h2EmValue(em) {
+  const hist = (em && (em.history || []).length) ? em.history
+    : [em && em.current_start, em && em.previous_start].filter(Boolean);
+  if (em && em.current_start)
+    return { v: `<span class="em-ago" data-ts="${em.current_start}">…</span>`,
+             sub: "⚠ ВЫБРОС ИДЁТ СЕЙЧАС", alarm: true };
+  if (!hist.length) return { v: "—", sub: "ЖДЁМ ПЕРВЫЙ ЗАМЕР", alarm: false };
+  return { v: `<span class="em-ago" data-ts="${hist[0]}">…</span>`,
+           sub: `ПОСЛЕДНИЙ ${fmtMsk(hist[0])}`, alarm: false };
+}
+
+function h2BestFuel(fu) {
+  const src = ((fu && fu.sources) || []).filter((s) => s.per_1k != null);
+  return src.sort((a, b) => a.per_1k - b.per_1k)[0] || null;
+}
+
+// строка приборов: одинаковая в обоих макетах, наверху страницы
+function h2Bar(d) {
+  const em = h2EmValue(d.em);
+  const fuel = h2BestFuel(d.fuelTop);
+  const lead = ((d.art && d.art.up) || [])[0];
+  const hp = d.daily && d.daily.hp ? d.daily.hp.effective_hp : null;
+  const promoN = ((d.promos && d.promos.items) || []).length;
+  const cells = [
+    h2Gauge("ВЫБРОС", em.v, "", em.sub, null),
+    h2Gauge("ТОПЛИВО ОТ", fuel ? fmt(fuel.per_1k) : "—", " ₽/1К",
+            fuel ? escapeHtml(fuel.name) : "СЧИТАЕТСЯ…", "/profile"),
+    h2Gauge("СБОРКА ДНЯ", hp != null ? fmt(hp) : "—", " ХП",
+            d.daily && d.daily.budget ? `БЮДЖЕТ ${fmtBudgetShort(d.daily.budget)} ₽` : "—",
+            "/builds"),
+    h2Gauge("ЛИДЕР РОСТА", lead ? `+${lead.pct}` : "—", lead ? "%" : "",
+            lead ? escapeHtml(lead.name) : "БИРЖА КОПИТ ЗАМЕРЫ", "/auction"),
+    h2Gauge("ПРОМОКОДОВ", promoN || "—", "", promoN ? "АКТИВНЫ СЕЙЧАС" : "СЕЙЧАС НЕТ", "/promo"),
+  ].join("");
+  return `<div class="h2-bar${em.alarm ? " alarm" : ""}">${cells}
+    <div class="h2-bar-live"><span class="h2-dot"></span>LIVE · АУКЦИОН RU</div></div>`;
+}
+
+// колонка новостей сайта: ручные посты + автособытия (гайды/промокоды/патчи)
+function h2NewsBody(feed) {
+  const items = (feed && feed.items) || [];
+  if (!items.length)
+    return `<div class="empty-sm">ЛЕНТА ПУСТА — ПЕРВУЮ НОВОСТЬ МОЖНО НАПИСАТЬ В ДЕВ · НОВОСТИ.</div>`;
+  return items.map((n) => {
+    const d = String(n.created_at || "").slice(5).split("-").reverse().join(".");
+    return `<article class="h2-news k-${n.kind}${n.pinned ? " pin" : ""}"${
+      n.url ? ` data-nav="${escapeHtml(n.url)}"` : ""}>
+      <div class="h2-news-h">
+        <span class="h2-news-d">${d || "—"}</span>
+        ${n.tag ? `<span class="h2-news-t">${escapeHtml(n.tag)}</span>` : ""}
+        ${n.pinned ? `<span class="h2-news-pin" title="Закреплено">★</span>` : ""}
+      </div>
+      <div class="h2-news-ti">${escapeHtml(n.title)}</div>
+      ${n.body ? `<div class="h2-news-b">${escapeHtml(n.body)}</div>` : ""}
+    </article>`;
+  }).join("");
+}
+
+function h2Crafts(top) {
+  if (!top) return `<div class="empty-sm">ЦЕНЫ СЧИТАЮТСЯ В ФОНЕ — ЗАГЛЯНИ ПОЗЖЕ.</div>`;
+  const grp = (t, list, pctBadge) => (list && list.length)
+    ? `<div class="dash-grp">${t}</div>`
+      + list.slice(0, 4).map((e) => dashCraftRow(e, pctBadge)).join("") : "";
+  return grp("ВЫГОДНЫЕ", top.profitable, false) + grp("ПРОФИТНЫЕ", top.liquid, true)
+    || `<div class="empty-sm">ЦЕНЫ СЧИТАЮТСЯ В ФОНЕ — ЗАГЛЯНИ ПОЗЖЕ.</div>`;
+}
+
+function h2Trends(art) {
+  if (!art || !((art.up || []).length || (art.down || []).length))
+    return `<div class="empty-sm">БИРЖА НАКАПЛИВАЕТ ЗАМЕРЫ — СКОРО ПОЯВЯТСЯ ТРЕНДЫ.</div>`;
+  const grp = (t, list) => (list && list.length)
+    ? `<div class="dash-grp">${t}</div>` + list.slice(0, 5).map(dashArtRow).join("") : "";
+  return grp("РАСТУТ", art.up) + grp("ПАДАЮТ", art.down);
+}
+
+function h2Charts(watch) {
+  if (!watch || !(watch.items || []).length)
+    return `<div class="empty-sm">ЖДЁМ ПЕРВЫЕ ЗАМЕРЫ БИРЖИ.</div>`;
+  const cards = watch.items.map((m) => `
+    <div class="dash-chart" data-nav="/item/${m.id}">
+      <div class="dc-head"><img loading="lazy" src="${asset(m.icon)}" alt="">
+        <span class="nm">${escapeHtml(m.name)}</span>
+        ${m.delta_pct != null ? `<span class="pct ${m.delta_pct > 0 ? "up" : m.delta_pct < 0 ? "down" : "dim"}">${m.delta_pct > 0 ? "+" : ""}${m.delta_pct}%</span>` : ""}</div>
+      ${chartSvg(m.series || [])}
+      <div class="dc-price">${m.avg != null ? fmt(m.avg) + " ₽" : "—"} <span class="dc-unit">СР./ШТ</span></div>
+    </div>`).join("");
+  return `<div class="dash-charts h2-charts">${cards}</div>`;
+}
+
+function h2Patches(patches) {
+  const items = (patches && patches.items) || [];
+  if (!items.length) return `<div class="empty-sm">СИНХРОНИЗАЦИЯ С ФОРУМОМ EXBO…</div>`;
+  return items.slice(0, 3).map((p) => `
+    <div class="dash-patch" data-nav="/patches/${p.id}">
+      <div class="dp-t">${escapeHtml(p.title)}</div>
+      <div class="dp-d">${fmtPatchDate(p.created_at)}</div>
+      <div class="dp-a">${escapeHtml(p.anons || "")}</div>
+    </div>`).join("");
+}
+
+// ---- макет 1: ПУЛЬТ (приборы слева, главный экран в центре, новости справа) ----
+function home2Hud(d) {
+  return `<div class="h2 h2-hud">
+    ${h2Bar(d)}
+    <div class="h2-hud-grid">
+      <aside class="h2-rail">
+        ${h2Mod("", "ВЫБРОС", "ЗАМЕР РАЗ В МИНУТУ", emissionBody(d.em))}
+        ${h2Mod("", "ЗАПРАВКА ГЕНЕРАТОРА", "₽ ЗА 1000 ЕД", fuelBody(d.fuelTop),
+                "/profile", "ПРИСТРОЙКИ")}
+        ${h2Mod("", "ПРОМОКОДЫ", "КЛИК — КОПИРУЕТ", promoDashBody(d.promos),
+                "/promo", "ВСЕ КОДЫ")}
+        ${h2Mod("", "МЕТА ОПЕРАЦИЙ", opsDashNote(d.ops), opsDashBody(d.ops),
+                "/operations", "К СТАТИСТИКЕ")}
+      </aside>
+      <main class="h2-view">
+        ${h2Mod("", "СБОРКА ДНЯ", "БРОНЯ + КОНТЕЙНЕР + АРТЕФАКТЫ",
+                dailyBuildBody(d.daily), "/builds", "К КАЛЬКУЛЯТОРУ", "wide")}
+        <div class="h2-split">
+          ${h2Mod("", "КРАФТЫ ДНЯ", "ВЫГОДА · ЛИКВИДНОСТЬ", h2Crafts(d.top),
+                  "/craft", "В КРАФТ")}
+          ${h2Mod("", "САМОЕ ПРОДАВАЕМОЕ", "ТЕМП ПРОДАЖ", salesBody(d.sales),
+                  "/market", "НА АУКЦИОН")}
+        </div>
+        ${h2Mod("", "ГРАФИКИ ИНГРЕДИЕНТОВ", "СР. ЦЕНА ПРОДАЖ", h2Charts(d.watch),
+                "/craft", "В КРАФТ", "wide")}
+      </main>
+      <aside class="h2-news-col">
+        ${h2Mod("", "НОВОСТИ САЙТА", "ЧТО ПОМЕНЯЛОСЬ", h2NewsBody(d.feed), "", "", "news")}
+        ${h2Mod("", "ТРЕНДЫ БИРЖИ", "ЦЕНА ЗА СУТКИ", h2Trends(d.art), "/auction", "НА БИРЖУ")}
+        ${h2Mod("", "ПАТЧИ ИГРЫ", "ФОРУМ EXBO", h2Patches(d.patches), "/patches", "ВСЕ ПАТЧИ")}
+      </aside>
+    </div>
+  </div>`;
+}
+
+// ---- макет 2: ПЛАТА (центральная шина новостей, модули-компоненты по бокам) ----
+function home2Board(d) {
+  // порядок подобран по высоте модулей: крылья должны заканчиваться примерно
+  // на одной высоте, иначе симметрия платы разваливается пустотой в одном из них
+  const left = [
+    h2Mod("R1", "КРАФТЫ ДНЯ", "ВЫГОДА · ЛИКВИДНОСТЬ", h2Crafts(d.top), "/craft", "В КРАФТ"),
+    h2Mod("R2", "ВЫБРОС", "ЗАМЕР РАЗ В МИНУТУ", emissionBody(d.em)),
+    h2Mod("R3", "ЗАПРАВКА ГЕНЕРАТОРА", "₽ ЗА 1000 ЕД", fuelBody(d.fuelTop),
+          "/profile", "ПРИСТРОЙКИ"),
+    h2Mod("R4", "САМОЕ ПРОДАВАЕМОЕ", "ТЕМП ПРОДАЖ", salesBody(d.sales), "/market", "НА АУКЦИОН"),
+  ].join("");
+  const right = [
+    h2Mod("C1", "ТРЕНДЫ БИРЖИ", "ЦЕНА ЗА СУТКИ", h2Trends(d.art), "/auction", "НА БИРЖУ"),
+    h2Mod("C2", "СБОРКА ДНЯ", "РАЗ В СУТКИ", dailyBuildBody(d.daily), "/builds", "К КАЛЬКУЛЯТОРУ"),
+    h2Mod("C3", "ГРАФИКИ ИНГРЕДИЕНТОВ", "СР. ЦЕНА", h2Charts(d.watch), "/craft", "В КРАФТ"),
+    h2Mod("C4", "МЕТА ОПЕРАЦИЙ", opsDashNote(d.ops), opsDashBody(d.ops),
+          "/operations", "К СТАТИСТИКЕ"),
+  ].join("");
+  return `<div class="h2 h2-board">
+    ${h2Bar(d)}
+    <div class="h2-board-grid">
+      <div class="h2-wing left">${left}</div>
+      <div class="h2-bus">
+        <div class="h2-bus-line" aria-hidden="true"></div>
+        ${h2Mod("U0", "НОВОСТИ САЙТА", "ЧТО ПОМЕНЯЛОСЬ", h2NewsBody(d.feed), "", "", "news")}
+        ${h2Mod("U1", "ПРОМОКОДЫ", "КЛИК — КОПИРУЕТ", promoDashBody(d.promos), "/promo", "ВСЕ КОДЫ")}
+        ${h2Mod("U2", "ПАТЧИ ИГРЫ", "ФОРУМ EXBO", h2Patches(d.patches), "/patches", "ВСЕ ПАТЧИ")}
+      </div>
+      <div class="h2-wing right">${right}</div>
+    </div>
+  </div>`;
+}
+
+function renderHome2() {
+  const lay = home2Layout();
+  const d = home2Data || {};
+  const btns = Object.entries(HOME2_LAYOUTS).map(([k, name]) =>
+    `<button class="h2-adm-btn${k === lay ? " on" : ""}" data-lay="${k}">${name}</button>`).join("");
+  home.innerHTML = `<div class="h2-adm">
+      <span class="h2-adm-l">▸ ЧЕРНОВИК НОВОЙ ГЛАВНОЙ · ВИДЕН ТОЛЬКО АДМИНУ</span>
+      <div class="h2-adm-b">${btns}</div>
+      <a class="h2-adm-a" href="/dev/news">✎ РЕДАКТОР НОВОСТЕЙ</a>
+      <a class="h2-adm-a" href="/">◂ ТЕКУЩАЯ ГЛАВНАЯ</a>
+    </div>` + (lay === "board" ? home2Board(d) : home2Hud(d));
+  home.querySelectorAll(".h2-adm-btn").forEach((b) => b.addEventListener("click", () => {
+    localStorage.setItem(HOME2_KEY, b.dataset.lay);
+    renderHome2();
+    window.scrollTo(0, 0);
+  }));
   home.querySelectorAll("[data-nav]").forEach((el) =>
     el.addEventListener("click", () => { navigate(el.dataset.nav); }));
   bindPromoCopy(home);
@@ -6024,6 +6297,8 @@ const devSubnav = (on) => `<div class="dev-subnav">
   <a href="/dev/promo"${on === "promo" ? ' class="on"' : ""}>ПРОМОКОДЫ</a>
   <a href="/dev/craft"${on === "craft" ? ' class="on"' : ""}>РЕЦЕПТЫ</a>
   <a href="/dev/scan"${on === "scan" ? ' class="on"' : ""}>СКАНЕР</a>
+  <a href="/dev/news"${on === "news" ? ' class="on"' : ""}>НОВОСТИ</a>
+  <a href="/home2">ГЛАВНАЯ v2 ↗</a>
 </div>`;
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
@@ -6336,6 +6611,121 @@ function renderDevPromoForm(p) {
       if (!r.ok) { msg.textContent = j.detail || "ошибка сохранения"; $("pfSave").disabled = false; return; }
       renderDevPromosList();
     } catch (e) { msg.textContent = "ошибка сети"; $("pfSave").disabled = false; }
+  });
+}
+
+// ---------- ДЕВ · новости САЙТА (только админ) ----------
+// Ручные посты ленты на новой главной. Автособытия (гайды/промокоды/патчи)
+// сюда не попадают — они подмешиваются на бэке при чтении /news/feed.
+const NEWS_TAGS = ["ОБНОВЛЕНИЕ", "НОВЫЙ РАЗДЕЛ", "ФИКС", "АНОНС"];
+
+async function openDevNews() {
+  if (!devGate()) return;
+  await renderDevNewsList();
+}
+
+async function renderDevNewsList() {
+  page.innerHTML = `<div class="mapmod"><div class="spinner">// ЗАГРУЗКА НОВОСТЕЙ</div></div>`;
+  let d;
+  try { d = await fetch(api("/admin/news")).then((r) => r.json()); }
+  catch (e) { page.innerHTML = `<div class="empty">[!] ОШИБКА СЕТИ</div>`; return; }
+  if (location.pathname !== "/dev/news") return;
+  const items = d.items || [];
+  const rows = items.map((n) => `
+    <div class="gadm-row">
+      <div class="gadm-row-i">
+        <div class="gadm-row-t">${n.pinned ? `<span class="dash-promo-ref">★ ЗАКРЕП</span> ` : ""}${
+          escapeHtml(n.title)}${n.published ? "" : ` <span class="gadm-draft">ЧЕРНОВИК</span>`}</div>
+        <div class="gadm-row-s">${escapeHtml(n.created_at)}${
+          n.tag ? ` · ${escapeHtml(n.tag)}` : ""}${n.url ? ` · ${escapeHtml(n.url)}` : ""}</div>
+      </div>
+      <div class="gadm-row-a">
+        <button class="gadm-btn" data-edit="${n.id}">РЕД.</button>
+        <button class="gadm-btn gadm-del" data-del="${n.id}" title="Удалить">✕</button>
+      </div>
+    </div>`).join("");
+  page.innerHTML = `<div class="mapmod">
+    <div class="section-head">
+      <div class="section-title">▸ ДЕВ · НОВОСТИ САЙТА</div>
+      <div class="section-note">Колонка новостей на новой главной (/home2). К этим постам лента
+        сама подмешивает свежие гайды, промокоды и патчи игры — писать про них руками не нужно.</div>
+    </div>
+    ${devSubnav("news")}
+    <button class="gadm-new" id="nadmNew">＋ НОВАЯ НОВОСТЬ</button>
+    <div class="gadm-list">${rows || `<div class="empty-sm">РУЧНЫХ ПОСТОВ ПОКА НЕТ — ЛЕНТА ИДЁТ НА АВТОСОБЫТИЯХ.</div>`}</div>
+  </div>`;
+  $("nadmNew").addEventListener("click", () => renderDevNewsForm(null));
+  page.querySelectorAll("[data-edit]").forEach((b) =>
+    b.addEventListener("click", () =>
+      renderDevNewsForm(items.find((n) => n.id === +b.dataset.edit) || null)));
+  page.querySelectorAll("[data-del]").forEach((b) =>
+    b.addEventListener("click", async () => {
+      if (!confirm("Удалить новость? Она пропадёт из ленты на главной.")) return;
+      await fetch(api(`/admin/news/${b.dataset.del}`), { method: "DELETE" }).catch(() => {});
+      renderDevNewsList();
+    }));
+}
+
+function renderDevNewsForm(n) {
+  const isNew = !n;
+  n = n || { title: "", body: "", url: "", tag: "", pinned: false, published: true,
+             created_at: todayISO() };
+  const tagOpts = NEWS_TAGS.map((t) =>
+    `<option value="${t}"${n.tag === t ? " selected" : ""}>${t}</option>`).join("");
+  page.innerHTML = `<div class="mapmod">
+    <div class="section-head">
+      <div class="section-title">▸ ДЕВ · НОВОСТИ · ${isNew ? "НОВАЯ" : "РЕДАКТИРОВАНИЕ"}</div>
+      <div class="section-note">Формат ленты — короткая заметка: заголовок в одну строку и
+        пара предложений. Длинный текст лучше оформить гайдом и дать сюда ссылку.</div>
+    </div>
+    ${devSubnav("news")}
+    <div class="gform">
+      <label class="gform-l">ЗАГОЛОВОК
+        <input id="nfTitle" value="${escapeHtml(n.title)}" placeholder="Починили расчёт выгоды бартера"></label>
+      <label class="gform-l">ТЕКСТ · пара предложений, без HTML
+        <textarea id="nfBody" rows="4" spellcheck="true" lang="ru">${escapeHtml(n.body)}</textarea></label>
+      <div class="gform-row">
+        <label class="gform-l">ССЫЛКА · внутренний путь (не обязательно)
+          <input id="nfUrl" value="${escapeHtml(n.url)}" placeholder="/barter" autocomplete="off"></label>
+        <label class="gform-l">МЕТКА
+          <select id="nfTag"><option value="">— без метки —</option>${tagOpts}</select></label>
+        <label class="gform-l">ДАТА
+          <input id="nfDate" type="date" value="${escapeHtml(n.created_at)}"></label>
+      </div>
+      <div class="gform-row">
+        <label class="gform-chk"><input id="nfPin" type="checkbox" ${n.pinned ? "checked" : ""}>
+          ЗАКРЕПИТЬ СВЕРХУ ЛЕНТЫ</label>
+        <label class="gform-chk"><input id="nfPub" type="checkbox" ${n.published ? "checked" : ""}>
+          ОПУБЛИКОВАНО · снять = черновик</label>
+      </div>
+      <div class="gform-actions">
+        <button type="button" class="gadm-save" id="nfSave">СОХРАНИТЬ</button>
+        <button type="button" class="gadm-btn" id="nfCancel">◂ К СПИСКУ</button>
+        <span id="nfMsg" class="gform-msg"></span>
+      </div>
+    </div>
+  </div>`;
+  $("nfCancel").addEventListener("click", () => renderDevNewsList());
+  $("nfSave").addEventListener("click", async () => {
+    const msg = $("nfMsg");
+    if (!$("nfTitle").value.trim()) { msg.textContent = "нужен заголовок"; return; }
+    const body = {
+      id: isNew ? undefined : n.id,
+      title: $("nfTitle").value.trim(), body: $("nfBody").value.trim(),
+      url: $("nfUrl").value.trim(), tag: $("nfTag").value,
+      created_at: $("nfDate").value, pinned: $("nfPin").checked,
+      published: $("nfPub").checked,
+    };
+    $("nfSave").disabled = true; msg.textContent = "сохранение…";
+    try {
+      const r = await fetch(api("/admin/news"), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const j = await r.json();
+      if (!r.ok) { msg.textContent = j.detail || "ошибка сохранения"; $("nfSave").disabled = false; return; }
+      renderDevNewsList();
+    } catch (e) { msg.textContent = "ошибка сети"; $("nfSave").disabled = false; }
   });
 }
 
@@ -8275,6 +8665,16 @@ function route() {
   if (path === "/dev/scan") {
     strip.classList.add("hidden");
     setNav("dev"); openDevScan(); return;
+  }
+  if (path === "/dev/news") {
+    strip.classList.add("hidden");
+    setNav("dev"); openDevNews(); return;
+  }
+  // черновик новой главной: своя страница, боевая «/» не меняется
+  if (path === "/home2") {
+    strip.classList.add("hidden"); page.classList.add("hidden");
+    detail.classList.add("hidden"); results.innerHTML = "";
+    setNav("home2"); openHome2(); return;
   }
   if ((mm = path.match(/^\/map(?:\/([a-z0-9_-]+))?$/))) {
     strip.classList.add("hidden");

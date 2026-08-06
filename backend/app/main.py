@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app import config
 from app.db import (chat, craft_tuning, guides, loader, mapobjects, market, news,
-                    operations, promos, quests, users)
+                    operations, promos, quests, sitenews, users)
 from app.db.index import db
 from app.routers.api import router as api_router
 from app.routers.auth import router as auth_router
@@ -47,6 +47,7 @@ async def startup() -> None:
     guides.init()
     quests.init()
     promos.init()
+    sitenews.init()
     operations.init()
     craft_tuning.init()
     db.load()
