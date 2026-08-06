@@ -145,7 +145,6 @@ function escapeHtml(s) {
 let API_IS_DEMO = true;
 fetch(api("/health")).then((r) => r.json()).then((h) => {
   API_IS_DEMO = !!h.demo;
-  $("regionBadge").textContent = `${h.region || "RU"} · ${h.demo ? "ДЕМО" : "PROD"}`;
   $("statItems").textContent = fmt(h.items);
   $("statRecipes").textContent = fmt(h.craft_results);
   $("statPrices").textContent = fmt((h.prices || {}).priced);
@@ -187,7 +186,7 @@ async function loadAuth() {
     ME = await fetch(api("/me")).then((r) => r.json());
     if (ME.authenticated) {
       const name = ME.user.display_login || ME.user.login;
-      authBox.innerHTML = `<a class="auth-user" href="/profile" title="Профиль убежища: навыки и станки · EXBO ID ${ME.user.exbo_id}"><span class="gear">⚙</span>${escapeHtml(name)}</a>
+      authBox.innerHTML = `<a class="auth-user" href="/profile" title="Профиль убежища: навыки и станки · EXBO ID ${ME.user.exbo_id}"><span class="gear">⚙</span><span class="auth-name">${escapeHtml(name)}</span></a>
         <button class="auth-out" id="logoutBtn" title="Завершить сессию">ВЫХОД</button>`;
       renderAuthGlow();
       $("logoutBtn").addEventListener("click", async () => {
