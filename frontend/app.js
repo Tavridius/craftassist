@@ -3757,39 +3757,45 @@ function renderQuestGraph(host, faction, opts) {
 
   const unitIds = new Set();
   items.forEach((q) => unitIds.add(unitOfQ(q.id)));
-  const uParents = new Map();
-  unitIds.forEach((u) => uParents.set(u, new Set()));
-  items.forEach((q) => (q.parents || []).forEach((pid) => {
-    if (!byId.has(pid)) return;
-    const uq = unitOfQ(q.id), up = unitOfQ(pid);
-    if (uq !== up) uParents.get(uq).add(up);
-  }));
-
-  // глубина юнита по связям = ряд сверху вниз; авто-колонка внутри ряда
-  const depth = new Map();
-  const dep = (u, stack) => {
-    if (depth.has(u)) return depth.get(u);
-    if (stack.has(u)) return 0;
-    stack.add(u);
-    const ps = [...uParents.get(u)];
-    const dv = ps.length ? Math.max(...ps.map((p) => dep(p, stack))) + 1 : 0;
-    stack.delete(u); depth.set(u, dv); return dv;
-  };
-  unitIds.forEach((u) => dep(u, new Set()));
   const uSort = (u) => isGroupUnit(u) ? -1 : (questOfUnit(u).sort || 0);
   const uMain = (u) => isGroupUnit(u) || questOfUnit(u).kind === "main";
-  const bands = [];
-  unitIds.forEach((u) => (bands[depth.get(u)] ||= []).push(u));
-  const autoCol = new Map();
-  bands.forEach((band) => {
-    const near = (u) => {
-      const ps = [...uParents.get(u)].filter((p) => autoCol.has(p));
-      return ps.length ? ps.reduce((s, p) => s + autoCol.get(p), 0) / ps.length : 1e9;
+  const uParents = new Map();
+  const depth = new Map();      // глубина юнита по связям = ряд сверху вниз
+  const autoCol = new Map();    // авто-колонка внутри ряда
+
+  // Пересобирается после каждой правки стрелок: раньше карта связей считалась
+  // один раз при сборке графа, а paint() рисовал именно её — удалённая связь
+  // оставалась на экране до перезагрузки страницы.
+  const relinkGraph = () => {
+    uParents.clear(); depth.clear(); autoCol.clear();
+    unitIds.forEach((u) => uParents.set(u, new Set()));
+    items.forEach((q) => (q.parents || []).forEach((pid) => {
+      if (!byId.has(pid)) return;
+      const uq = unitOfQ(q.id), up = unitOfQ(pid);
+      if (uq !== up) uParents.get(uq).add(up);
+    }));
+    const dep = (u, stack) => {
+      if (depth.has(u)) return depth.get(u);
+      if (stack.has(u)) return 0;
+      stack.add(u);
+      const ps = [...uParents.get(u)];
+      const dv = ps.length ? Math.max(...ps.map((p) => dep(p, stack))) + 1 : 0;
+      stack.delete(u); depth.set(u, dv); return dv;
     };
-    band.sort((a, b) => (uSort(a) - uSort(b)) || (near(a) - near(b))
-      || (uMain(a) ? 0 : 1) - (uMain(b) ? 0 : 1) || (a < b ? -1 : 1));
-    band.forEach((u, i) => autoCol.set(u, i));
-  });
+    unitIds.forEach((u) => dep(u, new Set()));
+    const bands = [];
+    unitIds.forEach((u) => (bands[depth.get(u)] ||= []).push(u));
+    bands.forEach((band) => {
+      const near = (u) => {
+        const ps = [...uParents.get(u)].filter((p) => autoCol.has(p));
+        return ps.length ? ps.reduce((s, p) => s + autoCol.get(p), 0) / ps.length : 1e9;
+      };
+      band.sort((a, b) => (uSort(a) - uSort(b)) || (near(a) - near(b))
+        || (uMain(a) ? 0 : 1) - (uMain(b) ? 0 : 1) || (a < b ? -1 : 1));
+      band.forEach((u, i) => autoCol.set(u, i));
+    });
+  };
+  relinkGraph();
 
   const W = 190, H = 72, cellW = 220, cellH = 118, PAD = 20;
   const posOfUnit = (u) => {
@@ -3810,6 +3816,12 @@ function renderQuestGraph(host, faction, opts) {
     orgRow = Math.min(0, ...us.map((u) => cell.get(u).row));
   };
   recalcOrigin();
+  // связи изменились: пересобрать карту, глубины и авто-колонки, а блокам без
+  // ручной позиции выдать новое авто-место — ровно то, что раньше показывал F5
+  const relayout = () => {
+    relinkGraph();
+    unitIds.forEach((u) => cell.set(u, posOfUnit(u)));
+  };
   const xOf = (u) => PAD + (cell.get(u).col - orgCol) * cellW;
   const yOf = (u) => PAD + (cell.get(u).row - orgRow) * cellH;
   const canvasSize = () => ({
@@ -4133,7 +4145,7 @@ function renderQuestGraph(host, faction, opts) {
           const prev = (child.parents || []).slice();
           child.parents = [...(child.parents || []), id];
           if (!(await saveParents(child))) child.parents = prev;
-          paint(); applyT();
+          relayout(); paint(); applyT();
         };
         handle.addEventListener("pointermove", mv); handle.addEventListener("pointerup", up);
       });
@@ -4157,7 +4169,7 @@ function renderQuestGraph(host, faction, opts) {
         const prev = (child.parents || []).slice();
         child.parents = (child.parents || []).filter((x) => x !== parent);
         if (!(await saveParents(child))) child.parents = prev;
-        paint(); applyT();
+        relayout(); paint(); applyT();
       }));
   }
 
