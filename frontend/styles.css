@@ -3153,9 +3153,12 @@ a.ops-gear:hover .nm { text-decoration: underline; }
   .h2-mod.news .h2-mb { max-height: none; }
   .h2-hud .h2-split { grid-template-columns: 1fr; }
   /* столбцы схлопнулись в один: на телефоне первым идёт «самое продаваемое»,
-     крафты — сразу под ним (на десктопе порядок слева направо не меняется) */
-  .h2-hud .h2-split.hero > :nth-child(1) { order: 2; }
-  .h2-hud .h2-split.hero > :nth-child(2) { order: 1; }
+     крафты — сразу под ним (на десктопе порядок слева направо не меняется).
+     Порядок через классы, а не nth-child: между модулями встаёт рекламная
+     врезка (adPlaceMobile), и нумерация детей от неё поехала бы. */
+  .h2-hud .h2-split.hero > .hero-sales { order: 1; }
+  .h2-hud .h2-split.hero > .ad-slot { order: 2; }
+  .h2-hud .h2-split.hero > .hero-craft { order: 3; }
   .h2-board-grid { background-image: none; padding: 0; }
   .h2-bus-line, .h2-board .h2-trace { display: none; }
   .h2 .dash-charts { grid-template-columns: 1fr; }

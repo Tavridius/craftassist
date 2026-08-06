@@ -1698,10 +1698,10 @@ function home2Hud(d) {
         <div class="h2-split hero">
           ${h2Mod("", "КРАФТЫ ДНЯ", "ВЫГОДА · ЛИКВИДНОСТЬ",
                   h2Findable("craft", "НАЙТИ ПРЕДМЕТ ДЛЯ КРАФТА…", h2Crafts(d.top)),
-                  "/craft", "В КРАФТ")}
+                  "/craft", "В КРАФТ", "hero-craft")}
           ${h2Mod("", "САМОЕ ПРОДАВАЕМОЕ", "ТЕМП ПРОДАЖ",
                   h2Findable("market", "НАЙТИ ПРЕДМЕТ НА АУКЕ…", salesBody(d.sales)),
-                  "/market", "НА АУКЦИОН")}
+                  "/market", "НА АУКЦИОН", "hero-sales")}
         </div>
         ${h2Mod("", "ГРАФИКИ ИНГРЕДИЕНТОВ", "СР. ЦЕНА ПРОДАЖ", h2Charts(d.watch),
                 "/craft", "В КРАФТ", "wide")}
@@ -3327,22 +3327,80 @@ const AD_BOTTOM_PATHS = new Set([
 const adBottomOk = (p) => AD_BOTTOM_PATHS.has(p)
   || /^\/(guides|patches|quests|item)\/[^/]+$/.test(p);
 
-let adBottomTimer = null;
+let adBottomTimer = null, adBottomAt = 0;
+const adHost = document.getElementById("adBottom");   // ссылку держим сами: внутри
+const adMain = document.querySelector("main.main");   // секции узел бывает отцеплен
+
+// Замер на телефоне (390×844): врезка внизу главной начиналась на 5638-м
+// пикселе — 6.7 экрана вниз, на /market 5.2. Столько не листает почти никто,
+// поэтому на узких экранах место переезжает под первый блок контента, который
+// занял экран: ответ человек уже получил, а реклама попадается на глаза.
+// Внутрь карточки (section/article) не лезем — встаём после неё.
+function adPlaceMobile(host) {
+  if (innerWidth > 900 || !adMain) return;      // на десктопе врезка остаётся внизу
+  const sec = [detail, page, home, results].find(
+    (s) => s && !s.classList.contains("hidden") && s.offsetHeight > 40);
+  if (!sec) return;
+  const vh = innerHeight;
+  const limit = adMain.getBoundingClientRect().top + scrollY + vh * 0.8;
+  let box = sec;
+  for (let step = 0; step < 6; step++) {
+    const kids = [...box.children].filter((e) => e !== host && e.offsetHeight > 0);
+    if (!kids.length) return;
+    // порядок берём по факту отрисовки: на телефоне grid-areas и order уже
+    // переставили колонки, и DOM-порядок с экранным не совпадает
+    kids.sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top);
+    if (kids.length === 1) { box = kids[0]; continue; }
+    const hit = kids.find((e) => e.getBoundingClientRect().bottom + scrollY > limit);
+    if (!hit || hit === kids[kids.length - 1]) return;   // контента на экран не набралось
+    if (hit.offsetHeight > vh * 1.6 && hit.children.length > 1
+        && !hit.matches("section, article")) { box = hit; continue; }
+    hit.after(host);
+    return;
+  }
+}
+
+function adBottomReset() {
+  if (!adHost) return;
+  adHost.hidden = true;
+  adHost.innerHTML = "";
+  if (adMain && adHost.parentElement !== adMain) adMain.appendChild(adHost);
+}
+
+function adBottomShow(path) {
+  if (!adHost || location.pathname !== path) return;
+  adPlaceMobile(adHost);
+  adHost.hidden = false;
+  adBottomAt = Date.now();
+  adMount(adHost, AD_BOTTOM, adBottomReset);
+}
 
 function adBottomRoute(path) {
-  const host = document.getElementById("adBottom");
-  if (!host) return;
+  if (!adHost) return;
   clearTimeout(adBottomTimer);
-  host.hidden = true;                  // на новом роуте старый показ не годится
-  host.innerHTML = "";
+  adBottomReset();                     // на новом роуте старый показ не годится
   if (!AD_BOTTOM || !adBottomOk(path)) return;
   // ждём, пока раздел догрузится: route() отрабатывает раньше данных, и без
   // паузы блок на секунду вылезал бы под спиннером у самого верха экрана
-  adBottomTimer = setTimeout(() => {
-    if (location.pathname !== path) return;
-    host.hidden = false;
-    adMount(host, AD_BOTTOM, () => { host.hidden = true; host.innerHTML = ""; });
-  }, 1500);
+  adBottomTimer = setTimeout(() => adBottomShow(path), 1500);
+}
+
+// Разделы перерисовываются целиком (`page.innerHTML = …`) — на смене фильтра,
+// а не только при переходе. Переехавшая внутрь врезка уезжает вместе с ними,
+// поэтому ловим момент и ставим её заново. Корни живут вечно, меняется только
+// их содержимое, так что childList без subtree ловит ровно перерисовки.
+if (adHost) {
+  const back = new MutationObserver(() => {
+    if (adHost.isConnected) return;
+    clearTimeout(adBottomTimer);
+    adBottomReset();
+    // защита от раздела, который перерисовывает себя сам: показ РСЯ не чаще
+    // раза в 15 с, иначе накрутили бы показы на ровном месте
+    if (!AD_BOTTOM || !adBottomOk(location.pathname)
+        || Date.now() - adBottomAt < 15000) return;
+    adBottomTimer = setTimeout(() => adBottomShow(location.pathname), 1200);
+  });
+  [home, page, detail, results].forEach((r) => r && back.observe(r, { childList: true }));
 }
 
 // ---------- гайды (авторские статьи; тело в стиле патчей) ----------
