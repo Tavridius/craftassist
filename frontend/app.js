@@ -1515,8 +1515,13 @@ function h2Bar(d) {
   const lead = ((d.art && d.art.up) || [])[0];
   const hp = d.daily && d.daily.hp ? d.daily.hp.effective_hp : null;
   const promoN = ((d.promos && d.promos.items) || []).length;
+  // крафт — самый посещаемый раздел, а в приборах его не было; берём верх списка
+  // «выгодных»: это ₽ за один цикл верстака, самая понятная цифра из /top
+  const craft = ((d.top && d.top.profitable) || []).find((e) => e.diff != null);
   const cells = [
     h2Gauge("ВЫБРОС", em.v, "", em.sub, null),
+    h2Gauge("ЛУЧШИЙ КРАФТ", craft ? `+${fmt(craft.diff)}` : "—", craft ? " ₽" : "",
+            craft ? escapeHtml(craft.name) : "ЦЕНЫ СЧИТАЮТСЯ…", "/craft"),
     h2Gauge("ТОПЛИВО ОТ", fuel ? fmt(fuel.per_1k) : "—", " ₽/1К",
             fuel ? escapeHtml(fuel.name) : "СЧИТАЕТСЯ…", "/profile"),
     h2Gauge("СБОРКА ДНЯ", hp != null ? fmt(hp) : "—", " ХП",
@@ -8558,7 +8563,41 @@ const PAGES = {};
 function setNav(sec) {
   document.querySelectorAll("#topnav a").forEach((a) =>
     a.classList.toggle("active", a.dataset.sec === sec));
+  navCenterActive();
 }
+
+// Полоса разделов уезжает за экран, но выглядела целой (скроллбар спрятан).
+// Классы can-l/can-r включают подтаявший край — CSS сам не знает, докручена
+// полоса или нет. Пересчитываем на скролл, ресайз и подгрузку шрифта: ширина
+// пунктов до JetBrains Mono другая, и первый замер соврал бы.
+function navScrollHint() {
+  const nav = document.getElementById("topnav");
+  if (!nav) return;
+  const max = nav.scrollWidth - nav.clientWidth;
+  nav.classList.toggle("can-l", max > 2 && nav.scrollLeft > 2);
+  nav.classList.toggle("can-r", max > 2 && nav.scrollLeft < max - 2);
+}
+
+// активный раздел — в центр полосы: и видно, где ты, и по бокам торчат соседи,
+// то есть прокрутка становится очевидной без всяких стрелок
+function navCenterActive() {
+  const nav = document.getElementById("topnav");
+  const on = nav && nav.querySelector("a.active");
+  if (!on) { navScrollHint(); return; }
+  // scrollLeft вручную: scrollIntoView дёргает ещё и вертикаль всей страницы
+  const to = on.offsetLeft - (nav.clientWidth - on.offsetWidth) / 2;
+  nav.scrollLeft = Math.max(0, to);
+  navScrollHint();
+}
+
+(() => {
+  const nav = document.getElementById("topnav");
+  if (!nav) return;
+  nav.addEventListener("scroll", navScrollHint, { passive: true });
+  addEventListener("resize", navScrollHint);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(navScrollHint);
+  navScrollHint();
+})();
 
 function openPage(key) {
   const p = PAGES[key];

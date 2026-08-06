@@ -140,6 +140,29 @@ a.brand-wrap:hover .brand { color: var(--green); text-shadow: var(--glow); }
   padding: 0; overflow-x: auto; scrollbar-width: none;
 }
 .topnav::-webkit-scrollbar { display: none; }
+/* Разделов пятнадцать, на телефоне влезает четыре — и полоса выглядела целой:
+   ни обрезанного пункта, ни скроллбара (он спрятан выше). Пока есть куда
+   тянуть, край подтаивает — под ним видно продолжение списка. Классы вешает
+   navScrollHint() в app.js, потому что «есть куда тянуть» знает только layout. */
+.topnav.can-r { mask-image: linear-gradient(to right, #000 calc(100% - 42px), rgba(0, 0, 0, 0.12)); }
+.topnav.can-l { mask-image: linear-gradient(to left, #000 calc(100% - 42px), rgba(0, 0, 0, 0.12)); }
+.topnav.can-l.can-r {
+  mask-image: linear-gradient(to right, rgba(0, 0, 0, 0.12), #000 42px,
+                              #000 calc(100% - 42px), rgba(0, 0, 0, 0.12));
+}
+.topnav.can-r { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 42px), rgba(0, 0, 0, 0.12)); }
+.topnav.can-l { -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 42px), rgba(0, 0, 0, 0.12)); }
+.topnav.can-l.can-r {
+  -webkit-mask-image: linear-gradient(to right, rgba(0, 0, 0, 0.12), #000 42px,
+                                      #000 calc(100% - 42px), rgba(0, 0, 0, 0.12));
+}
+/* и живая дорожка внизу полосы — второй, уже явный намёк на прокрутку */
+@media (max-width: 900px) {
+  .topnav { scrollbar-width: thin; scrollbar-color: var(--green-border) transparent; }
+  .topnav::-webkit-scrollbar { display: block; height: 2px; }
+  .topnav::-webkit-scrollbar-thumb { background: var(--green-border); }
+  .topnav::-webkit-scrollbar-track { background: transparent; }
+}
 .topnav a {
   flex: 1 1 0; justify-content: center;
   display: flex; align-items: center; gap: 6px;
@@ -2887,7 +2910,7 @@ a.ops-gear:hover .nm { text-decoration: underline; }
 
 /* ---------- строка приборов (общая для обоих макетов) ---------- */
 .h2-bar {
-  display: grid; grid-template-columns: repeat(5, 1fr) auto; gap: 1px;
+  display: grid; grid-template-columns: repeat(6, 1fr) auto; gap: 1px;
   background: var(--border-deep); border: 1px solid var(--border);
   margin-bottom: 16px;
 }
@@ -3117,6 +3140,9 @@ a.ops-gear:hover .nm { text-decoration: underline; }
     grid-template-areas: "view news" "rail news";
   }
   .h2-board-grid { --gap: 24px; }
+  /* шесть приборов в ряд ужимают ₽ до многоточия — ломаем на две строки по три */
+  .h2-bar { grid-template-columns: repeat(3, 1fr); }
+  .h2-bar-live { grid-column: 1 / -1; padding: 8px 14px; }
 }
 @media (max-width: 900px) {
   .h2-bar { grid-template-columns: 1fr 1fr; }
@@ -3126,6 +3152,10 @@ a.ops-gear:hover .nm { text-decoration: underline; }
   .h2-hud-grid { grid-template-areas: "view" "rail" "news"; }
   .h2-mod.news .h2-mb { max-height: none; }
   .h2-hud .h2-split { grid-template-columns: 1fr; }
+  /* столбцы схлопнулись в один: на телефоне первым идёт «самое продаваемое»,
+     крафты — сразу под ним (на десктопе порядок слева направо не меняется) */
+  .h2-hud .h2-split.hero > :nth-child(1) { order: 2; }
+  .h2-hud .h2-split.hero > :nth-child(2) { order: 1; }
   .h2-board-grid { background-image: none; padding: 0; }
   .h2-bus-line, .h2-board .h2-trace { display: none; }
   .h2 .dash-charts { grid-template-columns: 1fr; }
