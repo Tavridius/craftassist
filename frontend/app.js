@@ -1632,7 +1632,7 @@ function h2Crafts(top) {
   if (!top) return `<div class="empty-sm">ЦЕНЫ СЧИТАЮТСЯ В ФОНЕ — ЗАГЛЯНИ ПОЗЖЕ.</div>`;
   const grp = (t, list, pctBadge) => (list && list.length)
     ? `<div class="dash-grp">${t}</div>`
-      + list.slice(0, 4).map((e) => dashCraftRow(e, pctBadge)).join("") : "";
+      + list.slice(0, 5).map((e) => dashCraftRow(e, pctBadge)).join("") : "";
   return grp("ВЫГОДНЫЕ", top.profitable, false) + grp("ПРОФИТНЫЕ", top.liquid, true)
     || `<div class="empty-sm">ЦЕНЫ СЧИТАЮТСЯ В ФОНЕ — ЗАГЛЯНИ ПОЗЖЕ.</div>`;
 }
@@ -1685,9 +1685,11 @@ function home2Hud(d) {
                 "/operations", "К СТАТИСТИКЕ")}
       </aside>
       <main class="h2-view">
-        ${h2Mod("", "СБОРКА ДНЯ", "БРОНЯ + КОНТЕЙНЕР + АРТЕФАКТЫ",
-                dailyBuildBody(d.daily), "/builds", "К КАЛЬКУЛЯТОРУ", "wide")}
-        <div class="h2-split">
+        <!-- порядок центра — по Метрике за 25.07–06.08: /market 674 человека,
+             /craft 1393 просмотра, /auction 1091, гайд про конверт 493. Значит
+             первым экраном идут «что выгодно скрафтить» и «что разбирают на
+             ауке»; сборка дня — приятная, но пассивная сводка, ей место ниже. -->
+        <div class="h2-split hero">
           ${h2Mod("", "КРАФТЫ ДНЯ", "ВЫГОДА · ЛИКВИДНОСТЬ", h2Crafts(d.top),
                   "/craft", "В КРАФТ")}
           ${h2Mod("", "САМОЕ ПРОДАВАЕМОЕ", "ТЕМП ПРОДАЖ", salesBody(d.sales),
@@ -1695,6 +1697,8 @@ function home2Hud(d) {
         </div>
         ${h2Mod("", "ГРАФИКИ ИНГРЕДИЕНТОВ", "СР. ЦЕНА ПРОДАЖ", h2Charts(d.watch),
                 "/craft", "В КРАФТ", "wide")}
+        ${h2Mod("", "СБОРКА ДНЯ", "БРОНЯ + КОНТЕЙНЕР + АРТЕФАКТЫ",
+                dailyBuildBody(d.daily), "/builds", "К КАЛЬКУЛЯТОРУ", "wide")}
       </main>
       <aside class="h2-news-col">
         ${h2Mod("", "НОВОСТИ САЙТА", "ЧТО ПОМЕНЯЛОСЬ", h2NewsBody(d.feed), "", "", "news")}

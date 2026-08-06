@@ -3006,6 +3006,11 @@ a.ops-gear:hover .nm { text-decoration: underline; }
 .h2-rail, .h2-view, .h2-news-col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 .h2-hud .h2-split { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; min-width: 0; }
 .h2-hud .h2-split > .h2-mod { min-width: 0; }
+/* верхняя пара центра — главный экран: туда вынесено то, за чем чаще всего
+   приходят (крафт и аук), поэтому она подсвечена заголовком и линией сверху */
+.h2-hud .h2-split.hero .h2-frame { border-top-color: var(--green-border); }
+.h2-hud .h2-split.hero .h2-mt { font-size: 12px; color: var(--bright); }
+.h2-hud .h2-split.hero .h2-mh { border-bottom-color: var(--border-dim); }
 .h2-hud .h2-frame {
   background: var(--panel-main);
   border-top: 1px solid var(--border-dim);
