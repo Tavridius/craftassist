@@ -60,6 +60,12 @@ services:
       - AB_TEST_DESIGN=${AB_TEST_DESIGN:-0}
       - AB_TEST_SPLIT=${AB_TEST_SPLIT:-0.5}
       - AB_TEST_TTL_DAYS=${AB_TEST_TTL_DAYS:-90}
+      # Реклама РСЯ: идентификатор блока «в тексте» (вид R-A-1234567-1).
+      # Пусто = рекламы нет и скрипт Яндекса не грузится. Показывается только
+      # в статьях (/guides/*, /patches/*), на калькуляторах её нет.
+      - RSYA_BLOCK_ID=${RSYA_BLOCK_ID:-}
+      # второй блок — под контентом разделов (списки, калькуляторы, карточки)
+      - RSYA_BLOCK_BOTTOM=${RSYA_BLOCK_BOTTOM:-}
     volumes:
       # Кэш игровой БД + зеркало иконок (скачивается один раз при первом старте)
       - craft_data:/app/backend/data

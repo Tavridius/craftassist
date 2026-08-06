@@ -118,6 +118,10 @@
     <!-- серверный SEO-контент под инструментом: заполняется per-route в pages.py,
          прячется во фронте (route()) при уходе с целевого пути -->
     <section id="seoProse" class="seo-prose" hidden></section>
+    <!-- нижняя рекламная врезка (app.js: adBottomRoute) — отдельной секцией,
+         потому что перерисовки разделов меняют #page/#results целиком и блок
+         внутри них умирал бы при первой же смене фильтра -->
+    <section id="adBottom" class="ad-slot ad-bottom" hidden></section>
   </main>
 
   <footer class="page-footer">

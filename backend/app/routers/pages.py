@@ -171,6 +171,19 @@ def render_index(request: Request, path: str, *, title: str | None = None,
                 "</head>",
                 f'  <link rel="stylesheet" href="/styles-b.css?v={_V_CSS_B}">\n</head>', 1)
 
+    # --- реклама РСЯ ---
+    # Идентификатор блока едет на фронт атрибутом <html data-ads>, а не константой
+    # в app.js: включение/выключение и смена блока — переменная окружения плюс
+    # рестарт, без пересборки фронта. Пусто → app.js не грузит скрипт Яндекса.
+    ads = ""
+    if config.RSYA_BLOCK_ID:
+        ads += f' data-ads="{_html.escape(config.RSYA_BLOCK_ID, quote=True)}"'
+    if config.RSYA_BLOCK_BOTTOM:
+        ads += (f' data-ads-bottom="'
+                f'{_html.escape(config.RSYA_BLOCK_BOTTOM, quote=True)}"')
+    if ads:
+        s = s.replace('<html lang="ru"', f'<html lang="ru"{ads}', 1)
+
     # HTML — точка входа, ссылается на app.js?v=<mtime>: сам НЕ кэшируем, иначе
     # браузер держит старый HTML со старой версией и до нового app.js не доходит
     # (эвристическое кэширование ответов без Cache-Control). no-cache = ревалидация.

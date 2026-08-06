@@ -1983,6 +1983,22 @@ body:has(.cmp-tray:not(.hidden)) .auth-notice { bottom: 76px; }
 .patch-body img { max-width: 100%; height: auto; display: block; margin: 10px 0; border: 1px solid var(--border-deep); }
 .patch-body a { color: var(--green); }
 .patch-body hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
+
+/* Рекламная врезка РСЯ внутри статьи (app.js: adInsert). min-height держит
+   место ДО загрузки блока — иначе текст прыгает под курсором, а это тот самый
+   CLS, из-за которого чинили картинки патчнотов. Ширину не задаём: блок РСЯ
+   адаптивный, на телефоне подстроится сам. */
+.ad-slot {
+  margin: 18px 0; padding: 8px; min-height: 260px;
+  border: 1px solid var(--border-deep); background: var(--panel-deep);
+}
+.ad-label {
+  font-size: 10px; letter-spacing: 0.12em; color: var(--dimmer);
+  margin-bottom: 6px;
+}
+@media (max-width: 640px) { .ad-slot { min-height: 300px; } }
+/* нижняя врезка стоит последней в <main>, отделяем её от контента раздела */
+.ad-bottom { margin: 26px 0 8px; }
 .patch-body table { border-collapse: collapse; margin: 0 0 10px; max-width: 100%; }
 .patch-body th, .patch-body td { border: 1px solid var(--border); padding: 5px 9px; font-size: 12px; }
 .patch-video { position: relative; padding-bottom: 56.25%; margin: 10px 0; max-width: 720px; }

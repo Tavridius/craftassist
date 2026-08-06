@@ -2938,7 +2938,117 @@ async function openPatch(pid) {
     <div id="comments"></div>
   </div>`;
   $("patchBack").addEventListener("click", () => { navigate("/patches"); });
+  adInsert(page);
   renderComments(`patch:${pid}`);
+}
+
+// ---------- реклама РСЯ ----------
+// Блок включает сервер: <html data-ads="R-A-XXXXXXX-N"> из config.RSYA_BLOCK_ID.
+// Пусто — скрипт Яндекса не грузится вообще (это состояние по умолчанию).
+//
+// Ставим ОДИН блок «в тексте» и только в статьях (гайд, патчнот). На
+// калькуляторах рекламы нет намеренно: это ядро продукта, а отказы и глубину там
+// чинили весь июль-август.
+//
+// SPA-грабли: РСЯ считает показ по вызову render(). При клиентской навигации
+// страница не перезагружается, поэтому на каждую статью нужен свой контейнер и
+// свой pageNumber — иначе показ засчитается один раз за визит, а по Метрике
+// глубина у нас 4.0, то есть потеряли бы три четверти показов.
+const AD_BLOCK = document.documentElement.dataset.ads || "";          // в тексте статьи
+const AD_BOTTOM = document.documentElement.dataset.adsBottom || "";   // под контентом
+let adCtx = null;      // промис загрузки context.js — грузим один раз за визит
+let adPage = 0;        // «номер страницы» для РСЯ, растёт на каждый показ
+const adLive = new Map();  // blockId -> id последнего контейнера (для destroy)
+
+function adLoadCtx() {
+  if (adCtx) return adCtx;
+  window.yaContextCb = window.yaContextCb || [];
+  adCtx = new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = "https://yandex.ru/ads/system/context.js";
+    s.async = true;                 // грузим лениво: критический путь не трогаем
+    s.onload = resolve;
+    s.onerror = reject;             // блокировщик — просто живём без рекламы
+    document.head.appendChild(s);
+  });
+  return adCtx;
+}
+
+// Общий показ: host уже в DOM, drop() убирает место, если рекламы не будет.
+// Стратегия «максимальный доход» в РСЯ поднимает CPM ценой заполняемости — часть
+// показов остаётся без подходящего объявления. Пустая рамка с подписью «РЕКЛАМА»
+// читается как сломанная вёрстка, поэтому незаполненную врезку убираем совсем.
+// Блокировщик приводит сюда же: context.js просто не загрузится.
+function adMount(host, blockId, drop) {
+  if (!blockId) return;
+  const slotId = `adSlot${++adPage}`;
+  const num = adPage;
+  host.innerHTML = `<div class="ad-label">РЕКЛАМА</div><div id="${slotId}"></div>`;
+  setTimeout(() => {
+    const el = document.getElementById(slotId);
+    if (el && !el.offsetHeight) drop();      // рекламы не приехало
+  }, 4000);
+
+  adLoadCtx().then(() => {
+    window.yaContextCb.push(() => {
+      try {
+        const prev = adLive.get(blockId);
+        if (prev) window.Ya.Context.AdvManager.destroy({ blockId, renderTo: prev });
+        // контейнер мог уехать, пока грузился скрипт (быстрый переход)
+        if (!document.getElementById(slotId)) return;
+        window.Ya.Context.AdvManager.render({
+          blockId, renderTo: slotId, pageNumber: num,
+          onError: drop,     // нет подходящей рекламы — врезки как не было
+        });
+        adLive.set(blockId, slotId);
+      } catch (e) { drop(); }
+    });
+  }).catch(drop);
+}
+
+// Врезка после третьего блока текста: выше — сразу реклама в лицо, ниже — её не
+// увидят. Короткие статьи пропускаем совсем, в них врезка выглядит как половина
+// страницы (правило «без баннеров на пол-экрана» — решение владельца).
+function adInsert(root) {
+  if (!AD_BLOCK) return;
+  const body = root.querySelector(".patch-body");
+  if (!body) return;
+  const kids = [...body.children];
+  if (kids.length < 8) return;
+  const box = document.createElement("div");
+  box.className = "ad-slot";
+  kids[3].after(box);
+  adMount(box, AD_BLOCK, () => box.remove());
+}
+
+// Нижняя врезка — под контентом раздела, когда человек уже получил ответ.
+// Разделы, которых тут нет, остаются без рекламы намеренно: /search (самый
+// вовлечённый вход сайта, глубина 18.5 — не трогаем), /profile, /map, /dev/*,
+// юридические страницы.
+const AD_BOTTOM_PATHS = new Set([
+  "/", "/market", "/auction", "/barter", "/obmen", "/builds", "/compare",
+  "/operations", "/items", "/guides", "/patches", "/quests", "/promo",
+  "/vygodno-kraftit",
+]);
+const adBottomOk = (p) => AD_BOTTOM_PATHS.has(p)
+  || /^\/(guides|patches|quests|item)\/[^/]+$/.test(p);
+
+let adBottomTimer = null;
+
+function adBottomRoute(path) {
+  const host = document.getElementById("adBottom");
+  if (!host) return;
+  clearTimeout(adBottomTimer);
+  host.hidden = true;                  // на новом роуте старый показ не годится
+  host.innerHTML = "";
+  if (!AD_BOTTOM || !adBottomOk(path)) return;
+  // ждём, пока раздел догрузится: route() отрабатывает раньше данных, и без
+  // паузы блок на секунду вылезал бы под спиннером у самого верха экрана
+  adBottomTimer = setTimeout(() => {
+    if (location.pathname !== path) return;
+    host.hidden = false;
+    adMount(host, AD_BOTTOM, () => { host.hidden = true; host.innerHTML = ""; });
+  }, 1500);
 }
 
 // ---------- гайды (авторские статьи; тело в стиле патчей) ----------
@@ -3009,6 +3119,7 @@ async function openGuide(slug) {
     <div id="comments"></div>
   </div>`;
   $("guideBack").addEventListener("click", () => { navigate("/guides"); });
+  adInsert(page);
   renderComments(`guide:${slug}`);
 }
 
@@ -8125,6 +8236,7 @@ function route() {
   mkModalClose();   // навигация закрывает карточку аука (в т.ч. созданную вне /market)
   const seoProse = document.getElementById("seoProse");
   if (seoProse) seoProse.hidden = seoProse.dataset.seoPath !== path;
+  adBottomRoute(path);   // нижняя врезка: своя секция, живёт мимо перерисовок
   const strip = document.querySelector(".search-strip");
   let mm;
 
