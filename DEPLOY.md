@@ -206,44 +206,73 @@ Env в `.env` на сервере (прокинуть в docker-compose.yml): `P
 Текущий `YM_TOKEN` цели создать не может (403, право только на чтение — см.
 `scripts/ym_hygiene.py`), поэтому только через интерфейс Метрики.
 
-## Почтовый сервис на домене (для verify email + сброс пароля)
+## Почтовый сервис на домене (verify email + сброс пароля)
 
-Пока SMTP не задан — регистрация работает, аккаунт активен сразу, но письма не
-шлются (`mailer.enabled()`=false, «Забыли пароль?» скрыт). Чтобы включить:
+**Развёрнуто 06.08.2026.** MTA — контейнер `docker-mailserver`, который раньше
+обслуживал `artwood34.ru` (домен был спящий: последнее письмо 11.06, исходящих
+ноль). Переведён на `stalzone-helper.ru`: ящики и DKIM-ключ artwood34 удалены,
+hostname сменён, roundcube отключён от compose.
 
-**1. Env бэкенда** (`.env` + `environment:` в docker-compose.yml):
+Живёт отдельно от сайта: `/home/pavel/mailserver/docker-compose.yml`
+(бэкапы конфига и ящиков — в `/home/pavel/mailserver/backups/`).
+
+**Как связаны сайт и MTA.** Оба контейнера в сети `backend_rpg_network`, поэтому
+бэкенд ходит к MTA по имени контейнера, порт 25, без auth и TLS — трафик не
+выходит за пределы docker-бриджа, а postfix `mynetworks` (172.16.0.0/12) пускает
+релей только изнутри. Снаружи 25-й порт релея не даёт. `.env` на проде:
 ```
-SMTP_HOST=127.0.0.1          # или mail.stalzone-helper.ru
-SMTP_PORT=587                # 465 (ssl) / 587 (starttls) / 25 (none, локальный релей)
-SMTP_SECURITY=starttls       # starttls | ssl | none
-SMTP_USER=noreply@stalzone-helper.ru   # пусто, если локальный релей без auth
-SMTP_PASS=...
+SMTP_HOST=mailserver
+SMTP_PORT=25
+SMTP_SECURITY=none
+SMTP_USER=            # пусто: локальный релей
+SMTP_PASS=
 MAIL_FROM=noreply@stalzone-helper.ru
 MAIL_FROM_NAME=StalZone Helper
 ```
-Контейнеру нужен доступ к MTA: либо `SMTP_HOST` = внешний почтовый сервер, либо
-Postfix на хосте и `SMTP_HOST=172.17.0.1` (docker bridge) / сеть `host`.
+Ящик `noreply@stalzone-helper.ru` заведён (пароль нужен только для IMAP, сайту он
+не требуется — релей идёт без auth).
 
-**2. Postfix на valera (send-only MTA)** — если поднимаем свою почту:
+### ⚠️ Осталось сделать: DNS у регистратора
+
+Без этих записей **письма не доходят** — Gmail отбивает с `550-5.7.26 sender is
+unauthenticated` (проверено живым письмом 06.08.2026).
+
+| тип | имя | значение |
+|---|---|---|
+| A | `mail` | `88.87.70.167` |
+| MX | `@` | `mail.stalzone-helper.ru` (приоритет 10) |
+| TXT | `@` | `v=spf1 a mx ip4:88.87.70.167 -all` |
+| TXT | `_dmarc` | `v=DMARC1; p=none; rua=mailto:postmaster@stalzone-helper.ru` |
+| TXT | `mail._domainkey` | DKIM, см. ниже |
+| PTR | — | `88.87.70.167` → `mail.stalzone-helper.ru` (вносит владелец IP) |
+
+DKIM-ключ (2048 бит, селектор `mail`) взять одной строкой:
 ```
-apt install postfix opendkim opendkim-tools
-# postfix: "Internet Site", myhostname = mail.stalzone-helper.ru
+ssh pavel@88.87.70.167 "docker exec mailserver cat \
+  /tmp/docker-mailserver/opendkim/keys/stalzone-helper.ru/mail.txt"
 ```
-DNS для доставляемости (у регистратора домена):
-- **A**  `mail.stalzone-helper.ru` → 88.87.70.167
-- **MX** `stalzone-helper.ru` → `mail.stalzone-helper.ru` (приоритет 10)
-- **SPF** (TXT `@`): `v=spf1 a mx ip4:88.87.70.167 -all`
-- **DKIM**: `opendkim-genkey`, публичный ключ в TXT `<selector>._domainkey`
-- **DMARC** (TXT `_dmarc`): `v=DMARC1; p=none; rua=mailto:postmaster@stalzone-helper.ru`
-- **PTR / reverse DNS** 88.87.70.167 → `mail.stalzone-helper.ru` — подключает
-  владелец IP (я подключу — прим. владельца сервера).
+Значение склеить из кусков в кавычках в одну строку без переносов.
 
-**3. Старую почту `@artwood34.ru` убрать** — снять её MX/SPF/DKIM с домена
-artwood34.ru и не использовать в `MAIL_FROM`.
+**После появления A-записи** выпустить сертификат на `mail.stalzone-helper.ru` и
+переключить `SSL_DOMAIN` в compose MTA (сейчас там временно серт основного
+домена — для релея внутри бриджа это неважно, но для IMAP/submission снаружи
+имя должно совпадать).
 
-Проверка после настройки: `docker logs stalzone_craft | grep mailer`; тест —
-`POST /auth/reset` для существующего email → письмо должно прийти; `swaks` или
-mail-tester.com для оценки доставляемости/спам-скора.
+### Проверка
+
+```
+docker exec stalzone_craft python -c "import sys;sys.path.insert(0,'/app/backend');\
+from app.services import mailer;print(mailer.enabled())"
+docker exec mailserver tail -30 /var/log/mail/mail.log
+```
+В логе смотреть `Passed CLEAN` (прошло) против `Blocked BAD-HEADER` (зарезано
+фильтром) и финальный `status=sent`. Спам-скор — на mail-tester.com.
+
+**Грабли, уже наступленные.** `mailer._send_sync` не ставил заголовки `Date` и
+`Message-ID` — `smtplib` их не добавляет сам, а `Date` обязателен по RFC 5322.
+Amavis на MTA резал такие письма как `BAD-HEADER-0` и отправлял в карантин: до
+внешнего мира они не доходили вообще. Исправлено 06.08.2026; при правке
+`mailer.py` эти два заголовка не терять.
 
 ## Профили убежища (11 июля 2026)
 

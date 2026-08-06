@@ -10,7 +10,7 @@ import logging
 import smtplib
 import ssl
 from email.message import EmailMessage
-from email.utils import formataddr
+from email.utils import formataddr, formatdate, make_msgid
 
 from app import config
 
@@ -26,6 +26,12 @@ def _send_sync(to: str, subject: str, text: str, html: str | None = None) -> Non
     msg["From"] = formataddr((config.MAIL_FROM_NAME, config.MAIL_FROM))
     msg["To"] = to
     msg["Subject"] = subject
+    # Date обязателен по RFC 5322, Message-ID де-факто обязателен. smtplib их не
+    # добавляет. Без Date фильтр на MTA (amavis) режет письмо как BAD-HEADER ещё
+    # до отправки наружу: проверено 06.08.2026 на своём сервере — письмо без Date
+    # ушло в карантин, оно же с Date прошло CLEAN и доехало до Gmail.
+    msg["Date"] = formatdate(localtime=True)
+    msg["Message-ID"] = make_msgid(domain=config.MAIL_FROM.split("@")[-1] or None)
     msg.set_content(text)
     if html:
         msg.add_alternative(html, subtype="html")
