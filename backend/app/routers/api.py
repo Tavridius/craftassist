@@ -683,7 +683,9 @@ QUEST_FACTIONS = [
     {"id": "bandits",  "name": "Бандиты",  "color": "#ffb84d"},
     {"id": "covenant", "name": "Завет",    "color": "#5fa8ff"},
     {"id": "dawn",     "name": "Заря",     "color": "#e8d44d"},
-    {"id": "duty",     "name": "Долг",     "color": "#ff6b5e"},
+    # id остаётся duty (записан в строках квестов), имя — актуальное игровое:
+    # патч 10.07.2024 переименовал Долг → Рубеж, Свободу → Заря, Монолит → Шёпот
+    {"id": "duty",     "name": "Рубеж",    "color": "#ff6b5e"},
     {"id": "mercs",    "name": "Наёмники", "color": "#9ecbff"},
 ]
 _QUEST_FACTION_IDS = {f["id"] for f in QUEST_FACTIONS}

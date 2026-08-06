@@ -2038,6 +2038,118 @@ body:has(.cmp-tray:not(.hidden)) .auth-notice { bottom: 76px; }
 .guide-article .guide-tags { margin: 0 0 10px; }
 .guide-article h1 { font-size: 22px; color: var(--bright); letter-spacing: 0.03em; margin: 0 0 6px; }
 
+/* ---------- конструктор тела гайда: серия, плашки, карточки, галерея ----------
+   Сплошной текст новичок не читает: у гайдов с ранними ссылками глубина втрое
+   выше (rho=0.82 по ссылкам в первой половине, AUDIT-METRIKA-2026-08.md).
+   Отсюда набор блоков — навигация по серии стоит первой, то есть на 0% текста. */
+
+/* навигация по серии: где ты сейчас и сколько всего частей */
+.patch-body .gser {
+  border: 1px solid var(--green-border); background: var(--panel-deep);
+  padding: 10px 14px; margin: 0 0 16px;
+}
+.patch-body .gser-h {
+  font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--dimmer); margin-bottom: 7px;
+}
+.patch-body .gser ol { margin: 0; padding: 0; list-style: none; counter-reset: gser; }
+.patch-body .gser li {
+  counter-increment: gser; margin: 0 0 3px; font-size: 12px; line-height: 1.5;
+  padding-left: 26px; position: relative;
+}
+.patch-body .gser li::before {
+  content: counter(gser); position: absolute; left: 0; top: 0;
+  width: 18px; text-align: center; font-size: 10px; font-weight: 700;
+  color: var(--dimmer); border: 1px solid var(--border); line-height: 16px;
+}
+.patch-body .gser li.on::before { color: #0a120c; background: var(--green); border-color: var(--green); }
+.patch-body .gser li.on { color: var(--bright); font-weight: 700; }
+.patch-body .gser li.soon { color: var(--dimmer); }
+.patch-body .gser li.soon::after {
+  content: "скоро"; font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--dimmer); border: 1px solid var(--border-deep); padding: 1px 5px; margin-left: 7px;
+}
+
+/* плашки: совет / внимание / частая ошибка — разный цвет, одна форма */
+.patch-body .gnote {
+  border: 1px solid var(--border); border-left-width: 3px;
+  background: var(--panel-deep); padding: 10px 14px; margin: 14px 0;
+}
+.patch-body .gnote p:last-child { margin-bottom: 0; }
+.patch-body .gnote-t {
+  font-size: 9.5px; letter-spacing: 0.14em; text-transform: uppercase;
+  font-weight: 700; margin-bottom: 5px;
+}
+.patch-body .gnote.tip { border-left-color: var(--green); }
+.patch-body .gnote.tip .gnote-t { color: var(--green); }
+.patch-body .gnote.warn { border-left-color: var(--amber); }
+.patch-body .gnote.warn .gnote-t { color: var(--amber); }
+.patch-body .gnote.err { border-left-color: var(--red); }
+.patch-body .gnote.err .gnote-t { color: var(--red); }
+
+/* промокод в тексте: клик выделяет его целиком, чтобы копировали без промаха */
+.patch-body .gcode {
+  display: inline-block; font-size: 17px; font-weight: 800; letter-spacing: 0.14em;
+  color: var(--green); background: rgba(124, 230, 142, 0.05);
+  border: 1px dashed var(--green-border); padding: 8px 14px; margin: 4px 0 8px;
+  user-select: all; -webkit-user-select: all; word-break: break-all;
+}
+
+/* карточки: выбор из нескольких вариантов (фракции, классы, ветки) */
+.patch-body .gcards {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px; margin: 14px 0;
+}
+.patch-body .gcard {
+  border: 1px solid var(--border); border-top: 2px solid var(--gc, var(--green));
+  background: var(--panel-deep); padding: 11px 13px;
+}
+.patch-body .gcard-t {
+  font-size: 13px; font-weight: 800; letter-spacing: 0.04em;
+  color: var(--gc, var(--green)); margin-bottom: 5px;
+}
+.patch-body .gcard-s { font-size: 11.5px; line-height: 1.55; color: var(--dim); }
+.patch-body .gcard-s b { color: var(--text); }
+.patch-body .gcard ul { margin: 6px 0 0; padding-left: 16px; font-size: 11.5px; color: var(--dim); }
+
+/* плитки с крупными числами — цифра должна читаться до чтения текста */
+.patch-body .gstats {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px; margin: 14px 0;
+}
+.patch-body .gstat {
+  border: 1px solid var(--border-deep); background: var(--panel-deep); padding: 10px 12px;
+}
+.patch-body .gstat b {
+  display: block; font-size: 19px; font-weight: 800; color: var(--bright);
+  font-variant-numeric: tabular-nums; line-height: 1.15;
+}
+.patch-body .gstat span {
+  display: block; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--dimmer); margin-top: 4px;
+}
+
+/* картинка с подписью + галерея в ряд (скриншоты, иконки предметов) */
+.patch-body figure { margin: 14px 0; }
+.patch-body figure img { margin: 0; }
+.patch-body figcaption {
+  font-size: 10.5px; color: var(--dimmer); letter-spacing: 0.03em;
+  line-height: 1.5; margin-top: 5px;
+}
+.patch-body .ggal {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px; margin: 14px 0;
+}
+.patch-body .ggal figure { margin: 0; }
+.patch-body .ggal img { width: 100%; }
+
+@media (max-width: 640px) {
+  /* на телефоне колонки схлопываются, но плитки чисел оставляем по две в ряд */
+  .patch-body .gcards { grid-template-columns: 1fr; }
+  .patch-body .gstats { grid-template-columns: repeat(2, 1fr); }
+  .patch-body .gstat b { font-size: 17px; }
+}
+
 /* ---------- серверный SEO-контент под инструментом (напр. /builds) ---------- */
 .seo-prose { border-top: 1px solid var(--border); margin-top: 28px; padding-top: 18px; }
 .seo-inner { max-width: 860px; }
