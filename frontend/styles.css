@@ -1318,20 +1318,9 @@ html.map-drawing .maped-wrap .leaflet-container { cursor: crosshair; }
   html:not(.on-map) body { zoom: 1.2; }
 }
 
-/* ---------- дашборд-главная ---------- */
-.dash-hero {
-  padding: 22px 20px; margin-bottom: 14px;
-  border: 1px solid var(--border); background: var(--panel-deep);
-}
-.dash-hero-t { font-size: 18px; font-weight: 800; letter-spacing: 0.12em; color: var(--bright); }
-.dash-hero-s { font-size: 12px; color: var(--dim); margin-top: 6px; letter-spacing: 0.04em; }
-.dash-grid {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px;
-}
-.dash-card {
-  border: 1px solid var(--border); background: var(--panel-main);
-  padding: 12px 14px; display: flex; flex-direction: column; min-height: 220px;
-}
+/* ---------- начинка модулей главной ----------
+   Рамку и сетку рисует макет (.h2-*, в конце файла) — здесь только то, что
+   лежит внутри модуля: строки с предметами, графики, патчи, промокоды. */
 .dash-grp {
   font-size: 9px; letter-spacing: 0.16em; color: var(--dimmer);
   margin: 8px 0 4px; border-bottom: 1px dashed var(--border-deep); padding-bottom: 2px;
@@ -1347,17 +1336,6 @@ html.map-drawing .maped-wrap .leaflet-container { cursor: crosshair; }
 .dash-p { color: var(--dim); font-size: 11px; white-space: nowrap; }
 .dash-p b { color: var(--amber); font-weight: 700; }
 .dash-note { font-size: 9px; letter-spacing: 0.07em; color: var(--dimmer); margin-top: 6px; line-height: 1.6; }
-.dash-more {
-  margin-top: auto; padding-top: 10px; align-self: flex-end;
-  font-size: 10px; letter-spacing: 0.12em; color: var(--green); text-decoration: none;
-}
-.dash-more:hover { text-shadow: var(--glow); }
-.dash-stub {
-  flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 8px;
-  font-size: 12px; color: var(--dim); line-height: 1.6; padding: 10px 4px;
-  border: 1px dashed var(--border-dim); text-align: center; margin-top: 8px;
-}
-.dash-stub .stub-status { margin: 0; }
 
 /* сборка дня (модуль главной) */
 .db-hero {
@@ -2999,10 +2977,18 @@ a.ops-gear:hover .nm { text-decoration: underline; }
    МАКЕТ 1 · ПУЛЬТ — приборы слева, главный экран в центре, новости справа.
    Рамок-коробок нет: модуль держат угловая скоба и волосяная линия сверху.
    ===================================================================== */
+/* Раскладка через области, а не через порядок в DOM: на узких экранах главный
+   экран обязан оставаться первым, иначе приборы и новости выталкивают его за
+   сгиб — ровно та ошибка, из-за которой центр и переделывали. */
 .h2-hud-grid {
-  display: grid; grid-template-columns: minmax(230px, 260px) minmax(0, 1fr) minmax(260px, 300px);
+  display: grid;
+  grid-template-columns: minmax(230px, 260px) minmax(0, 1fr) minmax(260px, 300px);
+  grid-template-areas: "rail view news";
   gap: 16px; align-items: start;
 }
+.h2-rail { grid-area: rail; }
+.h2-view { grid-area: view; }
+.h2-news-col { grid-area: news; }
 .h2-rail, .h2-view, .h2-news-col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 .h2-hud .h2-split { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; min-width: 0; }
 .h2-hud .h2-split > .h2-mod { min-width: 0; }
@@ -3123,16 +3109,19 @@ a.ops-gear:hover .nm { text-decoration: underline; }
 
 /* ---------- адаптив обоих макетов ---------- */
 @media (max-width: 1200px) {
-  .h2-hud-grid { grid-template-columns: minmax(0, 1fr) minmax(250px, 290px); }
-  .h2-rail { display: contents; }
-  .h2-rail > .h2-mod { grid-column: 1; }
+  /* приборы уходят под главный экран, новости держат правую колонку целиком */
+  .h2-hud-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(250px, 290px);
+    grid-template-areas: "view news" "rail news";
+  }
   .h2-board-grid { --gap: 24px; }
 }
 @media (max-width: 900px) {
   .h2-bar { grid-template-columns: 1fr 1fr; }
   .h2-bar-live { grid-column: 1 / -1; padding: 8px 14px; }
   .h2-hud-grid, .h2-board-grid { grid-template-columns: 1fr; gap: 14px; }
-  .h2-rail { display: flex; }
+  /* на телефоне сперва то, за чем пришли, потом приборы, новости последними */
+  .h2-hud-grid { grid-template-areas: "view" "rail" "news"; }
   .h2-mod.news .h2-mb { max-height: none; }
   .h2-hud .h2-split { grid-template-columns: 1fr; }
   .h2-board-grid { background-image: none; padding: 0; }

@@ -1192,32 +1192,6 @@ async function loadHome() {
   }
 }
 
-// ---------- дашборд-главная: сводка по всем разделам ----------
-async function loadDashboard() {
-  if (home.dataset.view === "dash"
-      && home.dataset.ts && Date.now() - +home.dataset.ts < 60000) return;
-  home.innerHTML = `<div class="spinner">// ЗАГРУЗКА ГЛАВНОЙ</div>`;
-  try {
-    const [top, art, watch, em, sales, fuelTop, patches, daily, promos, ops] = await Promise.all([
-      fetch(api(`/top${availParam("?")}`)).then((r) => r.json()).catch(() => null),
-      fetch(api("/artmarket/top?window=24h")).then((r) => r.json()).catch(() => null),
-      fetch(api("/watch")).then((r) => r.json()).catch(() => null),
-      fetch(api("/emission")).then((r) => r.json()).catch(() => null),
-      fetch(api("/sales/top?n=12")).then((r) => r.json()).catch(() => null),
-      fetch(api("/fuel/top?n=20")).then((r) => r.json()).catch(() => null),
-      fetch(api("/patches?limit=5")).then((r) => r.json()).catch(() => null),
-      fetch(api("/build/daily")).then((r) => r.json()).catch(() => null),
-      fetch(api("/promos")).then((r) => r.json()).catch(() => null),
-      fetch(api("/operations/overview")).then((r) => r.json()).catch(() => null),
-    ]);
-    home.dataset.ts = Date.now();
-    home.dataset.view = "dash";
-    renderDashboard(top, art, watch, em, sales, fuelTop, patches, daily, promos, ops);
-  } catch (e) {
-    home.innerHTML = `<div class="empty">[!] НЕ УДАЛОСЬ ЗАГРУЗИТЬ ГЛАВНУЮ</div>`;
-  }
-}
-
 // ---------- карточка выбросов ----------
 let emTick = null;
 
@@ -1401,102 +1375,11 @@ function promoDashBody(p) {
   return items.slice(0, 6).map(row).join("");
 }
 
-function renderDashboard(top, art, watch, em, sales, fuelTop, patches, daily, promos, ops) {
-  const card = (title, note, body, link, linkText) => `<section class="dash-card">
-    <div class="side-head">
-      <div class="side-title">▸ ${title}</div>
-      <div class="side-note">${note}</div>
-    </div>
-    ${body}
-    ${link ? `<a class="dash-more" href="${link}">${linkText || "ОТКРЫТЬ РАЗДЕЛ"} ▸</a>` : ""}
-  </section>`;
-
-  // крафты: по 2-3 из каждой подборки
-  let crafts = "";
-  if (top) {
-    const grp = (t, list, pctBadge) => (list && list.length)
-      ? `<div class="dash-grp">${t}</div>` + list.slice(0, 3).map((e) => dashCraftRow(e, pctBadge)).join("") : "";
-    crafts = grp("ВЫГОДНЫЕ", top.profitable, false) + grp("ПРОФИТНЫЕ", top.liquid, true)
-           + grp("ПОПУЛЯРНЫЕ", top.popular, false);
-  }
-  if (!crafts) crafts = `<div class="empty-sm">ЦЕНЫ СЧИТАЮТСЯ В ФОНЕ — ЗАГЛЯНИ ПОЗЖЕ.</div>`;
-
-  // тренды биржи артефактов
-  let trends = "";
-  if (art && ((art.up || []).length || (art.down || []).length)) {
-    const grp = (t, list) => (list && list.length)
-      ? `<div class="dash-grp">${t}</div>` + list.slice(0, 6).map(dashArtRow).join("") : "";
-    trends = grp("РАСТУТ", art.up) + grp("ПАДАЮТ", art.down);
-  } else trends = `<div class="empty-sm">БИРЖА НАКАПЛИВАЕТ ЗАМЕРЫ — СКОРО ПОЯВЯТСЯ ТРЕНДЫ.</div>`;
-
-  // мини-графики биржи ингредиентов — все наблюдаемые, с полной сводкой
-  let charts = "";
-  if (watch && watch.items && watch.items.length) {
-    charts = `<div class="dash-charts">` + watch.items.map((m) => {
-      const meta = [
-        `МИН ${m.min_buyout != null ? fmt(m.min_buyout) + " ₽" : "—"}`,
-        m.sales_per_hour != null ? `${fmtSales(m.sales_per_hour)} ПРОД/Ч` : "",
-      ].filter(Boolean).join(" · ");
-      return `
-      <div class="dash-chart" data-nav="/item/${m.id}">
-        <div class="dc-head"><img loading="lazy" src="${asset(m.icon)}" alt="">
-          <span class="nm">${escapeHtml(m.name)}</span>
-          ${m.delta_pct != null ? `<span class="pct ${m.delta_pct > 0 ? "up" : m.delta_pct < 0 ? "down" : "dim"}">${m.delta_pct > 0 ? "+" : ""}${m.delta_pct}%</span>` : ""}</div>
-        ${chartSvg(m.series || [])}
-        <div class="dc-price">${m.avg != null ? fmt(m.avg) + " ₽" : "—"} <span class="dc-unit">СР./ШТ</span></div>
-        <div class="dc-meta">${meta}</div>
-      </div>`;
-    }).join("") + `</div>`;
-    const hours = (watch.hours || []).map((h) => String(h).padStart(2, "0") + ":00").join(" · ");
-    charts += `<div class="dash-note">ЗАМЕРЫ ${hours} МСК${watch.last_slot
-      ? ` · ПОСЛЕДНИЙ ${fmtSlot(watch.last_slot)}` : ""} · ДЕЛЬТА — К ПРОШЛОМУ ЗАМЕРУ</div>`;
-  } else charts = `<div class="empty-sm">ЖДЁМ ПЕРВЫЕ ЗАМЕРЫ БИРЖИ.</div>`;
-
-  // последние патчи игры
-  let patchBody = "";
-  if (patches && patches.items && patches.items.length) {
-    patchBody = patches.items.map((p) => `
-      <div class="dash-patch" data-nav="/patches/${p.id}">
-        <div class="dp-t">${escapeHtml(p.title)}</div>
-        <div class="dp-d">${fmtPatchDate(p.created_at)}</div>
-        <div class="dp-a">${escapeHtml(p.anons || "")}</div>
-      </div>`).join("");
-  } else patchBody = `<div class="empty-sm">СИНХРОНИЗАЦИЯ С ФОРУМОМ EXBO…</div>`;
-
-  home.innerHTML = `<div class="dash">
-    <div class="dash-hero">
-      <div class="dash-hero-t">ТЕРМИНАЛ STALZONE HELPER</div>
-      <div class="dash-hero-s">Крафт, аукцион, сборки артефактов и карта Зоны — живые данные аукциона RU.</div>
-    </div>
-    <div class="dash-grid">
-      ${card("ПРОМОКОДЫ", "КЛИК ПО КОДУ — КОПИРУЕТ", promoDashBody(promos), "/promo", "ВСЕ ПРОМОКОДЫ")}
-      ${card("КРАФТЫ ДНЯ", "ВЫГОДА В ₽ · ЛИКВИДНОСТЬ · СПРОС", crafts, "/craft", "В РАЗДЕЛ КРАФТА")}
-      ${card("САМОЕ ПРОДАВАЕМОЕ", "ТОП-12 ПО ТЕМПУ ПРОДАЖ", salesBody(sales), "/market", "НА АУКЦИОН")}
-      ${card("ТРЕНДЫ БИРЖИ АРТЕФАКТОВ", "ЦЕНА ЗА СУТКИ", trends, "/auction", "НА БИРЖУ")}
-      ${card("ГРАФИКИ ИНГРЕДИЕНТОВ", "ВСЕ НАБЛЮДАЕМЫЕ · СР. ЦЕНА ПРОДАЖ", charts, "/craft", "В РАЗДЕЛ КРАФТА")}
-      ${card("ЗАПРАВКА ГЕНЕРАТОРА", "ВСЕ ИСТОЧНИКИ · ₽ ЗА 1000 ЕД", fuelBody(fuelTop), "/profile", "ПРИСТРОЙКИ — В ПРОФИЛЕ")}
-      ${card("ВЫБРОС", "ВРЕМЯ МСК · ЗАМЕР РАЗ В МИНУТУ", emissionBody(em))}
-      ${card("СБОРКА ДНЯ", "БРОНЯ + КОНТЕЙНЕР + АРТЕФАКТЫ · РАЗ В СУТКИ", dailyBuildBody(daily), "/builds", "К КАЛЬКУЛЯТОРУ")}
-      ${card("МЕТА ОПЕРАЦИЙ", opsDashNote(ops), opsDashBody(ops), "/operations", "К СТАТИСТИКЕ ОПЕРАЦИЙ")}
-      ${card("ПОСЛЕДНИЙ ПАТЧ", "ОБНОВЛЕНИЯ ИГРЫ", patchBody, "/patches", "ВСЕ ПАТЧИ")}
-    </div>
-  </div>`;
-  home.querySelectorAll("[data-nav]").forEach((el) =>
-    el.addEventListener("click", () => { navigate(el.dataset.nav); }));
-  bindPromoCopy(home);
-  home.querySelectorAll(".stab").forEach((b) => b.addEventListener("click", () => {
-    home.querySelectorAll(".stab").forEach((x) => x.classList.toggle("on", x === b));
-    home.querySelectorAll(".sales-view").forEach((v) =>
-      v.classList.toggle("hidden", v.dataset.view !== b.dataset.view));
-  }));
-  startEmTick();
-}
-
-// ---------- ДЕВ · черновик новой главной (/home2) ----------
-// Песочница под редизайн: боевая «/» не трогается вообще, доступ только у
-// админа (ссылка в меню — .nav-adm, гейт ниже). Два макета переключаются
-// кнопкой на самой странице, выбор липнет в localStorage; данные при смене
-// макета не перезапрашиваются — переключение мгновенное.
+// ---------- главная: терминальный «ПУЛЬТ» ----------
+// Боевая «/» рисуется макетом ПУЛЬТ (приборная строка, индикаторы слева,
+// главный экран по центру, новости справа). Второй макет ПЛАТА остался
+// песочницей на /home2 под админом — там же переключатель и предпросмотр
+// будущих правок, чтобы не трогать боевую страницу.
 const HOME2_KEY = "sz_home2";
 const HOME2_LAYOUTS = { hud: "ПУЛЬТ", board: "ПЛАТА" };
 const home2Layout = () => {
@@ -1506,8 +1389,56 @@ const home2Layout = () => {
   const v = localStorage.getItem(HOME2_KEY);
   return HOME2_LAYOUTS[v] ? v : "hud";
 };
-let home2Data = null;
+let home2Data = null, home2Ts = 0;
 
+// данные общие у боевой главной и у песочницы: минута кэша, чтобы переход
+// «/» ↔ «/home2» и смена макета не дёргали десяток эндпоинтов заново
+async function loadHome2Data() {
+  if (home2Data && Date.now() - home2Ts < 60000) return home2Data;
+  const j = (u) => fetch(api(u)).then((r) => r.json()).catch(() => null);
+  const [top, art, watch, em, sales, fuelTop, patches, daily, promos, ops, feed] =
+    await Promise.all([
+      j(`/top${availParam("?")}`), j("/artmarket/top?window=24h"), j("/watch"),
+      j("/emission"), j("/sales/top?n=12"), j("/fuel/top?n=20"),
+      j("/patches?limit=5"), j("/build/daily"), j("/promos"),
+      j("/operations/overview"), j("/news/feed?limit=14"),
+    ]);
+  home2Data = { top, art, watch, em, sales, fuelTop, patches, daily, promos, ops, feed };
+  home2Ts = Date.now();
+  return home2Data;
+}
+
+// общая привязка обработчиков: нужна и боевой главной, и песочнице, и
+// результатам поиска внутри модулей
+function h2Bind(root) {
+  h2BindNav(root);
+  root.querySelectorAll(".h2-find").forEach(h2BindFind);
+  bindPromoCopy(root);
+  root.querySelectorAll(".stab").forEach((b) => b.addEventListener("click", () => {
+    root.querySelectorAll(".stab").forEach((x) => x.classList.toggle("on", x === b));
+    root.querySelectorAll(".sales-view").forEach((v) =>
+      v.classList.toggle("hidden", v.dataset.view !== b.dataset.view));
+  }));
+  startEmTick();
+}
+
+// боевая «/»: всегда ПУЛЬТ, без админской полосы и переключателя макетов
+async function openHomeMain() {
+  if (mapCleanup) { mapCleanup(); mapCleanup = null; }
+  detail.classList.add("hidden"); page.classList.add("hidden"); results.innerHTML = "";
+  home.classList.remove("hidden");
+  if (home.dataset.view === "main"
+      && home.dataset.ts && Date.now() - +home.dataset.ts < 60000) return;
+  home.innerHTML = `<div class="spinner">// ЗАГРУЗКА ГЛАВНОЙ</div>`;
+  const d = await loadHome2Data();
+  if (location.pathname !== "/") return;     // успели уйти со страницы
+  home.dataset.ts = Date.now();
+  home.dataset.view = "main";
+  home.innerHTML = home2Hud(d);
+  h2Bind(home);
+}
+
+// ---------- ДЕВ · песочница макетов (/home2, только админ) ----------
 async function openHome2() {
   if (mapCleanup) { mapCleanup(); mapCleanup = null; }
   detail.classList.add("hidden"); page.classList.add("hidden"); results.innerHTML = "";
@@ -1517,25 +1448,17 @@ async function openHome2() {
   if (!ME.is_admin) {
     home.dataset.view = "";
     home.innerHTML = `<div class="stub"><div class="stub-code">[ 403 ]</div>
-      <div class="stub-title">▸ ЧЕРНОВИК НОВОЙ ГЛАВНОЙ — ТОЛЬКО ДЛЯ АДМИНОВ</div>
-      <a class="stub-back" href="/">◂ НА ТЕКУЩУЮ ГЛАВНУЮ</a></div>`;
+      <div class="stub-title">▸ ПЕСОЧНИЦА МАКЕТОВ — ТОЛЬКО ДЛЯ АДМИНОВ</div>
+      <a class="stub-back" href="/">◂ НА ГЛАВНУЮ</a></div>`;
     return;
   }
   if (home.dataset.view === "home2" && home2Data
       && home.dataset.ts && Date.now() - +home.dataset.ts < 60000) {
     renderHome2(); return;
   }
-  home.innerHTML = `<div class="spinner">// СБОРКА НОВОЙ ГЛАВНОЙ</div>`;
-  const j = (u) => fetch(api(u)).then((r) => r.json()).catch(() => null);
-  const [top, art, watch, em, sales, fuelTop, patches, daily, promos, ops, feed] =
-    await Promise.all([
-      j(`/top${availParam("?")}`), j("/artmarket/top?window=24h"), j("/watch"),
-      j("/emission"), j("/sales/top?n=12"), j("/fuel/top?n=20"),
-      j("/patches?limit=5"), j("/build/daily"), j("/promos"),
-      j("/operations/overview"), j("/news/feed?limit=14"),
-    ]);
-  if (location.pathname !== "/home2") return;   // успели уйти со страницы
-  home2Data = { top, art, watch, em, sales, fuelTop, patches, daily, promos, ops, feed };
+  home.innerHTML = `<div class="spinner">// СБОРКА МАКЕТА</div>`;
+  await loadHome2Data();
+  if (location.pathname !== "/home2") return;
   home.dataset.ts = Date.now();
   home.dataset.view = "home2";
   renderHome2();
@@ -1833,25 +1756,17 @@ function renderHome2() {
   const btns = Object.entries(HOME2_LAYOUTS).map(([k, name]) =>
     `<button class="h2-adm-btn${k === lay ? " on" : ""}" data-lay="${k}">${name}</button>`).join("");
   home.innerHTML = `<div class="h2-adm">
-      <span class="h2-adm-l">▸ ЧЕРНОВИК НОВОЙ ГЛАВНОЙ · ВИДЕН ТОЛЬКО АДМИНУ</span>
+      <span class="h2-adm-l">▸ ПЕСОЧНИЦА МАКЕТОВ · ВИДНА ТОЛЬКО АДМИНУ</span>
       <div class="h2-adm-b">${btns}</div>
       <a class="h2-adm-a" href="/dev/news">✎ РЕДАКТОР НОВОСТЕЙ</a>
-      <a class="h2-adm-a" href="/">◂ ТЕКУЩАЯ ГЛАВНАЯ</a>
+      <a class="h2-adm-a" href="/">◂ БОЕВАЯ ГЛАВНАЯ</a>
     </div>` + (lay === "board" ? home2Board(d) : home2Hud(d));
   home.querySelectorAll(".h2-adm-btn").forEach((b) => b.addEventListener("click", () => {
     localStorage.setItem(HOME2_KEY, b.dataset.lay);
     renderHome2();
     window.scrollTo(0, 0);
   }));
-  h2BindNav(home);
-  home.querySelectorAll(".h2-find").forEach(h2BindFind);
-  bindPromoCopy(home);
-  home.querySelectorAll(".stab").forEach((b) => b.addEventListener("click", () => {
-    home.querySelectorAll(".stab").forEach((x) => x.classList.toggle("on", x === b));
-    home.querySelectorAll(".sales-view").forEach((v) =>
-      v.classList.toggle("hidden", v.dataset.view !== b.dataset.view));
-  }));
-  startEmTick();
+  h2Bind(home);
 }
 
 // линия средней цены по снапшотам (2 замера/сутки); класс spark — наведение
@@ -6387,7 +6302,7 @@ const devSubnav = (on) => `<div class="dev-subnav">
   <a href="/dev/craft"${on === "craft" ? ' class="on"' : ""}>РЕЦЕПТЫ</a>
   <a href="/dev/scan"${on === "scan" ? ' class="on"' : ""}>СКАНЕР</a>
   <a href="/dev/news"${on === "news" ? ' class="on"' : ""}>НОВОСТИ</a>
-  <a href="/home2">ГЛАВНАЯ v2 ↗</a>
+  <a href="/home2">МАКЕТЫ ↗</a>
 </div>`;
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
@@ -8845,13 +8760,13 @@ function route() {
     setNav(path.slice(1)); openPage(path.slice(1)); return;
   }
 
-  // "/" — дашборд-главная
+  // "/" — главная-терминал (макет ПУЛЬТ)
   if (path === "/") {
     strip.classList.add("hidden"); page.classList.add("hidden");
     setNav("home");
     detail.classList.add("hidden"); results.innerHTML = "";
     home.classList.remove("hidden");
-    loadDashboard(); return;
+    openHomeMain(); return;
   }
 
   // крафт-контекст: раздел / лендинг / поиск / карточка / профиль
