@@ -3321,16 +3321,22 @@ function adInsert(root) {
 }
 
 // Нижняя врезка — под контентом раздела, когда человек уже получил ответ.
+// Правило владельца: реклама везде, но не поперёк контента. Значит в наборе
+// должны быть ВСЕ страницы с ответом, и список сверен с роутером целиком.
+//
 // Разделы, которых тут нет, остаются без рекламы намеренно: /search (самый
-// вовлечённый вход сайта, глубина 18.5 — не трогаем), /profile, /map, /dev/*,
-// юридические страницы.
+// вовлечённый вход сайта, глубина 18.5 — не трогаем), /map (врезка не влезает
+// под полноэкранный холст), /profile, /home2 и /dev/* (админские), юридические
+// страницы.
 const AD_BOTTOM_PATHS = new Set([
   "/", "/market", "/auction", "/barter", "/obmen", "/builds", "/compare",
   "/operations", "/items", "/guides", "/patches", "/quests", "/promo",
-  "/vygodno-kraftit",
+  "/craft", "/vygodno-kraftit",
 ]);
+// Карточки: /item/… и /artefact/… — один и тот же тип страницы (детальная
+// карточка с ценами), поэтому и правило у них одно.
 const adBottomOk = (p) => AD_BOTTOM_PATHS.has(p)
-  || /^\/(guides|patches|quests|item)\/[^/]+$/.test(p);
+  || /^\/(guides|patches|quests|item|artefact)\/[^/]+$/.test(p);
 
 let adBottomTimer = null, adBottomAt = 0;
 const adHost = document.getElementById("adBottom");   // ссылку держим сами: внутри
