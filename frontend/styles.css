@@ -2492,17 +2492,38 @@ body:has(.cmp-tray:not(.hidden)) .auth-notice { bottom: 76px; }
 .promo-code.promo-link:hover { background: rgba(124, 230, 142, 0.08); }
 .promo-code.promo-link .pc-code { letter-spacing: 0.1em; }
 
-/* компактные строки модуля на главной */
+/* Один модуль обслуживает две ширины: узкую рейку и широкий центр главной.
+   auto-fit сам решает — одна колонка или три, отдельной вёрстки не нужно. */
+.dash-promos { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 2px 14px; }
+
+/* компактные строки модуля на главной: код занимает всю ширину, срок — под ним */
 .dash-promo {
-  display: flex; align-items: center; justify-content: space-between; gap: 10px;
-  padding: 5px 4px;
+  display: flex; flex-direction: column; align-items: stretch; gap: 3px;
+  padding: 6px 4px;
 }
-.dash-promo .promo-code { margin-top: 0; padding: 5px 10px; min-width: 0; }
+.dash-promo .promo-code {
+  position: relative; display: flex; width: 100%;
+  margin-top: 0; padding: 5px 10px; min-width: 0;
+}
 .dash-promo .promo-code .pc-code {
   font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.dash-promo-m { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; flex: 0 0 auto; }
+/* В рейке подсказка «КОПИРОВАТЬ» отъедала половину кнопки и код уходил в
+   многоточие («FRN…»), то есть копировать было нечего. Роль подсказки здесь
+   берёт подзаголовок модуля, а сама она всплывает поверх кнопки: как
+   подтверждение после клика (.copied) и как «ОТКРЫТЬ ▸» у промо-ссылок. */
+.dash-promo .promo-code .pc-hint {
+  position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+  opacity: 0; transition: opacity 0.12s;
+  background: var(--panel-deep); padding-left: 10px;
+}
+.dash-promo .promo-code.copied .pc-hint,
+.dash-promo .promo-code.promo-link:hover .pc-hint { opacity: 1; }
+/* гасим код под подтверждением, иначе «STALZ СКОПИРОВАНО ✓» читается как обрезанный код */
+.dash-promo .promo-code.copied .pc-code { opacity: 0.25; }
+.dash-promo-m { display: flex; align-items: baseline; gap: 5px; padding: 0 2px; }
 .dash-promo-ref { font-size: 9px; letter-spacing: 0.1em; color: var(--amber); white-space: nowrap; }
+.dash-promo-sep { font-size: 9px; color: var(--dimmer); }
 .dash-promo-exp { font-size: 10px; color: var(--dim); white-space: nowrap; }
 
 /* ---------- адаптив ---------- */
