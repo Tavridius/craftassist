@@ -3063,6 +3063,13 @@ a.ops-gear:hover .nm { text-decoration: underline; }
 .h2-hud .h2-mod.promo-strip .h2-mt { font-size: 12px; color: var(--bright); }
 .h2-hud .h2-mod.promo-strip .h2-mh { border-bottom-color: var(--border-dim); }
 .h2-hud .h2-mod.promo-strip .h2-more { margin-top: 6px; padding-top: 4px; }
+/* колонка уже общей (165 вместо 190): на центре ~600px общая давала только две
+   колонки, и полоса разъезжалась на две строки — вдвое дороже по высоте.
+   165px — это ещё с запасом под самый длинный реальный код (FRND-UTFF-1259
+   и «ЗАБРАТЬ В STEAM» укладываются в ~153px вместе с падингом кнопки). */
+.h2-hud .h2-mod.promo-strip .dash-promos {
+  grid-template-columns: repeat(auto-fit, minmax(165px, 1fr));
+}
 .h2-hud .h2-frame {
   background: var(--panel-main);
   border-top: 1px solid var(--border-dim);
