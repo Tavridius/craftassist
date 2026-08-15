@@ -8,8 +8,10 @@ M — множитель качества: тиры непрерывны по +0
 
 Заражения (минусы артефактов) — ЖЁСТКОЕ ограничение:
   net_type = Σ по артам (эмиссия + защита);  контейнер гасит положительное:
-  net_eff = net × (1 − Внутр.защита%/100).  Игрок терпит до лимита (радиация/
-  температура/био/холод — 1.0, пси — 3.0); отрицательный net — запас защиты,
+  net_eff = net × (1 − Внутр.защита%/100).  Игрок терпит СТРОГО НИЖЕ лимита
+  (радиация/температура/био/холод — 1.0, пси — 3.0): на самом значении лимита
+  урон уже идёт — 2.99 по пси безопасно, 3.0 бьёт (владелец, 15.08.2026), см.
+  CONTAM_CEIL и _ceil. Отрицательный net — запас защиты,
   не вреден (подтверждено юзером). Превышение оптимизатор чинит в три эшелона:
   замена слабейших слотов контрартами (арты с защитой заражений — «4 арта +
   2 контрарта»), удорожание эмиссии (двойственный подъём λ с демпфером),
@@ -76,6 +78,7 @@ CONTAM_KEYS = {f"stalker.artefact_properties.factor.{k}": v for k, v in _CONTAM.
 FROST_KEY = "stalker.artefact_properties.factor.frost_accumulation"  # «Холод» — защита НЕ гасит (подтверждено скрином)
 ACCUM_KEYS = set(CONTAM_KEYS)  # accumulation-статы идут в блок заражения, не в статы
 
+CONTAM_CEIL = 1.0 - 1e-6   # потолок нормированного заражения (net/limit), см. _ceil
 BUDGET_STEPS = 400   # дискретизация бюджета в DP
 ALTERNATIVES = 2     # запасных сборок
 
@@ -277,7 +280,8 @@ def contamination(variants: list[dict], cont: dict) -> list[dict]:
         reduce = 1.0 if key == FROST_KEY else (1 - prot)  # мороз защита не гасит
         net = emit * reduce + protect + self_c.get(key, 0.0)
         out.append({"key": key, "name": name, "net": round(net, 3), "limit": limit,
-                    "over": limit is not None and net > limit + 1e-9})
+                    # строго ниже лимита: на самом значении урон уже идёт (см. _ceil)
+                    "over": limit is not None and net > limit * CONTAM_CEIL})
     return out
 
 
@@ -339,13 +343,24 @@ def _norms(variants: list[dict], base: dict | None = None) -> dict:
     return n
 
 
+def _ceil(key: str) -> float:
+    """Потолок нормированного ограничения. У заражений он СТРОГИЙ: лимит — это
+    значение, на котором урон уже идёт (по пси 2.99 безопасно, 3.0 бьёт —
+    подтверждено владельцем 15.08.2026), поэтому держим микрозазор. Оптимизатор
+    здесь knapsack: без зазора он охотно садится ровно на лимит, и сборка на
+    ровных 3.0 уезжала игроку помеченной как безопасная. Ограничения «минус не в
+    итоге» (псевдоключи «!стат») к заражениям отношения не имеют — там ровно 1.0.
+    """
+    return 1.0 if key.startswith("!") else CONTAM_CEIL
+
+
 def _overage(n: dict) -> float:
-    return sum(max(0.0, x - 1.0) for x in n.values())
+    return sum(max(0.0, x - _ceil(k)) for k, x in n.items())
 
 
 def _worst_emitter(variants: list[dict], n: dict) -> str | None:
     """id арта, сильнее всех вносящего в самый превышенный тип (для «починки»)."""
-    key = max((k for k in n if n[k] > 1.0 + 1e-10), key=lambda k: n[k], default=None)
+    key = max((k for k in n if n[k] > _ceil(k) + 1e-10), key=lambda k: n[k], default=None)
     if key is None:
         return None
     v = max(variants, key=lambda v: v["_em"].get(key, 0.0))
@@ -603,7 +618,7 @@ def _optimize(pool: list[dict], cont: dict, budget: float, score, banned: set,
             # при смене знака превышения шаг делится пополам (гасим осцилляцию)
             moved = False
             for k in lam:
-                rel = max(-1.0, min(4.0, n.get(k, 0.0) - 1.0))
+                rel = max(-1.0, min(4.0, n.get(k, 0.0) - _ceil(k)))
                 s = 1 if rel > 1e-9 else (-1 if rel < -1e-9 else 0)
                 if s and sgn[k] and s != sgn[k]:
                     stp[k] = max(stp[k] * 0.5, 0.05)
@@ -695,8 +710,9 @@ def _warnings(builds: list[dict]) -> list[str]:
     out = ["Заточка +2%/уровень; доп-свойства порогов +5/+10/+15 учтены: на +15 "
            "активен весь пул (детерминировано), на +5/+10 — матожиданием "
            "(какие именно выпали — случайный порядок).",
-           "Заражения гасятся внутренней защитой контейнера (кроме холода); сборки "
-           "сверх лимитов (рад/темп/био/холод — 1.0, пси — 3.0) не выдаются.",
+           "Заражения гасятся внутренней защитой контейнера (кроме холода); итог "
+           "держится строго НИЖЕ лимита (рад/темп/био/холод — 1.0, пси — 3.0): на "
+           "самом значении урон уже идёт, 2.99 по пси безопасно, 3.0 бьёт.",
            _price_note()]
     if builds:
         for name in builds[0].get("low_liquidity", []):
