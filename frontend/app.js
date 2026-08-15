@@ -5182,8 +5182,15 @@ function renderAuto(cont) {
       ${autoState.stats.length > 1 ? `<button class="bs-x" data-rmstat="${i}">✕</button>` : ""}
     </div>`).join("");
   const negs = negStats();
+  // Заражения (пси/рад/био/темп/холод) под этот флажок НЕ попадают: их держат
+  // лимиты игрока и контрарты, а не «минус не в итоге» (builds.py, CONTAM_KEYS).
+  // Оговорка жила только в title родителя, и «БЕЗ ВСЕХ ОТРИЦАТЕЛЬНЫХ» с пси 1.5
+  // в результате читалось как баг (Sanshiai, чат багов 12.08). Пишем в форме.
+  const contamNote = autoState.noNeg
+    ? `<div class="aexc-note">ЗАРАЖЕНИЯ (ПСИ · РАД · БИО · ТЕМП · ХОЛОД) СЮДА НЕ ВХОДЯТ —
+         ИХ ДЕРЖАТ ЛИМИТЫ ИГРОКА И КОНТРАРТЫ, СМ. БЛОК ЗАРАЖЕНИЯ В СБОРКЕ</div>` : "";
   const chips = autoState.noNeg
-    ? `<button class="xchip" data-nonegoff title="Убрать исключение">БЕЗ ВСЕХ ОТРИЦАТЕЛЬНЫХ ЭФФЕКТОВ ✕</button>`
+    ? `<button class="xchip" data-nonegoff title="Убрать исключение">БЕЗ ВСЕХ ОТРИЦАТЕЛЬНЫХ, КРОМЕ ЗАРАЖЕНИЙ ✕</button>`
     : autoState.exclude.map((k) => {
         const s = negs.find((n) => n.key === k);
         return `<button class="xchip" data-unx="${k}" title="Убрать исключение">${escapeHtml(s ? s.name : k)} ✕</button>`;
@@ -5203,6 +5210,7 @@ function renderAuto(cont) {
         ${chips}
         ${autoState.noNeg ? "" : `<div class="isel" id="aExcSel"></div>`}
       </div>
+      ${contamNote}
       <button id="aGo" class="prof-save">РАССЧИТАТЬ СБОРКУ</button>
     </div>${res}`;
 }
@@ -5385,8 +5393,8 @@ function wireBuilds(cont) {
     const excHost = $("aExcSel");
     if (excHost) iconSelect(excHost,
       [{ id: "", label: "+ ИСКЛЮЧИТЬ МИНУС", search: "" },
-       { id: "__all__", label: "БЕЗ ВСЕХ ОТРИЦАТЕЛЬНЫХ ЭФФЕКТОВ",
-         search: "без всех отрицательных эффектов" },
+       { id: "__all__", label: "БЕЗ ВСЕХ ОТРИЦАТЕЛЬНЫХ, КРОМЕ ЗАРАЖЕНИЙ",
+         search: "без всех отрицательных эффектов заражения пси" },
        ...negStats()
         .filter((s) => !autoState.exclude.includes(s.key))
         .map((s) => ({ id: s.key, label: s.name, search: s.name }))],

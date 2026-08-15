@@ -923,6 +923,8 @@ a.auth-user:hover { color: var(--green); border-color: var(--green-border); text
 /* исключение минусов в автоподборе: чипы + адаптер-список */
 .aexc { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .aexc .isel { flex: 0 1 240px; min-width: 180px; }
+/* оговорка про заражения: раньше жила в title и до игрока не доходила */
+.aexc-note { font-size: 10px; letter-spacing: 0.06em; color: var(--dimmer); line-height: 1.5; }
 .xchip {
   font: inherit; font-size: 11px; letter-spacing: 0.06em; cursor: pointer;
   background: rgba(255, 107, 94, 0.06); border: 1px solid var(--red-border);
