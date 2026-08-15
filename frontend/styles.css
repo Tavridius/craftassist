@@ -595,6 +595,8 @@ a.auth-user:hover { color: var(--green); border-color: var(--green-border); text
 }
 .tree-reset:hover { background: rgba(255, 184, 77, 0.08); }
 .tile-sub { font-size: 9px; letter-spacing: 0.06em; color: var(--dimmer); margin-top: 3px; }
+/* «купить готовое дешевле, чем скрафтить» — предупреждение, а не сноска */
+.tile-sub.warn { color: var(--amber); }
 .alt-lock { font-size: 10px; color: var(--red); letter-spacing: 0.05em; }
 
 .ttotal { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; background: var(--panel); gap: 12px; flex-wrap: wrap; }

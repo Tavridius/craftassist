@@ -654,13 +654,26 @@ function tilesBlock(d, chosen) {
   const treeE = chosen ? Math.round(calcTreeEnergy(chosen)) : null;
   const eSub = treeE != null && chosen.energy != null && treeE !== Math.round(chosen.energy)
     ? `<div class="tile-sub" title="С учётом крафта компонентов дерева (на 1 крафт-операцию)">ВСЁ ДЕРЕВО ~${fmt(treeE)}</div>` : "";
+  // Маржа считается от ЦЕНЫ ПРОДАЖИ (медиана реальных сделок минус комиссия), а
+  // не от цены аука — цена аука это «сколько отдать за готовое», а не «сколько
+  // выручить». У большинства предметов они близки, и строка читается. Но там,
+  // где продажа сильно выше выкупа, выходит «ВЫГОДНО +34%» при себестоимости
+  // ВЫШЕ аука (Контрольная плата: себест 19 834, аук 7 580) — и это выглядит
+  // как перепутанные местами плитки. Ровно так его и прочитали в чате багов
+  // (Derkin, 11.08). Числа верные, не хватало того, из чего считается маржа:
+  // подписываем её базу и помечаем случай «купить готовое дешевле, чем крафтить».
+  const mSub = v.sell_net != null
+    ? `<div class="tile-sub" title="Маржа = чистая продажа (${fmt(v.sell_net)} ₽ после комиссии ${
+        v.fee_pct ?? 5}%) минус себестоимость">С ПРОДАЖИ ~${fmt(v.sell_net)}</div>` : "";
+  const bSub = d.buy_price != null && d.craft_cost != null && d.buy_price < d.craft_cost
+    ? `<div class="tile-sub warn" title="Готовое на ауке дешевле, чем собрать его из компонентов. Крафт всё равно может быть выгоден НА ПРОДАЖУ — маржа считается от цены продажи, а не от этой цены.">ДЕШЕВЛЕ КРАФТА</div>` : "";
   return `<div class="tiles ${fuelTile ? "five" : ""}">
     <div class="tile"><div class="lbl">СЕБЕСТОИМОСТЬ${fuelTile ? " +⛽" : ""}</div>
       <div class="val">${d.craft_cost != null ? fmt(d.craft_cost) + " ₽" : "—"}</div></div>
     <div class="tile"><div class="lbl">ЦЕНА АУКА</div>
-      <div class="val">${d.buy_price != null ? fmt(d.buy_price) + " ₽" : "—"}</div></div>
+      <div class="val">${d.buy_price != null ? fmt(d.buy_price) + " ₽" : "—"}</div>${bSub}</div>
     <div class="tile"><div class="lbl">МАРЖА / ШТ</div>
-      <div class="val ${diffCls}">${diffVal}</div></div>
+      <div class="val ${diffCls}">${diffVal}</div>${mSub}</div>
     <div class="tile"><div class="lbl">ЭНЕРГИЯ ВЕРСТАКА</div>
       <div class="val amber">${chosen && chosen.energy != null ? fmt(chosen.energy) : "—"}</div>${eSub}</div>
     ${fuelTile}
