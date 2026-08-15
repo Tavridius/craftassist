@@ -1541,6 +1541,10 @@ html.map-drawing .maped-wrap .leaflet-container { cursor: crosshair; }
 .chat-msg { margin-bottom: 4px; overflow-wrap: anywhere; }
 .chat-msg .t { color: var(--faint); font-size: 10px; }
 .chat-msg .u { color: var(--green); font-weight: 700; }
+/* разделитель дня: дату на каждой строке узкий док не переживёт */
+.chat-day { display: flex; align-items: center; gap: 8px; margin: 10px 0 6px; }
+.chat-day::before, .chat-day::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+.chat-day span { font-size: 9px; letter-spacing: 0.12em; color: var(--dimmer); white-space: nowrap; }
 .chat-empty { color: var(--dimmer); font-size: 11px; letter-spacing: 0.08em; padding: 14px 4px; }
 .chat-form { display: flex; border-top: 1px solid var(--border); }
 /* док рисуется до ответа /me, форма пустая — держим её высоту, чтобы лента не прыгала */

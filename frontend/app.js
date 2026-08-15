@@ -2060,9 +2060,43 @@ function chatDockRender() {
   chatPollTimer = setInterval(() => chatRefresh(), 5000);
 }
 
+function chatDayLabel(ts) {
+  const d = new Date(ts * 1000), now = new Date();
+  const midnight = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const days = Math.round((midnight(now) - midnight(d)) / 86400000);
+  if (days === 0) return "СЕГОДНЯ";
+  if (days === 1) return "ВЧЕРА";
+  const opts = { day: "numeric", month: "long" };
+  if (d.getFullYear() !== now.getFullYear()) opts.year = "numeric";
+  return d.toLocaleDateString("ru-RU", opts).replace(/\s*г\.$/i, "").toUpperCase();
+}
+
 function chatMsgHtml(m) {
-  const t = new Date(m.ts * 1000).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
-  return `<div class="chat-msg"><span class="t">${t}</span> <span class="u">${escapeHtml(m.login)}</span> ${escapeHtml(m.text)}</div>`;
+  const dt = new Date(m.ts * 1000);
+  const t = dt.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
+  const full = dt.toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "short" });
+  return `<div class="chat-msg"><span class="t" title="${full}">${t}</span> <span class="u">${escapeHtml(m.login)}</span> ${escapeHtml(m.text)}</div>`;
+}
+
+// Лента — это последние 500 сообщений комнаты, то есть месяцы истории, а одно
+// время без даты на вопрос «когда это писали» не отвечает (просьба Sanshiai,
+// 10.08). Ставим разделители дней, как в мессенджерах: дату на каждой строке
+// док шириной с колонку не переживёт. chatLastDay — день последнего
+// отрисованного сообщения; сообщения приходят порциями по таймеру и клеятся
+// в конец, поэтому состояние живёт между вызовами и сбрасывается вместе с лентой.
+let chatLastDay = "";
+
+function chatFeedHtml(msgs) {
+  let h = "";
+  for (const m of msgs) {
+    const key = new Date(m.ts * 1000).toDateString();
+    if (key !== chatLastDay) {
+      h += `<div class="chat-day"><span>${chatDayLabel(m.ts)}</span></div>`;
+      chatLastDay = key;
+    }
+    h += chatMsgHtml(m);
+  }
+  return h;
 }
 
 // reset — первая загрузка комнаты (спиннер на экране), иначе догрузка по таймеру.
@@ -2093,11 +2127,11 @@ async function chatRefresh(reset = false) {
     if (!hasMsgs()) box.innerHTML = `<div class="chat-empty">[!] НЕТ СВЯЗИ — ПОВТОР ЧЕРЕЗ 5 С</div>`;
     return;
   }
-  if (reset) box.innerHTML = "";
+  if (reset) { box.innerHTML = ""; chatLastDay = ""; }
   if (d.messages.length) {
     box.querySelectorAll(".chat-empty, .spinner").forEach((el) => el.remove());
     const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
-    box.insertAdjacentHTML("beforeend", d.messages.map(chatMsgHtml).join(""));
+    box.insertAdjacentHTML("beforeend", chatFeedHtml(d.messages));
     chatLastId = d.last_id;
     if (reset || atBottom) box.scrollTop = box.scrollHeight;
   } else if (!hasMsgs()) {
