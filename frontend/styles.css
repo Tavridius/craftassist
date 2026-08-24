@@ -2375,6 +2375,57 @@ body:has(.cmp-tray:not(.hidden)) .auth-notice { bottom: 76px; }
 .qst-node.dragging { cursor: grabbing; z-index: 6; opacity: 0.95;
   box-shadow: var(--glow); border-color: var(--green-border); }
 
+/* Переключатель вида линейки: список / схема (renderQuests) */
+.qst-views { display: flex; gap: 4px; margin: 0 0 10px; }
+.qst-view {
+  font-family: inherit; font-size: 11px; letter-spacing: 0.08em; cursor: pointer;
+  padding: 6px 12px; background: var(--panel); color: var(--dim);
+  border: 1px solid var(--border);
+}
+.qst-view:hover { color: var(--bright); }
+.qst-view.on { color: var(--bright); background: var(--row-hover); border-color: var(--green-border); }
+
+/* Список линейки — вид по умолчанию на узком экране. Схема осталась рядом
+   кнопкой: на телефоне она требовала зума двумя руками, отсюда 50% отказов
+   и 27 с на визите (аудит Метрики 25.08.2026). */
+.qlist { display: flex; flex-direction: column; gap: 14px; }
+.qlist-step { display: flex; flex-direction: column; gap: 6px; }
+.qlist-stepn {
+  font-size: 10px; letter-spacing: 0.14em; color: var(--dimmer);
+  border-bottom: 1px solid var(--border); padding-bottom: 4px;
+}
+.qlist-stepn span { color: var(--dim); letter-spacing: 0.06em; }
+.qlist-row {
+  display: flex; align-items: flex-start; gap: 10px; cursor: pointer;
+  padding: 9px 10px; background: var(--panel);
+  border: 1px solid var(--border); border-left: 3px solid var(--dimmer);
+}
+.qlist-row.is-main { border-color: var(--amber-border); border-left-color: var(--amber); }
+.qlist-row.is-group { border-left-color: var(--blue, #5fa8ff); }
+.qlist-row:hover { background: var(--row-hover); border-color: var(--green-border); }
+.qlist-row.done { opacity: 0.45; }
+.qlist-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.qlist-kind { font-size: 9px; letter-spacing: 0.12em; color: var(--dimmer); }
+.qlist-row.is-main .qlist-kind { color: var(--amber); }
+.qlist-row.is-group .qlist-kind { color: var(--blue, #5fa8ff); }
+.qlist-name { font-size: 13px; font-weight: 700; color: var(--bright); line-height: 1.35; }
+.qlist-after { font-size: 11px; color: var(--dim); line-height: 1.4; }
+.qlist-grp { font-size: 11px; color: var(--blue, #5fa8ff); letter-spacing: 0.04em; }
+.qlist-chev { font-size: 10px; letter-spacing: 0.1em; color: var(--blue, #5fa8ff); }
+.qlist-done {
+  flex: none; font-family: inherit; font-size: 14px; cursor: pointer;
+  width: 34px; height: 34px; background: transparent; color: var(--dimmer);
+  border: 1px solid var(--border);
+}
+.qlist-done:hover { color: var(--green); border-color: var(--green-border); }
+.qlist-row.done .qlist-done {
+  color: var(--green); border-color: var(--green); background: rgba(124, 230, 142, 0.12);
+}
+@media (max-width: 700px) {
+  .qlist-done { width: 44px; height: 44px; }   /* цель под палец, а не под курсор */
+  .qlist-name { font-size: 14px; }
+}
+
 /* ---------- модал квеста ---------- */
 .qm { max-width: 780px; }
 .qm-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }

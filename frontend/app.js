@@ -3721,6 +3721,10 @@ async function renderComments(pageKey) {
 // автоматическая: уровень = длина цепочки родителей, стрелки — SVG-безье.
 let questData = null;                                  // кэш ответа /api/quests
 let questFaction = localStorage.getItem("sz_quest_f") || "stalkers";
+// «» = выбор не сделан, решает ширина экрана. Схема на телефоне нечитаема
+// (аудит 25.08.2026), но выбор человека важнее ширины — поэтому запоминаем.
+let questView = localStorage.getItem("sz_quest_view") || "";
+const questViewNow = () => questView || (innerWidth <= 700 ? "list" : "chart");
 let qmMapCleanup = null;                               // Leaflet-миникарта модала
 let qmEpoch = 0;                                       // гонки: модал переоткрыли/закрыли
 const _qLoadSet = (k) => { try { return new Set(JSON.parse(localStorage.getItem(k) || "[]")); } catch (e) { return new Set(); } };
@@ -3734,6 +3738,18 @@ const questFactionOf = (id) =>
 // квест виден в линейке fid, если это его основная ИЛИ доп. линейка (общий квест)
 const questInFaction = (q, fid) =>
   q.faction === fid || (q.factions || []).includes(fid);
+
+// память игрока: отметить квест выполненным вместе с обязательными предшественниками
+const questAncestorsOf = (qid) => {
+  const res = new Set(), stack = [qid];
+  while (stack.length) {
+    const cq = questData.items.find((x) => x.id === stack.pop());
+    ((cq && cq.parents) || []).forEach((p) => { if (!res.has(p)) { res.add(p); stack.push(p); } });
+  }
+  return res;
+};
+const saveQuestDone = () => { try { localStorage.setItem("sz_quest_done", JSON.stringify([...questDone])); } catch (e) {} };
+const markQuestDone = (qid) => { questDone.add(qid); questAncestorsOf(qid).forEach((a) => questDone.add(a)); };
 
 async function openQuests(selId) {
   hideSeoBlock();
@@ -3774,6 +3790,7 @@ function questFilledFactions(d) {
 
 function renderQuests() {
   const d = questData;
+  const view = questViewNow();
   const tabs = questFilledFactions(d).map((f) => {
     const n = d.items.filter((q) => questInFaction(q, f.id)).length;
     return `<button class="qst-tab${f.id === questFaction ? " on" : ""}" data-f="${f.id}"
@@ -3785,10 +3802,19 @@ function renderQuests() {
       <div class="section-note">КЛИК ПО КВЕСТУ — ПРОХОЖДЕНИЕ, НАГРАДА И ТОЧКИ НА КАРТЕ</div>
     </div>
     <div class="qst-tabs">${tabs}</div>
+    <div class="qst-views">
+      <button class="qst-view${view === "list" ? " on" : ""}" data-v="list">СПИСКОМ</button>
+      <button class="qst-view${view === "chart" ? " on" : ""}" data-v="chart">СХЕМОЙ</button>
+    </div>
     <div class="qst-wrap" id="qstWrap"></div>
-    <div class="map-legend">Схема идёт сверху вниз, стрелка — «открывается после». Блоки с
-      <b style="color:var(--amber)">янтарной</b> рамкой — основная линейка, серые — побочные.
-      📍 — у квеста есть точки на карте. Колесо — зум, тяни пустое поле — двигать схему.${d.is_admin
+    <div class="map-legend">${view === "list"
+      ? `Шаг — это ряд схемы: всё внутри шага открывается после одного и того же.
+         <b style="color:var(--amber)">Янтарные</b> — основная линейка, серые — побочные.
+         📍 — у квеста есть точки на карте. Клик по квесту — прохождение и награда,
+         ✓ — отметить пройденным (вместе с предыдущими).`
+      : `Схема идёт сверху вниз, стрелка — «открывается после». Блоки с
+         <b style="color:var(--amber)">янтарной</b> рамкой — основная линейка, серые — побочные.
+         📍 — у квеста есть точки на карте. Колесо — зум, тяни пустое поле — двигать схему.`}${d.is_admin
         ? " Пунктирные — черновики (видны только админам). <b style=\"color:var(--green)\">Расставлять блоки и связи — в ДЕВ · КВЕСТЫ → КАРТА ЛИНЕЕК.</b>"
         : ""}</div>
   </div>`;
@@ -3797,25 +3823,26 @@ function renderQuests() {
     localStorage.setItem("sz_quest_f", questFaction);
     renderQuests();
   }));
+  page.querySelectorAll(".qst-view").forEach((b) => b.addEventListener("click", () => {
+    questView = b.dataset.v;
+    localStorage.setItem("sz_quest_view", questView);
+    renderQuests();
+  }));
   renderQuestChart(questFaction);
 }
 
-// публичная схема (read-only, клик → модал)
+// публичный вид линейки (read-only, клик → модал): список или pan/zoom-схема
 function renderQuestChart(faction) {
-  renderQuestGraph($("qstWrap"), faction, { edit: false });
+  if (questViewNow() === "list") renderQuestList($("qstWrap"), faction);
+  else renderQuestGraph($("qstWrap"), faction, { edit: false });
 }
 
-// pan/zoom-граф линейки. edit=false — публично (клик по блоку → модал);
-// edit=true — дев-карта: тянуть блоки, рисовать стрелки от точки снизу к
-// другому блоку, клик по стрелке — удалить связь. Колесо — зум, тянуть пустое
-// место — двигать полотно. Ручные позиции pos[faction] важнее авто-раскладки.
-function renderQuestGraph(host, faction, opts) {
-  const edit = !!(opts && opts.edit);
+// Раскладка линейки: юниты (квест или свёрнутая группа), связи, ряд сверху вниз
+// и авто-колонка внутри ряда. Вынесено из renderQuestGraph, потому что этим же
+// порядком идёт список на узком экране (renderQuestList) — иначе схема и список
+// разошлись бы в нумерации шагов при первой же правке алгоритма.
+function questGraphModel(faction) {
   const items = questData.items.filter((q) => questInFaction(q, faction));
-  if (!items.length) {
-    host.innerHTML = `<div class="empty-sm" style="padding:24px 10px">ЛИНЕЙКА ЕЩЁ ЗАПОЛНЯЕТСЯ — КВЕСТЫ ПОЯВЯТСЯ ПОЗЖЕ.</div>`;
-    return;
-  }
   const byId = new Map(items.map((q) => [q.id, q]));
 
   // --- группы: свёрнутая группа = один «модуль»-юнит, раскрытая = участники по одному
@@ -3871,6 +3898,123 @@ function renderQuestGraph(host, faction, opts) {
     });
   };
   relinkGraph();
+  return { items, byId, groups, groupById, membersOf, groupOfQ, isCollapsed, unitOfQ,
+           isGroupUnit, groupOfUnit, questOfUnit, unitIds, uSort, uMain,
+           uParents, depth, autoCol, relinkGraph };
+}
+
+// Порядок юнитов «как читается»: сверху вниз по рядам, внутри ряда — слева
+// направо. Ряд = шаг линейки: всё в нём открывается после одного и того же.
+function questBands(M) {
+  const bands = [];
+  M.unitIds.forEach((u) => (bands[M.depth.get(u)] ||= []).push(u));
+  bands.forEach((b) => b.sort((a, c) => (M.autoCol.get(a) || 0) - (M.autoCol.get(c) || 0)));
+  return bands.filter(Boolean);
+}
+
+// Список линейки — то же дерево, но читаемое на телефоне. Схема на 390 px давала
+// 50% отказов при 27 с на визите (аудит Метрики, 25.08.2026): pan/zoom-полотно
+// требует двух рук и точного тыка, а игроку нужен порядок прохождения. Ряд схемы
+// = «шаг»: всё внутри шага открывается после одного и того же.
+function renderQuestList(host, faction) {
+  const M = questGraphModel(faction);
+  if (!M.items.length) {
+    host.innerHTML = `<div class="empty-sm" style="padding:24px 10px">ЛИНЕЙКА ЕЩЁ ЗАПОЛНЯЕТСЯ — КВЕСТЫ ПОЯВЯТСЯ ПОЗЖЕ.</div>`;
+    return;
+  }
+  const bands = questBands(M);
+  const groupIsDone = (g) => {
+    const m = M.membersOf.get(g.id) || [];
+    return m.length > 0 && m.every((q) => questDone.has(q.id));
+  };
+  const unitName = (u) => M.isGroupUnit(u)
+    ? M.groupOfUnit(u).title : M.questOfUnit(u).title;
+
+  const row = (u, prevBand) => {
+    const done = (M.isGroupUnit(u) ? groupIsDone(M.groupOfUnit(u)) : questDone.has(M.questOfUnit(u).id))
+      ? " done" : "";
+    // «после: …» только когда это что-то добавляет: в линейной цепочке
+    // предшественник и так очевиден — предыдущий шаг, и подпись была бы шумом
+    const ps = [...(M.uParents.get(u) || [])];
+    const needAfter = ps.length > 1 || (prevBand && prevBand.length > 1);
+    const after = needAfter && ps.length
+      ? `<span class="qlist-after">после: ${ps.map((p) => escapeHtml(unitName(p))).join(" · ")}</span>` : "";
+    if (M.isGroupUnit(u)) {
+      const g = M.groupOfUnit(u), cnt = (M.membersOf.get(g.id) || []).length;
+      return `<div class="qlist-row is-group${done}" data-gid="${g.id}">
+        <span class="qlist-main">
+          <span class="qlist-kind">ГРУППА · ${cnt}</span>
+          <span class="qlist-name">${escapeHtml(g.title)}</span>
+          ${after}<span class="qlist-chev">РАЗВЕРНУТЬ ▸</span>
+        </span>
+        <button type="button" class="qlist-done" title="Отметить группу выполненной">✓</button>
+      </div>`;
+    }
+    const q = M.questOfUnit(u);
+    // предшественники из другой линейки в схеме были значком «⇠» с тултипом —
+    // на телефоне тултипа нет, поэтому пишем словами
+    const ext = (q.parents || []).filter((pid) => !M.byId.has(pid))
+      .map((pid) => questData.items.find((x) => x.id === pid)).filter(Boolean);
+    const extHtml = ext.length ? `<span class="qlist-after">из другой линейки: ${ext.map((x) =>
+      escapeHtml(`${x.title} (${questFactionOf(x.faction).name})`)).join(" · ")}</span>` : "";
+    const g = M.groupOfQ.get(q.id);
+    const grpHtml = g && !M.isCollapsed(g.id)
+      ? `<span class="qlist-grp">ГРУППА: ${escapeHtml(g.title)}</span>` : "";
+    return `<div class="qlist-row is-${q.kind}${done}" data-id="${q.id}">
+      <span class="qlist-main">
+        <span class="qlist-kind">${q.kind === "main" ? "ОСНОВНОЙ" : "ПОБОЧНЫЙ"}</span>
+        <span class="qlist-name">${escapeHtml(q.title)}${q.has_map ? " 📍" : ""}</span>
+        ${grpHtml}${after}${extHtml}
+      </span>
+      <button type="button" class="qlist-done" title="Отметить выполненным">✓</button>
+    </div>`;
+  };
+
+  host.innerHTML = `<div class="qlist">${bands.map((band, i) => `
+    <section class="qlist-step">
+      <div class="qlist-stepn">ШАГ ${i + 1}${band.length > 1
+        ? ` <span>· ${band.length} параллельно</span>` : ""}</div>
+      ${band.map((u) => row(u, bands[i - 1])).join("")}
+    </section>`).join("")}</div>`;
+
+  host.querySelectorAll(".qlist-done").forEach((btn) => btn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const r = btn.closest(".qlist-row");
+    if (r.dataset.gid) {
+      const mem = M.membersOf.get(+r.dataset.gid) || [];
+      const all = mem.length && mem.every((q) => questDone.has(q.id));
+      if (all) mem.forEach((q) => questDone.delete(q.id)); else mem.forEach((q) => markQuestDone(q.id));
+    } else {
+      const id = +r.dataset.id;
+      if (questDone.has(id)) questDone.delete(id); else markQuestDone(id);
+    }
+    saveQuestDone();
+    renderQuestList(host, faction);
+  }));
+  host.querySelectorAll(".qlist-row").forEach((r) => r.addEventListener("click", () => {
+    if (r.dataset.gid) {
+      const gid = +r.dataset.gid;
+      if (questExpanded.has(gid)) questExpanded.delete(gid); else questExpanded.add(gid);
+      try { localStorage.setItem("sz_quest_exp", JSON.stringify([...questExpanded])); } catch (e) {}
+      renderQuestList(host, faction);
+    } else openQuestModal(+r.dataset.id);
+  }));
+}
+
+// pan/zoom-граф линейки. edit=false — публично (клик по блоку → модал);
+// edit=true — дев-карта: тянуть блоки, рисовать стрелки от точки снизу к
+// другому блоку, клик по стрелке — удалить связь. Колесо — зум, тянуть пустое
+// место — двигать полотно. Ручные позиции pos[faction] важнее авто-раскладки.
+function renderQuestGraph(host, faction, opts) {
+  const edit = !!(opts && opts.edit);
+  const M = questGraphModel(faction);
+  if (!M.items.length) {
+    host.innerHTML = `<div class="empty-sm" style="padding:24px 10px">ЛИНЕЙКА ЕЩЁ ЗАПОЛНЯЕТСЯ — КВЕСТЫ ПОЯВЯТСЯ ПОЗЖЕ.</div>`;
+    return;
+  }
+  const { items, byId, groups, groupById, membersOf, groupOfQ, isCollapsed, unitOfQ,
+          isGroupUnit, groupOfUnit, questOfUnit, unitIds, uSort, uMain,
+          uParents, depth, autoCol, relinkGraph } = M;
 
   const W = 190, H = 72, cellW = 220, cellH = 118, PAD = 20;
   const posOfUnit = (u) => {
@@ -3947,17 +4091,6 @@ function renderQuestGraph(host, faction, opts) {
       return true;
     } catch (e) { return false; }
   };
-  // память игрока: отметить квест выполненным вместе с обязательными предшественниками
-  const ancestorsOf = (qid) => {
-    const res = new Set(), stack = [qid];
-    while (stack.length) {
-      const cq = questData.items.find((x) => x.id === stack.pop());
-      ((cq && cq.parents) || []).forEach((p) => { if (!res.has(p)) { res.add(p); stack.push(p); } });
-    }
-    return res;
-  };
-  const saveDone = () => { try { localStorage.setItem("sz_quest_done", JSON.stringify([...questDone])); } catch (e) {} };
-  const markDone = (qid) => { questDone.add(qid); ancestorsOf(qid).forEach((a) => questDone.add(a)); };
   const groupIsDone = (g) => { const m = membersOf.get(g.id) || []; return m.length > 0 && m.every((q) => questDone.has(q.id)); };
   const toggleExpand = (gid) => {
     if (questExpanded.has(gid)) questExpanded.delete(gid); else questExpanded.add(gid);
@@ -4117,12 +4250,12 @@ function renderQuestGraph(host, faction, opts) {
         if (node.dataset.gid) {
           const mem = membersOf.get(+node.dataset.gid) || [];
           const all = mem.length && mem.every((q) => questDone.has(q.id));
-          if (all) mem.forEach((q) => questDone.delete(q.id)); else mem.forEach((q) => markDone(q.id));
+          if (all) mem.forEach((q) => questDone.delete(q.id)); else mem.forEach((q) => markQuestDone(q.id));
         } else {
           const id = +node.dataset.id;
-          if (questDone.has(id)) questDone.delete(id); else markDone(id);
+          if (questDone.has(id)) questDone.delete(id); else markQuestDone(id);
         }
-        saveDone(); paint(); applyT();
+        saveQuestDone(); paint(); applyT();
       });
     });
 
