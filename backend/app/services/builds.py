@@ -285,6 +285,18 @@ def contamination(variants: list[dict], cont: dict) -> list[dict]:
     return out
 
 
+def self_over_limit(cont: dict) -> list[dict]:
+    """Заражения, по которым хранилище выходит за лимит ПУСТЫМ — до единого арта.
+
+    Такое хранилище нельзя собрать вообще: артефакты заражение только добавляют,
+    а погасить его нечем. Формально «Вязанка» даёт Холод ровно 1.0 при лимите
+    1.0, и с 15.08 (строгий потолок, см. _ceil) это уже превышение; арта с
+    зелёным холодом в базе нет ни одного, внутренняя защита мороз не гасит
+    (FROST_KEY), значит ни бюджет, ни статы делу не помогут.
+    """
+    return [c for c in contamination([], cont) if c["over"]]
+
+
 def _is_counter(art: dict) -> bool:
     """Контрарт: несёт защиту (зелёный минус) хотя бы по одному лимитированному
     заражению — в игре такими гасят минусы сильных артов («народное» название)."""
@@ -726,6 +738,17 @@ def auto_build(budget: float, container_id: str, stats_req: list[dict],
     cont = db.storage(container_id)
     if not cont:
         return {"error": "container_not_found"}
+    # Хранилище за лимитом пустым — говорим об этом прямо. Раньше такой выбор
+    # доезжал до общего «no_clean_build: поднимите бюджет, смените контейнер или
+    # статы», и человек поднимал бюджет до бесконечности: бюджет здесь ни при
+    # чём, лечится только сменой хранилища.
+    if bad := self_over_limit(cont):
+        names = ", ".join(f"{c['name']} {c['net']} при лимите {c['limit']}" for c in bad)
+        return {"error": "container_over_limit",
+                "hint": f"{cont['name']} сам выходит за лимит заражения "
+                        f"({names}) — ещё до единого артефакта. Артефакты заражение "
+                        f"только добавляют, поэтому собрать в нём нечего ни при каком "
+                        f"бюджете. Выберите другое хранилище."}
     weights = {}
     for s in stats_req[:3]:
         k = s.get("key")
@@ -824,6 +847,11 @@ def auto_hp(budget: float, container_id: str, armor_id: str, armor_ptn: int) -> 
     cont = db.storage(container_id)
     if not cont:
         return {"error": "container_not_found"}
+    if bad := self_over_limit(cont):   # см. auto_build: бюджет тут не поможет
+        names = ", ".join(f"{c['name']} {c['net']} при лимите {c['limit']}" for c in bad)
+        return {"error": "container_over_limit",
+                "hint": f"{cont['name']} сам выходит за лимит заражения "
+                        f"({names}) — ещё до единого артефакта. Выберите другое хранилище."}
     armor = db.armor.get(armor_id)
     if not armor:
         return {"error": "armor_not_found"}
@@ -925,7 +953,11 @@ def _roll_daily_params(rnd: random.Random) -> dict | None:
     Броня/контейнер — Мастер/Легенда; бюджет — из лестницы; 1–3 полезных стата
     (первый — из первичных, вторичные статы только со 2-й позиции)."""
     armors = [a for a in db.armor.values() if a["color"] in TOP_COLORS]
-    conts = [c for c in db.containers.values() if c["color"] in TOP_COLORS]
+    # заведомо несобираемые (пустыми уже за лимитом, см. self_over_limit) в ролл
+    # не пускаем: такой контейнер жёг перекрутку впустую, а в худшем случае
+    # съедал все DAILY_ATTEMPTS и сборка дня на главной не показывалась
+    conts = [c for c in db.containers.values()
+             if c["color"] in TOP_COLORS and not self_over_limit(c)]
     if not armors or not conts:
         return None
     armor = rnd.choice(armors)
@@ -1033,10 +1065,19 @@ _ready_cache: dict = {"ts": 0.0, "payload": None}
 def _ready_container() -> dict | None:
     """Хранилище для готовых сборок — правилом, а не зашитым id: база предметов
     едет с патчами. Топ-редкость, максимум слотов, при равенстве — эффективность
-    (id последним, чтобы выбор был детерминирован при полном равенстве)."""
-    conts = [c for c in db.containers.values() if c["color"] in TOP_COLORS]
+    (id последним, чтобы выбор был детерминирован при полном равенстве).
+
+    Заведомо несобираемые хранилища (пустыми уже за лимитом заражения, см.
+    self_over_limit) отсеиваем ПЕРВЫМИ. Иначе правило «максимум слотов» выбирало
+    ровно такое: «Вязанка» с её 7 слотами и Холодом 1.0 выигрывала отбор, все три
+    профиля молча отваливались (`if not build: continue`), и блок готовых сборок
+    исчезал со страницы целиком — при том, что он и был лекарством от «холодный
+    посетитель попал на пустую сетку слотов». На проде он так и не показывался.
+    """
+    ok = [c for c in db.containers.values() if not self_over_limit(c)]
+    conts = [c for c in ok if c["color"] in TOP_COLORS]
     if not conts:
-        conts = list(db.containers.values())
+        conts = ok
     if not conts:
         return None
     return max(conts, key=lambda c: (c.get("slots") or 0,
