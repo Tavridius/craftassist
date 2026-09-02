@@ -1220,6 +1220,50 @@ const fmtMsk = (iso) => {
   }).replace(",", " ·") + " МСК";
 };
 
+// ---------- Электрошторм: обратный отсчёт (до 23.09.2026) ----------
+// Игровой API события не отдаёт, поэтому сервер считает от якоря, который
+// админ отмечает кнопкой в момент старта (services/estorm.py). Пока якоря нет,
+// показываем только режим события — врать со временем нельзя, человек уйдёт
+// на локацию впустую.
+const fmtLeft = (ms) => {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+};
+
+function stormBody(st) {
+  if (!st || st.over) return "";
+  const admin = ME && ME.is_admin;
+  const mark = admin
+    ? `<button class="st-mark" id="stMark" title="Нажать в момент начала шторма">◉ ОТМЕТИТЬ СТАРТ</button>`
+    : "";
+  if (!st.known) {
+    return `<div class="st-box"><div class="st-t">⚡ ЭЛЕКТРОШТОРМ · КУЗНЯ-11</div>
+      <div class="st-sub">РАЗ В ЧАС ПО ${st.duration_min} МИН · ДО 23 СЕНТЯБРЯ</div>
+      <div class="st-sub">РАСПИСАНИЕ ЕЩЁ НЕ ОТМЕЧЕНО</div>${mark}</div>`;
+  }
+  const head = st.active
+    ? `<div class="st-t st-on">⚡ ШТОРМ ИДЁТ · ГРОМООТВОДЫ АКТИВНЫ</div>
+       <div class="st-big">ДО КОНЦА <span class="st-left" data-at="${st.switch_at}">…</span></div>`
+    : `<div class="st-t">⚡ ЭЛЕКТРОШТОРМ · КУЗНЯ-11</div>
+       <div class="st-big">ЧЕРЕЗ <span class="st-left" data-at="${st.switch_at}">…</span></div>`;
+  return `<div class="st-box">${head}
+    <div class="st-sub">РАЗ В ЧАС ПО ${st.duration_min} МИН · ДО 23 СЕНТЯБРЯ ·
+      <a href="/guides/elektroshtorm-kuznya-11">КАК ФАРМИТЬ</a></div>${mark}</div>`;
+}
+
+async function stormMark() {
+  const b = $("stMark");
+  if (b) { b.disabled = true; b.textContent = "…"; }
+  try {
+    await fetch(api("/admin/estorm/mark"), {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+    home2Data = null;                       // сбрасываем минутный кэш главной
+    navigate(location.pathname);
+  } catch (e) {
+    if (b) { b.disabled = false; b.textContent = "◉ ОТМЕТИТЬ СТАРТ"; }
+  }
+}
+
 function emissionBody(em) {
   if (!em || (!em.history?.length && !em.previous_start && !em.current_start))
     return `<div class="empty-sm">ЖДЁМ ПЕРВЫЙ ЗАМЕР ВОТЧЕРА ВЫБРОСОВ.</div>`;
@@ -1240,10 +1284,18 @@ function emissionBody(em) {
 
 function startEmTick() {
   if (emTick) clearInterval(emTick);
+  let flip = false;                       // шторм переключился — перезапросим данные
   const upd = () => {
-    const els = document.querySelectorAll(".em-ago");
-    if (!els.length) { clearInterval(emTick); emTick = null; return; }
-    els.forEach((el) => { el.textContent = fmtAgo(Date.now() - new Date(el.dataset.ts)); });
+    const ago = document.querySelectorAll(".em-ago");
+    const left = document.querySelectorAll(".st-left");
+    if (!ago.length && !left.length) { clearInterval(emTick); emTick = null; return; }
+    ago.forEach((el) => { el.textContent = fmtAgo(Date.now() - new Date(el.dataset.ts)); });
+    left.forEach((el) => {
+      const ms = new Date(el.dataset.at) - Date.now();
+      el.textContent = fmtLeft(ms);
+      // досчитали до нуля — шторм начался или кончился, перерисовываем карточку
+      if (ms <= 0 && !flip) { flip = true; home2Data = null; navigate(location.pathname); }
+    });
   };
   upd();
   emTick = setInterval(upd, 1000);
@@ -1412,14 +1464,14 @@ let home2Data = null, home2Ts = 0;
 async function loadHome2Data() {
   if (home2Data && Date.now() - home2Ts < 60000) return home2Data;
   const j = (u) => fetch(api(u)).then((r) => r.json()).catch(() => null);
-  const [top, art, watch, em, sales, fuelTop, patches, daily, promos, ops, feed] =
+  const [top, art, watch, em, sales, fuelTop, patches, daily, promos, ops, feed, storm] =
     await Promise.all([
       j(`/top${availParam("?")}`), j("/artmarket/top?window=24h"), j("/watch"),
       j("/emission"), j("/sales/top?n=12"), j("/fuel/top?n=20"),
       j("/patches?limit=5"), j("/build/daily"), j("/promos"),
-      j("/operations/overview"), j("/news/feed?limit=14"),
+      j("/operations/overview"), j("/news/feed?limit=14"), j("/estorm"),
     ]);
-  home2Data = { top, art, watch, em, sales, fuelTop, patches, daily, promos, ops, feed };
+  home2Data = { top, art, watch, em, sales, fuelTop, patches, daily, promos, ops, feed, storm };
   home2Ts = Date.now();
   return home2Data;
 }
@@ -1435,6 +1487,8 @@ function h2Bind(root) {
     root.querySelectorAll(".sales-view").forEach((v) =>
       v.classList.toggle("hidden", v.dataset.view !== b.dataset.view));
   }));
+  const sm = root.querySelector("#stMark");
+  if (sm) sm.addEventListener("click", stormMark);
   startEmTick();
 }
 
@@ -1701,7 +1755,7 @@ function home2Hud(d) {
       <aside class="h2-rail">
         ${h2Mod("", "ЗАПРАВКА ГЕНЕРАТОРА", "₽ ЗА 1000 ЕД", fuelBody(d.fuelTop),
                 "/profile", "ПРИСТРОЙКИ")}
-        ${h2Mod("", "ВЫБРОС", "ЗАМЕР РАЗ В МИНУТУ", emissionBody(d.em))}
+        ${h2Mod("", "ВЫБРОС", "ЗАМЕР РАЗ В МИНУТУ", stormBody(d.storm) + emissionBody(d.em))}
         ${h2Mod("", "МЕТА ОПЕРАЦИЙ", opsDashNote(d.ops), opsDashBody(d.ops),
                 "/operations", "К СТАТИСТИКЕ")}
       </aside>
@@ -1760,7 +1814,7 @@ function home2Board(d) {
     h2Mod("R1", "КРАФТЫ ДНЯ", "ВЫГОДА · ЛИКВИДНОСТЬ",
           h2Findable("craft", "НАЙТИ ПРЕДМЕТ ДЛЯ КРАФТА…", h2Crafts(d.top)),
           "/craft", "В КРАФТ"),
-    h2Mod("R2", "ВЫБРОС", "ЗАМЕР РАЗ В МИНУТУ", emissionBody(d.em)),
+    h2Mod("R2", "ВЫБРОС", "ЗАМЕР РАЗ В МИНУТУ", stormBody(d.storm) + emissionBody(d.em)),
     h2Mod("R3", "ЗАПРАВКА ГЕНЕРАТОРА", "₽ ЗА 1000 ЕД", fuelBody(d.fuelTop),
           "/profile", "ПРИСТРОЙКИ"),
     h2Mod("R4", "САМОЕ ПРОДАВАЕМОЕ", "ТЕМП ПРОДАЖ",
@@ -3561,6 +3615,18 @@ async function openGuide(slug) {
     <div id="comments"></div>
   </div>`;
   $("guideBack").addEventListener("click", () => { navigate("/guides"); });
+  // живой таймер в тело гайда: статья ранжируется по теме, а спрос там про
+  // расписание («как часто электрошторм»). Плейсхолдер ставит сам автор гайда
+  // в HTML — <div id="estormBox"></div>, без него ничего не происходит.
+  const box = page.querySelector("#estormBox");
+  if (box) {
+    fetch(api("/estorm")).then((r) => r.json()).then((st) => {
+      box.innerHTML = stormBody(st);
+      const sm = box.querySelector("#stMark");
+      if (sm) sm.addEventListener("click", stormMark);
+      startEmTick();
+    }).catch(() => {});
+  }
   adInsert(page);
   renderComments(`guide:${slug}`);
 }

@@ -77,6 +77,8 @@ async def startup() -> None:
     if config.EMISSION_WATCH_ENABLED:
         from app.services.emission_watch import ewatch
         asyncio.create_task(ewatch.loop())         # история выбросов для дашборда
+    from app.services.estorm import estorm
+    estorm.load()                                  # якорь таймера Электрошторма
     if config.SALES_STATS_ENABLED:
         from app.services.sales_stats import sstats
         asyncio.create_task(sstats.loop())         # снапшоты продаж (топ за неделю)

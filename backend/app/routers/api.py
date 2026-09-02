@@ -25,6 +25,7 @@ from app.db.index import db
 from app.routers.auth import SESSION_COOKIE, current_user, is_admin
 from app.services import (auction, barter, builds, compare, craft, exchange,
                           hideout, oauth, related, sales_log)
+from app.services.estorm import estorm
 from app.services import fuel as fuel_svc
 from app.services.artefact_lots import artlots
 from app.services.artefact_watch import MSK
@@ -312,6 +313,25 @@ async def artmarket_item(item_id: str):
 async def emission():
     """Текущий/последние выбросы (история копится вотчером, API отдаёт только 2)."""
     return ewatch.snapshot()
+
+
+@router.get("/estorm")
+async def estorm_get():
+    """Таймер Электрошторма. known=false — якорь не отмечен, отсчёта нет."""
+    return estorm.snapshot()
+
+
+@router.post("/admin/estorm/mark")
+async def estorm_mark(request: Request, payload: dict = Body(default={})):
+    """Отметить старт шторма (только админ). Пустое тело — «прямо сейчас».
+
+    Одна кнопка вместо переменной окружения: поймать момент старта в игре
+    проще, чем высчитывать смещение и передеплоивать контейнер."""
+    _require_admin(request)
+    try:
+        return estorm.mark((payload or {}).get("at"))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 # ---------- бартер: рейтинг обменов и способы получения ----------
