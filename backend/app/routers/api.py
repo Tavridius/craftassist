@@ -24,7 +24,7 @@ from app.db import (chat, craft_tuning, guides, mapobjects, market, news,
 from app.db.index import db
 from app.routers.auth import SESSION_COOKIE, current_user, is_admin
 from app.services import (auction, barter, builds, compare, craft, exchange,
-                          hideout, oauth, sales_log)
+                          hideout, oauth, related, sales_log)
 from app.services import fuel as fuel_svc
 from app.services.artefact_lots import artlots
 from app.services.artefact_watch import MSK
@@ -395,11 +395,16 @@ async def patches_list(offset: int = Query(0, ge=0), limit: int = Query(20, ge=1
 
 @router.get("/patches/{pid}")
 async def patch_get(pid: int):
-    """Полный патч: санитизированный HTML с локальными картинками."""
+    """Полный патч: санитизированный HTML с локальными картинками.
+
+    `related` — ссылки на гайды и инструменты по теме патча: страница патча
+    хорошо индексируется, но без них это тупик (отказы 20-75%)."""
     p = news.get_patch(pid)
     if not p:
         raise HTTPException(404, "patch not found")
     p.pop("fetched_at", None)
+    p["related"] = related.for_patch(p.get("title", ""), p.get("anons", ""),
+                                     p.get("html", ""))
     return p
 
 

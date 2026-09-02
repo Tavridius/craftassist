@@ -22,6 +22,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from app import config
 from app.db import guides
 from app.db.index import db
+from app.services import related
 from app.services.price_store import store
 
 logger = logging.getLogger(__name__)
@@ -853,6 +854,16 @@ def _patches_seo() -> tuple[str, dict]:
                ("/guides", "гайды по игре")])
 
 
+def _related_html(items: list[dict]) -> str:
+    """Блок «Смотрите также» для серверного HTML. Пустой список — пустая строка."""
+    if not items:
+        return ""
+    a = " · ".join(
+        f'<a href="{_html.escape(i["href"], quote=True)}">{_html.escape(i["text"])}</a>'
+        for i in items)
+    return f'<p class="seo-links">Смотрите также: {a}</p>'
+
+
 def _seo_article(h1: str, body_html: str, intro: str | None = None) -> str:
     """Контентная статья (патч/гайд/квест) в серверный SEO-блок — чтобы полный
     текст был в HTML для краулеров без JS. body_html — доверенный санитизированный
@@ -1002,10 +1013,15 @@ async def builds_page(request: Request):
     seo_html, faq_ld = _builds_seo()
     return render_index(
         request, "/builds",
-        title="Калькулятор сборок Сталкрафт (STALZONE) — подбор артефактов под бюджет",
-        desc="Калькулятор сборок артефактов в Сталкрафт (STALZONE, ранее Stalcraft): "
-             "собери набор в контейнер вручную или автоподбором под бюджет — качество, "
-             "заточка, суммарные статы и стоимость по живым ценам аукциона RU.",
+        # Вебмастер, 04.08-02.09.2026: кластер даёт 50k+ показов в месяц при
+        # CTR 0.2% и позиции 6-8 (AUDIT-SEARCH-2026-09.md). Половина кластера —
+        # это «сборки сталкрафт», интент «покажи готовое», а не «дай считалку»,
+        # поэтому в тайтле теперь оба обещания. Плюс «бесплатно» и «без
+        # регистрации»: /api/build/* работает анонимно, конкуренты просят вход.
+        title="Калькулятор сборок Сталкрафт (STALZONE): готовые сборки и автоподбор",
+        desc="Сборки артефактов Сталкрафт (STALZONE, ранее Stalcraft): готовые сборки "
+             "на каждый ранг и автоподбор под бюджет — качество, заточка, суммарные "
+             "статы и цена по живым ценам аукциона RU. Бесплатно, без регистрации.",
         seo_html=seo_html, jsonld=faq_ld)
 
 
@@ -1239,6 +1255,12 @@ async def patch_page(request: Request, pid: str):
     }
     # тело патча — в серверный HTML (иначе краулеры без JS видят только мету)
     seo_html = _seo_article(p["title"], p["html"]) if p.get("html") else None
+    # ссылки по теме: патчи индексируются за сутки, но без них это тупик —
+    # и обходу они тоже нужны (365 страниц в поиске из 2387 в sitemap)
+    if seo_html:
+        seo_html += _related_html(related.for_patch(p.get("title", ""),
+                                                    p.get("anons", ""),
+                                                    p.get("html", "")))
     return render_index(request, f"/patches/{pid}", title=title, desc=desc,
                         jsonld=jsonld, seo_html=seo_html)
 

@@ -1995,6 +1995,18 @@ body:has(.cmp-tray:not(.hidden)) .auth-notice { bottom: 76px; }
 .patch-body a { color: var(--green); }
 .patch-body hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
 
+/* «По теме» под текстом патча (app.js: relatedHtml, подбор — services/related.py).
+   Патч дочитан — дальше идти некуда, отсюда отказы 20-75% на /patches. Ссылки
+   ставим строкой-плиткой: на телефоне переносятся сами, тапать удобнее пунктира. */
+.patch-rel { display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+             margin: 22px 0 4px; padding-top: 14px; border-top: 1px solid var(--border); }
+.patch-rel-t { flex: 0 0 100%; font-size: 10px; color: var(--dimmer);
+               letter-spacing: 0.08em; margin-bottom: 2px; }
+.patch-rel a { font-size: 12px; color: var(--green); text-decoration: none;
+               border: 1px solid var(--border); padding: 6px 10px; border-radius: 3px;
+               background: var(--panel); }
+.patch-rel a:hover { color: var(--bright); border-color: var(--green); }
+
 /* Рекламная врезка РСЯ внутри статьи (app.js: adInsert). min-height держит
    место ДО загрузки блока — иначе текст прыгает под курсором, а это тот самый
    CLS, из-за которого чинили картинки патчнотов. Ширину не задаём: блок РСЯ

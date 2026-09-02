@@ -3203,6 +3203,16 @@ const fmtPatchDate = (iso) => {
     { day: "2-digit", month: "long", year: "numeric" });
 };
 
+// «Смотрите также» под текстом патча. Подбор делает сервер (services/related.py):
+// патч дочитали — дальше идти некуда, отсюда отказы 20-75%.
+function relatedHtml(items) {
+  if (!Array.isArray(items) || !items.length) return "";
+  const links = items.map((i) =>
+    `<a href="${escapeHtml(i.href)}">${escapeHtml(i.text)}</a>`).join("");
+  return `<nav class="patch-rel" aria-label="Материалы по теме">
+    <div class="patch-rel-t">ПО ТЕМЕ</div>${links}</nav>`;
+}
+
 async function openPatches() {
   home.classList.add("hidden");
   detail.classList.add("hidden");
@@ -3284,6 +3294,7 @@ async function openPatch(pid) {
       <div class="patch-meta">${fmtPatchDate(p.created_at)} ·
         <a href="${escapeHtml(p.source_url)}" target="_blank" rel="noopener">ОРИГИНАЛ НА ФОРУМЕ EXBO ↗</a></div>
       <div class="patch-body">${p.html}</div>
+      ${relatedHtml(p.related)}
     </article>
     <div id="comments"></div>
   </div>`;
