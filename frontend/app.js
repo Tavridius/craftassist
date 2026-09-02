@@ -573,6 +573,7 @@ function renderResults(items, availOnly) {
 
 // ---------- карточка предмета ----------
 async function openItem(id) {
+  hideSeoBlock();   // на карточке серверный блок — только ссылки для краулера
   results.innerHTML = "";
   home.classList.add("hidden");
   detail.classList.remove("hidden");

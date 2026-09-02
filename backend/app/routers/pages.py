@@ -854,6 +854,38 @@ def _patches_seo() -> tuple[str, dict]:
                ("/guides", "гайды по игре")])
 
 
+@lru_cache(maxsize=1)
+def _item_ring() -> dict:
+    """Соседи карточки по её категории, замкнутые в кольцо (по 8 на предмет).
+
+    Кольцо, а не «топ-8 популярных»: так в графе достижима КАЖДАЯ карточка,
+    включая хвост, до которого иначе не дотянется ни одна ссылка. Порядок
+    внутри категории — тот же, что в sitemap (по SEO-ценности), поэтому
+    соседи получаются осмысленными, а не случайными.
+    """
+    by_cat: dict[str, list[str]] = {}
+    for iid in _sitemap_item_ids():
+        by_cat.setdefault(db.category(iid) or "", []).append(iid)
+    ring: dict[str, tuple] = {}
+    for ids in by_cat.values():
+        n = len(ids)
+        for i, iid in enumerate(ids):
+            ring[iid] = tuple(ids[(i + k) % n] for k in range(1, min(9, n)))
+    return ring
+
+
+def _item_ring_html(item_id: str) -> str:
+    nb = _item_ring().get(item_id) or ()
+    links = [{"href": f"/item/{x}", "text": (db.item(x) or {}).get("name") or x}
+             for x in nb]
+    if not links:
+        return ""
+    a = " · ".join(
+        f'<a href="{_html.escape(i["href"], quote=True)}">{_html.escape(i["text"])}</a>'
+        for i in links)
+    return f'<p class="seo-links">Похожие предметы: {a}</p>'
+
+
 def _related_html(items: list[dict]) -> str:
     """Блок «Смотрите также» для серверного HTML. Пустой список — пустая строка."""
     if not items:
@@ -931,8 +963,20 @@ async def item_page(request: Request, item_id: str):
     title = f"{name} — крафт, цена и выгода в STALZONE (Сталкрафт) | {SITE}"
     desc = " ".join(parts)
     url = _base_url(request) + f"/item/{item_id}"
+    # Серверный блок ссылок. До 03.09.2026 на /item/* не вело НИ ОДНОЙ ссылки
+    # в HTML — все карточки были сиротами, робот знал о них только из sitemap.
+    # Обход при этом шёл на 450 страниц в сутки, а в поиске держалось 394
+    # (AUDIT-SEARCH-2026-09.md). Кольцо соседей связывает граф.
+    tools = [{"href": "/items", "text": "база предметов"},
+             {"href": "/market", "text": "цены и обороты"}]
+    if craftable:
+        tools.insert(0, {"href": "/craft", "text": "калькулятор крафта"})
+    seo_html = (f'<article class="seo-article"><h1>{_html.escape(name)}</h1>'
+                f'<p>{_html.escape(desc)}</p>'
+                f'{_item_ring_html(item_id)}{_related_html(tools)}</article>')
     return render_index(request, f"/item/{item_id}", title=title, desc=desc,
-                        jsonld=_product_jsonld(request, it, url, desc))
+                        jsonld=_product_jsonld(request, it, url, desc),
+                        seo_html=seo_html)
 
 
 @router.get("/artefact/{item_id}", response_class=HTMLResponse)
