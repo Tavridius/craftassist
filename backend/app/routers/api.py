@@ -317,8 +317,9 @@ async def emission():
 
 @router.get("/estorm")
 async def estorm_get():
-    """Таймер Электрошторма. known=false — якорь не отмечен, отсчёта нет."""
-    return estorm.snapshot()
+    """Таймер Электрошторма. known=false — якорь не отмечен, отсчёта нет;
+    paused=true — идёт Выброс, шторм ему уступает и цикл сдвигается."""
+    return estorm.snapshot(emission_active=bool(ewatch.snapshot().get("current_start")))
 
 
 @router.post("/admin/estorm/mark")

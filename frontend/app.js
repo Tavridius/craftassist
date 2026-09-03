@@ -1237,6 +1237,14 @@ function stormBody(st) {
   const mark = admin
     ? `<button class="st-mark" id="stMark" title="Нажать в момент начала шторма">◉ ОТМЕТИТЬ СТАРТ</button>`
     : "";
+  if (st.paused) {
+    // шторм уступает выбросу и не начнётся, пока тот не пройдёт (КМ EXBO) —
+    // отсчёт в этот момент был бы враньём, цикл всё равно сдвинется
+    return `<div class="st-box"><div class="st-t">⚡ ЭЛЕКТРОШТОРМ · КУЗНЯ-11</div>
+      <div class="st-big">ЖДЁТ ВЫБРОСА</div>
+      <div class="st-sub">ШТОРМ УСТУПАЕТ ВЫБРОСУ И НЕ НАЧНЁТСЯ, ПОКА ТОТ НЕ ПРОЙДЁТ ·
+        <a href="/guides/elektroshtorm-kuznya-11">КАК ФАРМИТЬ</a></div>${mark}</div>`;
+  }
   if (!st.known) {
     return `<div class="st-box"><div class="st-t">⚡ ЭЛЕКТРОШТОРМ · КУЗНЯ-11</div>
       <div class="st-sub">РАЗ В ЧАС ПО ${st.duration_min} МИН · ДО 23 СЕНТЯБРЯ</div>
