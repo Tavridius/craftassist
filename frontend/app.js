@@ -4979,7 +4979,7 @@ const contLabel = (c) => {
 const FROST_KEY = "stalker.artefact_properties.factor.frost_accumulation";  // «холод» — защита не гасит
 
 // заражение сборки: эмиссия (красный) гасится защитой (кроме мороза), защита
-// (зелёный, минус) усиливается эффективностью — как на бэке
+// (зелёный, минус) идёт как есть — эффективность на заражения не влияет (как на бэке)
 function clientContam(slots, cont) {
   const prot = (cont.protection ?? 0) / 100, eff = (cont.efficiency ?? 100) / 100;
   const out = [];
@@ -4992,7 +4992,7 @@ function clientContam(slots, cont) {
       if (!st) continue;
       present = true;
       const val = statVal(st, s.m, s.ptn);
-      if (st.harmful) emit += val; else protect += val * eff;
+      if (st.harmful) emit += val; else protect += val;
     }
     for (const s of slots) {  // допы-защиты порогов заточки (отрицательные accumulation)
       if (!s) continue;
@@ -5002,7 +5002,7 @@ function clientContam(slots, cont) {
         if (b.key !== c.key) continue;
         present = true;
         const val = bonusVal(b, s.m, s.ptn);
-        if (val > 0) emit += val; else protect += val * eff;
+        if (val > 0) emit += val; else protect += val;
       }
     }
     // собственный вклад хранилища (эмиссия +, защита −) — без гашения защитой и ×эфф

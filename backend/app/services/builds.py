@@ -8,7 +8,13 @@ M — множитель качества: тиры непрерывны по +0
 
 Заражения (минусы артефактов) — ЖЁСТКОЕ ограничение:
   net_type = Σ по артам (эмиссия + защита);  контейнер гасит положительное:
-  net_eff = net × (1 − Внутр.защита%/100).  Игрок терпит СТРОГО НИЖЕ лимита
+  net_eff = эмиссия × (1 − Внутр.защита%/100) + защита.
+  ЭФФЕКТИВНОСТЬ контейнера на заражения НЕ влияет — ни на вводы, ни на выводы
+  (официальный разбор EXBO «Переработка контейнеров и артефактов», 02.09.2025:
+  forum.exbo.net/d/168257). Она усиливает обычные статы и дебафы, но не
+  заражения. До 03.09.2026 мы умножали выводы на эффективность — из-за этого
+  сборка в контейнере со 150% эффективности выглядела чище, чем на самом деле;
+  жалобы в чате сайта 28.08.2026. Игрок терпит СТРОГО НИЖЕ лимита
   (радиация/температура/био/холод — 1.0, пси — 3.0): на самом значении лимита
   урон уже идёт — 2.99 по пси безопасно, 3.0 бьёт (владелец, 15.08.2026), см.
   CONTAM_CEIL и _ceil. Отрицательный net — запас защиты,
@@ -245,7 +251,8 @@ def _self_contam_norm(cont: dict) -> dict:
 # ---------- заражения ----------
 def contamination(variants: list[dict], cont: dict) -> list[dict]:
     """Заражение по типам. Эмиссия (красный, +) гасится внутренней защитой
-    контейнера (кроме мороза); защита (зелёный, −) усиливается эффективностью.
+    контейнера (кроме мороза); защита (зелёный, −) идёт как есть — эффективность
+    не влияет ни на вводы, ни на выводы заражений (официальный разбор EXBO).
     Собственный вклад хранилища (эмиссия/защита самого контейнера или рюкзака)
     добавляется как есть, без гашения защитой и без ×эффективности."""
     prot = (cont.get("protection") or 0.0) / 100.0
@@ -262,8 +269,8 @@ def contamination(variants: list[dict], cont: dict) -> list[dict]:
                 val = stat_value(st, v["m"], v["ptn"])
                 if st["harmful"]:    # эмиссия заражения (константа)
                     emit += val
-                else:                # защита — положительное свойство, ×эффективность
-                    protect += val * eff
+                else:                # вывод заражения — БЕЗ ×эффективность (см. шапку)
+                    protect += val
             f = bonus_factor(v["item"], v["ptn"])
             if f:                    # доп-свойства порогов: в пулах только защиты (−)
                 for bp in BONUS_PROPS.get(v["item"], []):
@@ -274,7 +281,7 @@ def contamination(variants: list[dict], cont: dict) -> list[dict]:
                     if bval > 0:
                         emit += bval
                     else:
-                        protect += bval * eff
+                        protect += bval
         if not present:
             continue
         reduce = 1.0 if key == FROST_KEY else (1 - prot)  # мороз защита не гасит
@@ -311,7 +318,7 @@ def _is_counter(art: dict) -> bool:
 
 def _contam_contrib(v: dict, prot: float, eff: float) -> tuple[dict, dict]:
     """Вклады варианта в лимитированные заражения, нормированные на лимит:
-    (эмиссия ≥0 с учётом защиты контейнера, защита ≥0 с учётом эффективности)."""
+    (эмиссия ≥0 с учётом защиты контейнера, защита ≥0 без эффективности)."""
     em: dict = {}
     pr: dict = {}
     stats = db.artefacts[v["item"]]["stats"]
@@ -327,7 +334,7 @@ def _contam_contrib(v: dict, prot: float, eff: float) -> tuple[dict, dict]:
             if val > 0:
                 em[key] = em.get(key, 0.0) + val * reduce / limit
         elif val < 0:
-            pr[key] = pr.get(key, 0.0) - val * eff / limit
+            pr[key] = pr.get(key, 0.0) - val / limit
     f = bonus_factor(v["item"], v["ptn"])
     if f:   # доп-свойства порогов: отрицательные accumulation = защита
         for bp in BONUS_PROPS.get(v["item"], []):
@@ -339,7 +346,7 @@ def _contam_contrib(v: dict, prot: float, eff: float) -> tuple[dict, dict]:
                 reduce = 1.0 if bp["key"] == FROST_KEY else (1.0 - prot)
                 em[bp["key"]] = em.get(bp["key"], 0.0) + bval * reduce / lim[1]
             elif bval < 0:
-                pr[bp["key"]] = pr.get(bp["key"], 0.0) - bval * eff / lim[1]
+                pr[bp["key"]] = pr.get(bp["key"], 0.0) - bval / lim[1]
     return em, pr
 
 
