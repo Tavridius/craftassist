@@ -57,11 +57,18 @@ class EStorm:
         except OSError as e:
             logger.warning("estorm save failed: %s", e)
 
-    def mark(self, iso: str | None = None) -> dict:
-        """Отметить старт шторма. Пусто — «прямо сейчас»."""
-        self.anchor = _parse(iso) if iso else datetime.now(timezone.utc)
-        if iso and not self.anchor:
+    def mark(self, iso: str | None = None, ended: bool = False) -> dict:
+        """Отметить старт шторма. Пусто — «прямо сейчас».
+
+        ended=True — «шторм только что кончился»: якорь отводим на длительность
+        назад. Конец видно по погасшим громоотводам и по индикатору, а старт
+        надо застать ровно в минуту, стоя на локации. Без этой поправки отметка
+        задним числом требовала считать смещение руками.
+        """
+        base = _parse(iso) if iso else datetime.now(timezone.utc)
+        if iso and not base:
             raise ValueError("не разобрал время")
+        self.anchor = base - timedelta(seconds=DURATION_SEC) if ended else base
         self.save()
         return self.snapshot()
 

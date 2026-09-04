@@ -1234,8 +1234,11 @@ const fmtLeft = (ms) => {
 function stormBody(st) {
   if (!st || st.over) return "";
   const admin = ME && ME.is_admin;
+  // две кнопки, а не одна: старт надо застать ровно в минуту, стоя на локации,
+  // а конец шторма виден по погасшим громоотводам — его замечают куда чаще.
   const mark = admin
-    ? `<button class="st-mark" id="stMark" title="Нажать в момент начала шторма">◉ ОТМЕТИТЬ СТАРТ</button>`
+    ? `<button class="st-mark" id="stMark" title="Нажать в момент начала шторма">◉ ОТМЕТИТЬ СТАРТ</button>
+       <button class="st-mark" id="stMarkEnd" title="Шторм только что закончился — якорь отведётся на длительность назад">◉ ТОЛЬКО ЧТО КОНЧИЛСЯ</button>`
     : "";
   if (st.paused) {
     // шторм уступает выбросу и не начнётся, пока тот не пройдёт (КМ EXBO) —
@@ -1261,16 +1264,28 @@ function stormBody(st) {
     <div class="st-sub">ОРИЕНТИР: ВЫБРОС СДВИГАЕТ ЦИКЛ, ТОЧНО — ПО ИНДИКАТОРУ В ИГРЕ</div>${mark}</div>`;
 }
 
-async function stormMark() {
-  const b = $("stMark");
+// обе кнопки отметки шторма: addEventListener передаёт Event первым аргументом,
+// поэтому обёртки обязательны — иначе «отметить старт» уходит в ветку «кончился».
+function bindStormMarks(root) {
+  const a = root.querySelector("#stMark");
+  if (a) a.addEventListener("click", () => stormMark(false));
+  const b = root.querySelector("#stMarkEnd");
+  if (b) b.addEventListener("click", () => stormMark(true));
+}
+
+async function stormMark(ended) {
+  const id = ended ? "stMarkEnd" : "stMark";
+  const b = $(id);
+  const was = b && b.textContent;
   if (b) { b.disabled = true; b.textContent = "…"; }
   try {
     await fetch(api("/admin/estorm/mark"), {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(ended ? { ended: true } : {}) });
     home2Data = null;                       // сбрасываем минутный кэш главной
     navigate(location.pathname);
   } catch (e) {
-    if (b) { b.disabled = false; b.textContent = "◉ ОТМЕТИТЬ СТАРТ"; }
+    if (b) { b.disabled = false; b.textContent = was; }
   }
 }
 
@@ -1429,7 +1444,11 @@ function dailyBuildBody(d) {
     <div class="db-cost">АРТЕФАКТЫ <b>${fmt(b.totals.cost)} ₽</b> <span class="db-of">/ ${fmtBudgetShort(d.budget)} БЮДЖЕТ</span></div>`;
 }
 
-// модуль промокодов на главной: код (клик копирует) + срок; реферальный — сверху.
+// модуль промокодов на главной: код (клик копирует) + срок; приветственный бонус — сверху.
+// Метка тут намеренно короткая («★ БОНУС»): колонка полосы — 165px, а полное
+// «★ ПРИВЕТСТВЕННЫЙ БОНУС» с сроком в неё не встаёт и добавляет вторую строку,
+// хотя высота полосы держится в одну (она отодвигает крафт и аук). Целевая
+// фраза живёт там, где её видит робот: в карточке /promo и в seo_html раздела.
 // Срок идёт строкой ПОД кодом: в узкой рейке ПУЛЬТА он стоял справа и отжимал
 // кнопку до многоточия — код «FRN…» скопировать нельзя, а иногда его съедало целиком.
 function promoDashBody(p) {
@@ -1444,7 +1463,7 @@ function promoDashBody(p) {
   const row = (x) => `<div class="dash-promo${x.is_ref ? " ref" : ""}">
       ${promoCodeBtn(x)}
       <div class="dash-promo-m">
-        ${x.is_ref ? `<span class="dash-promo-ref">★ РЕФЕРАЛЬНЫЙ</span><span class="dash-promo-sep">·</span>` : ""}
+        ${x.is_ref ? `<span class="dash-promo-ref">★ БОНУС</span><span class="dash-promo-sep">·</span>` : ""}
         <span class="dash-promo-exp">${short(x.expires_at)}</span>
       </div>
     </div>`;
@@ -1497,8 +1516,7 @@ function h2Bind(root) {
     root.querySelectorAll(".sales-view").forEach((v) =>
       v.classList.toggle("hidden", v.dataset.view !== b.dataset.view));
   }));
-  const sm = root.querySelector("#stMark");
-  if (sm) sm.addEventListener("click", stormMark);
+  bindStormMarks(root);
   startEmTick();
 }
 
@@ -3632,8 +3650,7 @@ async function openGuide(slug) {
   if (box) {
     fetch(api("/estorm")).then((r) => r.json()).then((st) => {
       box.innerHTML = stormBody(st);
-      const sm = box.querySelector("#stMark");
-      if (sm) sm.addEventListener("click", stormMark);
+      bindStormMarks(box);
       startEmTick();
     }).catch(() => {});
   }
@@ -3705,7 +3722,7 @@ function promoCard(p) {
   // description — доверенный HTML из DEV-редактора (как тела гайдов/квестов)
   return `<article class="promo-card${p.is_ref ? " promo-ref" : ""}">
     <div class="promo-b">
-      ${p.is_ref ? `<div class="promo-ref-badge">★ РЕФЕРАЛЬНЫЙ ПРОМОКОД САЙТА</div>` : ""}
+      ${p.is_ref ? `<div class="promo-ref-badge">★ ПРИВЕТСТВЕННЫЙ БОНУС · ПРОМОКОД ДЛЯ НОВЫХ ИГРОКОВ</div>` : ""}
       <div class="promo-t">${escapeHtml(p.title)}</div>
       ${promoCodeBtn(p)}
       ${p.description ? `<div class="promo-d patch-body">${p.description}</div>` : ""}
@@ -3731,7 +3748,7 @@ async function openPromo() {
   }
   if (location.pathname !== "/promo") return;
   const items = d.items || [];
-  const ref = items.find((p) => p.is_ref);           // место сверху — под реферальный
+  const ref = items.find((p) => p.is_ref);           // место сверху — под приветственный бонус
   const rest = items.filter((p) => !p.is_ref);
   page.innerHTML = `<div class="btmod">
     <div class="section-head">
@@ -6899,7 +6916,7 @@ async function renderDevPromosList() {
   const rows = items.map((p) => `
     <div class="gadm-row">
       <div class="gadm-row-i">
-        <div class="gadm-row-t">${p.is_ref ? `<span class="dash-promo-ref">★ РЕФ</span> ` : ""}${escapeHtml(p.title)}
+        <div class="gadm-row-t">${p.is_ref ? `<span class="dash-promo-ref">★ БОНУС</span> ` : ""}${escapeHtml(p.title)}
           · <b>${escapeHtml(p.code)}</b></div>
         <div class="gadm-row-s">${p.expires_at
           ? `до ${escapeHtml(p.expires_at.replace("T", " "))} МСК (потом удалится сам)` : "бессрочный"}</div>
@@ -6966,7 +6983,7 @@ function renderDevPromoForm(p) {
         <label class="gform-l">ВРЕМЯ МСК · пусто = весь день включительно
           <input id="pfExpT" type="time" value="${escapeHtml(expTime)}"></label>
         <label class="gform-chk"><input id="pfRef" type="checkbox" ${p.is_ref ? "checked" : ""}>
-          РЕФЕРАЛЬНЫЙ · закрепить сверху (единственный)</label>
+          ПРИВЕТСТВЕННЫЙ БОНУС · реферальный код, закреплён сверху (единственный)</label>
       </div>
       <div class="gform-actions">
         <button type="button" class="gadm-save" id="pfSave">СОХРАНИТЬ</button>

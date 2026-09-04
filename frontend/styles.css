@@ -2006,7 +2006,9 @@ body:has(.cmp-tray:not(.hidden)) .auth-notice { bottom: 76px; }
 .st-big .st-left { font-variant-numeric: tabular-nums; }
 .st-sub { font-size: 10px; color: var(--dimmer); letter-spacing: 0.06em; }
 .st-sub a { color: var(--green); }
-.st-mark { margin-top: 8px; font: inherit; font-size: 10px; letter-spacing: 0.06em;
+/* кнопок отметки две (старт и конец шторма), а блок стоит и в узкой рейке —
+   даём им перенос, иначе вторая вылезает за рамку */
+.st-mark { margin: 8px 6px 0 0; font: inherit; font-size: 10px; letter-spacing: 0.06em;
            color: var(--dim); background: transparent; border: 1px solid var(--border);
            padding: 5px 9px; border-radius: 3px; cursor: pointer; }
 .st-mark:hover:not(:disabled) { color: var(--green); border-color: var(--green); }
@@ -2225,6 +2227,18 @@ body:has(.cmp-tray:not(.hidden)) .auth-notice { bottom: 76px; }
 .seo-article h1 { font-size: 20px; color: var(--bright); font-weight: 800; margin: 0 0 12px; }
 .seo-article-body { font-size: 13px; line-height: 1.7; color: var(--text); }
 .seo-article-body img { max-width: 100%; height: auto; }
+/* таблица характеристик в серверной карточке предмета: её видит краулер и
+   человек с выключенным JS, поэтому она должна читаться, а не висеть голым HTML */
+.seo-article h2 { font-size: 16px; color: var(--bright); margin: 18px 0 8px; }
+.seo-article h3 { font-size: 13px; color: var(--green); letter-spacing: 0.04em; margin: 14px 0 6px; }
+.seo-article p { font-size: 13px; line-height: 1.65; color: var(--text); margin: 0 0 10px; max-width: 720px; }
+.seo-article ul { margin: 0 0 10px; padding-left: 20px; }
+.seo-article li { font-size: 13px; line-height: 1.6; color: var(--text); }
+.seo-tab { border-collapse: collapse; margin: 0 0 10px; max-width: 520px; width: 100%; }
+.seo-tab td { font-size: 12px; padding: 4px 10px 4px 0; border-bottom: 1px solid var(--border-deep); }
+.seo-tab td:first-child { color: var(--dim); }
+.seo-tab td:last-child { color: var(--text); text-align: right; }
+.seo-harm { color: var(--red); }
 
 /* ---------- комментарии ---------- */
 .cmt-box { max-width: 860px; margin: 22px 0 10px; border-top: 1px solid var(--border); padding-top: 14px; }
@@ -2609,7 +2623,9 @@ body:has(.cmp-tray:not(.hidden)) .auth-notice { bottom: 76px; }
 .dash-promo .promo-code.promo-link:hover .pc-hint { opacity: 1; }
 /* гасим код под подтверждением, иначе «STALZ СКОПИРОВАНО ✓» читается как обрезанный код */
 .dash-promo .promo-code.copied .pc-code { opacity: 0.25; }
-.dash-promo-m { display: flex; align-items: baseline; gap: 5px; padding: 0 2px; }
+/* wrap — страховка: метка и срок стоят в колонке шириной от 165px, и если текст
+   метки когда-нибудь удлинят, она перенесётся, а не вылезет за карточку. */
+.dash-promo-m { display: flex; align-items: baseline; gap: 5px; padding: 0 2px; flex-wrap: wrap; }
 .dash-promo-ref { font-size: 9px; letter-spacing: 0.1em; color: var(--amber); white-space: nowrap; }
 .dash-promo-sep { font-size: 9px; color: var(--dimmer); }
 .dash-promo-exp { font-size: 10px; color: var(--dim); white-space: nowrap; }

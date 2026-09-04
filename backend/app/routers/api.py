@@ -324,13 +324,16 @@ async def estorm_get():
 
 @router.post("/admin/estorm/mark")
 async def estorm_mark(request: Request, payload: dict = Body(default={})):
-    """Отметить старт шторма (только админ). Пустое тело — «прямо сейчас».
+    """Отметить шторм (только админ). Пустое тело — «старт прямо сейчас».
 
-    Одна кнопка вместо переменной окружения: поймать момент старта в игре
-    проще, чем высчитывать смещение и передеплоивать контейнер."""
+    Одна кнопка вместо переменной окружения: поймать момент в игре проще, чем
+    высчитывать смещение и передеплоивать контейнер. `ended: true` — «шторм
+    только что кончился»: конец заметен по погасшим громоотводам, а старт надо
+    застать ровно в минуту, поэтому вторая кнопка отводит якорь сама."""
     _require_admin(request)
     try:
-        return estorm.mark((payload or {}).get("at"))
+        return estorm.mark((payload or {}).get("at"),
+                           ended=bool((payload or {}).get("ended")))
     except ValueError as e:
         raise HTTPException(400, str(e))
 
