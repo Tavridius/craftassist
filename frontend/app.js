@@ -1257,7 +1257,8 @@ function stormBody(st) {
        <div class="st-big">ЧЕРЕЗ <span class="st-left" data-at="${st.switch_at}">…</span></div>`;
   return `<div class="st-box">${head}
     <div class="st-sub">РАЗ В ЧАС ПО ${st.duration_min} МИН · ДО 23 СЕНТЯБРЯ ·
-      <a href="/guides/elektroshtorm-kuznya-11">КАК ФАРМИТЬ</a></div>${mark}</div>`;
+      <a href="/guides/elektroshtorm-kuznya-11">КАК ФАРМИТЬ</a></div>
+    <div class="st-sub">ОРИЕНТИР: ВЫБРОС СДВИГАЕТ ЦИКЛ, ТОЧНО — ПО ИНДИКАТОРУ В ИГРЕ</div>${mark}</div>`;
 }
 
 async function stormMark() {
