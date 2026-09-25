@@ -2,6 +2,7 @@
 const BASE = "";                       // приложение на корне домена
 const api = (p) => `${BASE}/api${p}`;
 const asset = (p) => (p ? `${BASE}/${p}` : "");
+const PERK_MAX = 5;   // максимум навыка крафта в игре (зеркало hideout.PERK_MAX)
 
 // ---------- Я.Метрика: целевые действия ----------
 // Цели-«JavaScript-событие» в счётчике 110585101: signup (регистрация) / login (вход).
@@ -901,7 +902,7 @@ function reqsSections(chosen, rc, d) {
   for (const [k, lvl] of perks) {
     const pc = perkChk && perkChk[k];
     let pips = "";
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < PERK_MAX; i++) {
       let cls = i < lvl ? "on" : "";
       if (pc && i < lvl) cls = i < pc.have ? "on ok" : "on bad";  // есть/не хватает
       pips += `<div class="pip ${cls}"></div>`;
@@ -911,7 +912,7 @@ function reqsSections(chosen, rc, d) {
         <div class="lvl">УР. ${lvl}${pc ? ` <span class="have ${pc.ok ? "ok" : "bad"}">/ У ТЕБЯ ${pc.have}</span>` : ""}</div>
       </div>
       <div class="pips">${pips}</div>
-      <div class="pips-scale"><span>1</span><span>ТРЕБУЕМЫЙ ИЗ 10</span><span>10</span></div>`;
+      <div class="pips-scale"><span>1</span><span>ТРЕБУЕМЫЙ ИЗ ${PERK_MAX}</span><span>${PERK_MAX}</span></div>`;
   }
   const bn = chosen.bonus;
   if (bn) perkHtml += `<div class="bonus-note"
@@ -5823,7 +5824,7 @@ async function openProfile() {
 }
 
 function renderProfile(dict, prof, user) {
-  const pm = dict.perk_max || 10;
+  const pm = dict.perk_max || PERK_MAX;
   const P = { perks: { ...(prof.perks || {}) }, features: new Set(prof.features || []) };
   const feats = [...(dict.features || [])]
     .sort((a, b) => featureName(a).localeCompare(featureName(b), "ru"));
@@ -7225,7 +7226,7 @@ function cadmRowHtml(it) {
         data-orig="${it.result.amount}" value="${t.result_amount ?? it.result.amount}"
         title="Выход за крафт (EXBO: ${it.result.amount})"></span>
       ${perk ? `<span class="cadm-perk">${escapeHtml(perkName(perk[0]))} ур.
-        <input type="number" min="1" max="10" data-f="perk_level" data-orig="${perk[1]}"
+        <input type="number" min="1" max="${PERK_MAX}" data-f="perk_level" data-orig="${perk[1]}"
           value="${t.perk_level ?? perk[1]}" title="Требуемый уровень (EXBO: ${perk[1]})"></span>` : ""}
       <span class="cadm-perk">⚡<input type="number" min="0" max="1000000" data-f="energy"
         data-orig="${it.energy ?? ""}" value="${t.energy ?? it.energy ?? ""}"

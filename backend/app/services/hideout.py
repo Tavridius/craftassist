@@ -5,11 +5,15 @@
 """
 from app.db.index import db
 
-PERK_MAX = 10  # шкала уровней навыка в игре (карточка рисует 10 пипов)
+# Максимум навыка в игре — 5: рецепты EXBO требуют уровни только 1..5, выше
+# навык не качается. Было 10 «на вырост» — игроки спрашивали, откуда 10 уровней
+# (чат, 25.09.2026), а ур. 6-10 в профиле раздували бонусный крафт (+75%/уровень).
+PERK_MAX = 5
 
 
 def _norm(profile: dict) -> tuple[dict, set]:
-    perks = {k: int(v) for k, v in (profile.get("perks") or {}).items()}
+    # min — профили, сохранённые при шкале 10, не должны давать несуществующий бонус
+    perks = {k: min(PERK_MAX, int(v)) for k, v in (profile.get("perks") or {}).items()}
     feats = set(profile.get("features") or [])
     return perks, feats
 
