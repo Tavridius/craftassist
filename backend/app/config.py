@@ -152,7 +152,7 @@ BUILD_PRICE_SOURCE = os.getenv("BUILD_PRICE_SOURCE", "auto")
 EMISSION_WATCH_ENABLED = os.getenv("EMISSION_WATCH_ENABLED", "1") not in ("0", "false", "False")
 EMISSION_POLL_SEC = int(os.getenv("EMISSION_POLL_SEC", "60"))
 
-# --- Таймер Электрошторма (событие на Кузне-11 до 23.09.2026) ---
+# --- Таймер Электрошторма (событие на Кузне-11 до 30.09.2026) ---
 # Игровой API события не отдаёт, поэтому считаем от якоря — момента начала
 # любого шторма в ISO (например 2026-09-03T18:00:00+03:00). Проще выставить не
 # здесь, а кнопкой в /dev в момент старта: она пишет data/estorm.json, и он
