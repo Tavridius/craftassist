@@ -1543,6 +1543,13 @@ html.map-drawing .maped-wrap .leaflet-container { cursor: crosshair; }
 .chat-msg { margin-bottom: 4px; overflow-wrap: anywhere; }
 .chat-msg .t { color: var(--faint); font-size: 10px; }
 .chat-msg .u { color: var(--green); font-weight: 700; }
+/* удаление — только админам: кнопка есть у всех, показывает её .chat-dock.admin */
+.chat-del {
+  display: none; float: right; background: none; border: none; cursor: pointer;
+  color: var(--dimmer); font-size: 11px; padding: 0 2px; line-height: 1.55;
+}
+.chat-dock.admin .chat-del { display: inline; }
+.chat-del:hover { color: var(--red); }
 /* разделитель дня: дату на каждой строке узкий док не переживёт */
 .chat-day { display: flex; align-items: center; gap: 8px; margin: 10px 0 6px; }
 .chat-day::before, .chat-day::after { content: ""; flex: 1; height: 1px; background: var(--border); }

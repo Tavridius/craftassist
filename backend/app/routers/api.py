@@ -1198,7 +1198,8 @@ async def chat_fetch(room: str, after: int = 0):
     if room not in chat.ROOMS:
         raise HTTPException(404, "no such room")
     msgs = chat.fetch(room, after=after)
-    return {"messages": msgs, "last_id": msgs[-1]["id"] if msgs else after}
+    return {"messages": msgs, "last_id": msgs[-1]["id"] if msgs else after,
+            "deleted": chat.deleted_ids(room)}
 
 
 @router.post("/chat/{room}")
@@ -1218,6 +1219,16 @@ async def chat_post(room: str, request: Request, payload: dict = Body(...)):
     _chat_last_post[user["id"]] = now
     mid = chat.post(room, user["id"], user.get("display_login") or user["login"], text)
     return {"ok": True, "id": mid}
+
+
+@router.delete("/chat/message/{mid}")
+async def chat_delete(mid: int, request: Request):
+    """Удалить сообщение из чата — только админ (ADMIN_USER_IDS)."""
+    if not is_admin(current_user(request)):
+        raise HTTPException(403, "только для админов")
+    if not chat.delete(mid):
+        raise HTTPException(404, "сообщение не найдено")
+    return {"ok": True}
 
 
 # ---------- топливо генератора: выгодные источники заправки (дашборд) ----------

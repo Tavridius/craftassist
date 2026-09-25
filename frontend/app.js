@@ -2104,6 +2104,8 @@ function chatFormBind() {
 // /me ответил: док уже нарисован — меняем только форму, ленту не перезагружаем.
 function chatAuthChanged() {
   chatAuthKnown = true;
+  const dock = $("chatDock");
+  if (dock) dock.classList.toggle("admin", !!(ME && ME.is_admin));
   const form = document.querySelector(".chat-form");
   if (chatOpen && form) { form.innerHTML = chatFormHtml(); chatFormBind(); }
   else chatDockRender();
@@ -2121,7 +2123,7 @@ function chatDockRender() {
     });
     return;
   }
-  dock.className = "chat-dock open";
+  dock.className = "chat-dock open" + (ME && ME.is_admin ? " admin" : "");
   const tabs = CHAT_ROOMS.map(([id, label]) =>
     `<button class="chat-tab ${id === chatRoom ? "on" : ""}" data-room="${id}">${label}</button>`).join("");
   dock.innerHTML = `
@@ -2135,6 +2137,18 @@ function chatDockRender() {
   }));
   $("chatMin").addEventListener("click", () => {
     chatOpen = false; localStorage.setItem("sz_chat_open", "0"); chatDockRender();
+  });
+  // крестик удаления есть в разметке у всех, виден только в .chat-dock.admin (CSS):
+  // лента рисуется до ответа /me, перерисовывать её ради прав незачем
+  $("chatMsgs").addEventListener("click", async (e) => {
+    const btn = e.target.closest(".chat-del");
+    if (!btn) return;
+    const row = btn.closest(".chat-msg");
+    if (!confirm(`Удалить сообщение ${row.querySelector(".u").textContent}?`)) return;
+    try {
+      const r = await fetch(api(`/chat/message/${row.dataset.id}`), { method: "DELETE" });
+      if (r.ok || r.status === 404) chatRemoveMsgs([row.dataset.id]);
+    } catch (e) { /* тихо */ }
   });
   chatFormBind();
   chatLastId = 0;
@@ -2157,7 +2171,20 @@ function chatMsgHtml(m) {
   const dt = new Date(m.ts * 1000);
   const t = dt.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
   const full = dt.toLocaleString("ru-RU", { dateStyle: "short", timeStyle: "short" });
-  return `<div class="chat-msg"><span class="t" title="${full}">${t}</span> <span class="u">${escapeHtml(m.login)}</span> ${escapeHtml(m.text)}</div>`;
+  return `<div class="chat-msg" data-id="${m.id}"><button class="chat-del" title="Удалить (админ)">✕</button><span class="t" title="${full}">${t}</span> <span class="u">${escapeHtml(m.login)}</span> ${escapeHtml(m.text)}</div>`;
+}
+
+// Удалённые админом сообщения: сервер в каждом опросе отдаёт их id, иначе у тех,
+// кто уже видит сообщение, оно висело бы до перезагрузки (опрос идёт по after=).
+// Разделитель дня, за которым не осталось сообщений, тоже убираем.
+function chatRemoveMsgs(ids) {
+  const box = $("chatMsgs");
+  if (!box || !ids.length) return;
+  for (const id of ids) box.querySelector(`.chat-msg[data-id="${id}"]`)?.remove();
+  box.querySelectorAll(".chat-day").forEach((d) => {
+    const next = d.nextElementSibling;
+    if (next && next.classList.contains("chat-day")) d.remove();
+  });
 }
 
 // Лента — это последние 500 сообщений комнаты, то есть месяцы истории, а одно
@@ -2210,6 +2237,7 @@ async function chatRefresh(reset = false) {
     return;
   }
   if (reset) { box.innerHTML = ""; chatLastDay = ""; }
+  if (Array.isArray(d.deleted)) chatRemoveMsgs(d.deleted);
   if (d.messages.length) {
     box.querySelectorAll(".chat-empty, .spinner").forEach((el) => el.remove());
     const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
