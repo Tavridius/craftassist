@@ -99,8 +99,12 @@ ssh pavel@88.87.70.167 "cd /home/pavel/stalzone-craft &&   sed -i '/^TG_BOT_TOKE
 ```
 
 Выключить по отдельности: `TG_NOTIFY_PATCHES=0` / `TG_NOTIFY_EMISSIONS=0`.
-Если api.telegram.org с сервера не открывается — `TG_API_BASE` на свой прокси
-Bot API. Дедуп и очередь удаления — `data/tg_bot.json` в томе.
+С сервера api.telegram.org резолвится в 149.154.166.110, который не отвечает,
+поэтому в docker-compose.yml `extra_hosts` пинит его на 149.154.167.220
+(переопределяется `TG_API_IP` в `.env`). Перестал работать и этот адрес —
+проверить другие: `curl -4 --resolve api.telegram.org:443:<ip>
+https://api.telegram.org/bot<токен>/getMe`; крайний вариант — `TG_API_BASE` на
+свой прокси Bot API. Дедуп и очередь удаления — `data/tg_bot.json` в томе.
 
 ## Реклама РСЯ — включение / выключение
 

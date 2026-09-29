@@ -6,6 +6,11 @@ services:
     image: stalzone-craft:latest
     container_name: stalzone_craft
     restart: unless-stopped
+    # api.telegram.org резолвится с сервера в 149.154.166.110, а он не отвечает
+    # (проверено 30.09.2026: curl --resolve через .166.110 и .167.221 — тишина,
+    # через .167.220 — ok). Бот без этого падал с Network is unreachable.
+    extra_hosts:
+      - "api.telegram.org:${TG_API_IP:-149.154.167.220}"
     # localhost-порт для curl-проверок на сервере; наружу отдаёт rpg_nginx через /mvp
     ports:
       - "127.0.0.1:8100:8000"
