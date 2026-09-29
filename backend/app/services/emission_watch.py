@@ -13,6 +13,7 @@ import httpx
 
 from app import config
 from app.services import auction, oauth
+from app.services.tg_bot import tgbot
 
 logger = logging.getLogger(__name__)
 
@@ -84,8 +85,10 @@ class EmissionWatch:
                         self.previous_start = d.get("previousStart")
                         self.previous_end = d.get("previousEnd")
                         self.checked_at = datetime.now(timezone.utc).isoformat()
-                        changed = self._note(self.current_start)
-                        changed = self._note(self.previous_start) or changed
+                        started = self._note(self.current_start)
+                        changed = self._note(self.previous_start) or started
+                        if started:           # новый выброс — в Telegram-канал (тихо, с автоудалением)
+                            await tgbot.emission(self.current_start)
                         if changed:
                             self.save()
                     else:

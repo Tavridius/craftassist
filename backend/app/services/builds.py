@@ -15,9 +15,10 @@ M — множитель качества: тиры непрерывны по +0
   заражения. До 03.09.2026 мы умножали выводы на эффективность — из-за этого
   сборка в контейнере со 150% эффективности выглядела чище, чем на самом деле;
   жалобы в чате сайта 28.08.2026. Лимит = естественный вывод организма:
-  радиация/температура/био — 0.5, пси — 1.5 (Глобальный ребаланс 26.04.2023:
-  «уменьшен вывод организма ... с 1 до 0.5, а при пси-воздействии с 3 до 1.5»),
-  холод — 1.0. До 25.09.2026 здесь стояли доребалансные 1.0/3.0. Игрок терпит
+  радиация/температура/био/пси — 0.5, холод — 1.0 (игровой справочник «Вывод
+  заражений», скрин юзера 30.09.2026). Глобальный ребаланс 26.04.2023 снижал
+  вывод с 1 до 0.5, а пси с 3 до 1.5; сейчас в игре пси тоже 0.5. До 25.09.2026
+  здесь стояли доребалансные 1.0/3.0, до 30.09.2026 у пси — 1.5. Игрок терпит
   СТРОГО НИЖЕ лимита — на самом значении урон уже идёт, см. CONTAM_CEIL и _ceil.
   Отрицательный net — запас защиты,
   не вреден (подтверждено юзером). Превышение оптимизатор чинит в три эшелона:
@@ -37,7 +38,9 @@ M — множитель качества: тиры непрерывны по +0
 парето-фронт + DP по (слоты × бюджет). Приведённое ХП — та же основа со свипом
 λ по (пулестойкость, живучесть), т.к. цель (100+пуле)×живучесть нелинейна.
 """
+import asyncio
 import json
+import logging
 import math
 import random
 import time
@@ -49,6 +52,8 @@ from app.db import market
 from app.db.index import db
 from app.services.artefact_lots import artlots
 from app.services.artefact_watch import MSK
+
+logger = logging.getLogger(__name__)
 
 M_MIN, M_MAX = 0.85, 1.75
 TIER_STEP = 0.15
@@ -74,12 +79,13 @@ REGEN_KEY = "stalker.artefact_properties.factor.regeneration_bonus"
 WEIGHT_KEY = "stalker.artefact_properties.factor.max_weight_bonus"
 
 # accumulation-стат -> (тип заражения, лимит игрока). None — лимит не задокументирован.
-# Лимит = естественный вывод организма (ребаланс 26.04.2023: 1→0.5, пси 3→1.5).
+# Лимит = естественный вывод организма (игровой справочник «Вывод заражений»:
+# пси/радиация/био/термическое — 0.5, холод — 1).
 _CONTAM = {
     "radiation_accumulation": ("Радиация", 0.5),
     "thermal_accumulation": ("Температура", 0.5),
     "biological_accumulation": ("Биозаражение", 0.5),
-    "psycho_accumulation": ("Пси-излучение", 1.5),
+    "psycho_accumulation": ("Пси-излучение", 0.5),
     "frost_accumulation": ("Холод", 1.0),   # лимит 1.0 подтверждён юзером
     "combustion_accumulation": ("Горение", None),
 }
@@ -180,6 +186,26 @@ def bonus_factor(iid: str, ptn: int) -> float:
     return sum(1 for t in (5, 10, 15) if ptn >= t) / len(pool)
 
 
+def active_bonus(v: dict) -> list[tuple[dict, float]]:
+    """Доп-свойства слота с весом: [(prop, factor)]. Автоподбор не знает, какие
+    допы выпали, и берёт матожидание (bonus_factor). Сборка из ручного
+    калькулятора несёт v["bx"] — отмеченные владельцем: они активны полностью,
+    сверх разблокированных порогов не считаются; когда разблокирован весь пул
+    (+15 у обычного арта), активен весь пул без галочек. Та же логика, что
+    slotBonusActive на фронте."""
+    pool = BONUS_PROPS.get(v["item"], [])
+    if v.get("bx") is None:
+        f = bonus_factor(v["item"], v["ptn"])
+        return [(bp, f) for bp in pool] if f else []
+    unlocked = min(sum(1 for t in (5, 10, 15) if v["ptn"] >= t), len(pool))
+    if not unlocked:
+        return []
+    if unlocked >= len(pool):
+        return [(bp, 1.0) for bp in pool]
+    sel = set(v["bx"][:unlocked])
+    return [(bp, 1.0) for bp in pool if bp["key"] in sel]
+
+
 def bonus_value(bp: dict, m: float, ptn: int) -> float:
     """Полное значение доп-свойства (как в тултипе): base × M × заточка."""
     return bp["base"] * m * sharp(ptn)
@@ -274,17 +300,15 @@ def contamination(variants: list[dict], cont: dict) -> list[dict]:
                     emit += val
                 else:                # вывод заражения — БЕЗ ×эффективность (см. шапку)
                     protect += val
-            f = bonus_factor(v["item"], v["ptn"])
-            if f:                    # доп-свойства порогов: в пулах только защиты (−)
-                for bp in BONUS_PROPS.get(v["item"], []):
-                    if bp["key"] != key:
-                        continue
-                    present = True
-                    bval = bonus_value(bp, v["m"], v["ptn"]) * f
-                    if bval > 0:
-                        emit += bval
-                    else:
-                        protect += bval
+            for bp, f in active_bonus(v):   # доп-свойства порогов: в пулах только защиты (−)
+                if bp["key"] != key:
+                    continue
+                present = True
+                bval = bonus_value(bp, v["m"], v["ptn"]) * f
+                if bval > 0:
+                    emit += bval
+                else:
+                    protect += bval
         if not present:
             continue
         reduce = 1.0 if key == FROST_KEY else (1 - prot)  # мороз защита не гасит
@@ -733,7 +757,7 @@ def _warnings(builds: list[dict]) -> list[str]:
            "активен весь пул (детерминировано), на +5/+10 — матожиданием "
            "(какие именно выпали — случайный порядок).",
            "Заражения гасятся внутренней защитой контейнера (кроме холода); итог "
-           "держится строго НИЖЕ лимита (рад/темп/био — 0.5, пси — 1.5, холод — 1.0): "
+           "держится строго НИЖЕ лимита (рад/темп/био/пси — 0.5, холод — 1.0): "
            "на самом значении урон уже идёт.",
            _price_note()]
     if builds:
@@ -1050,30 +1074,35 @@ def daily_build() -> dict:
             "hint": "Биржа артефактов ещё копит цены — сборка дня появится после первых замеров."}
 
 
-# ---------- готовые сборки для верха /builds ----------
-# Страница открывалась пустой сеткой слотов: человек с запросом «калькулятор
-# сборок» видел форму, которую надо заполнять, и уходил (отказы с поиска 43%
-# против 15% по сайту, глубина 1.1). Показываем сверху три посчитанные сборки
-# под типовые задачи — тот же приём, что вытащил /market готовыми списками.
-READY_BUDGET = 5_000_000     # бюджет всех трёх: сравниваются задачи, а не деньги
-READY_TTL = 900.0            # с; один профиль считается ~0.5 с, страница низкотрафичная
-READY_PRESETS = (
-    {"id": "pvp", "title": "ПОД БОЙ",
-     "note": "Держать выстрел и не падать с одной очереди",
+# ---------- готовые сборки: четыре случайные наверху /sborki ----------
+# История: /builds открывался пустой сеткой слотов, и посетитель с запросом
+# «сборки сталкрафт» уходил (отказы 43–50%). Сперва сверху встали три сборки
+# под один бюджет 5 млн, теперь у готовых сборок своя страница /sborki: четыре
+# случайные сборки под разные задачи и бюджеты, ниже — сборки игроков.
+# Профили и лестница бюджетов — решение владельца (100 тыс. … 50 млн).
+RANDOM_PROFILES = (
+    {"id": "bullet", "title": "ПУЛЕСТОЙКОСТЬ", "note": "Держать выстрел в PvP",
+     "stats": ((BULLET_KEY, 100),)},
+    {"id": "bullet_hp", "title": "ПУЛЕСТОЙ + ЖИВУЧЕСТЬ", "note": "Не падать с одной очереди",
      "stats": ((BULLET_KEY, 100), (HEALTH_KEY, 70))},
-    {"id": "run", "title": "ПОД ХОДКИ",
-     "note": "Бегать дальше и дольше — вылазки за лутом",
-     "stats": ((SPEED_KEY, 100), (STAMINA_KEY, 70))},
-    {"id": "farm", "title": "ПОД ФАРМ",
-     "note": "Унести за раз больше добычи",
-     "stats": ((WEIGHT_KEY, 100), (HEALTH_KEY, 50))},
+    {"id": "hp_speed", "title": "ЖИВУЧЕСТЬ + СКОРОСТЬ", "note": "Живучесть без потери темпа",
+     "stats": ((HEALTH_KEY, 100), (SPEED_KEY, 70))},
+    {"id": "speed", "title": "СКОРОСТЬ", "note": "Бегать быстрее всех",
+     "stats": ((SPEED_KEY, 100),)},
+    {"id": "speed_weight", "title": "СКОРОСТЬ + ВЕС", "note": "Быстро и с полным рюкзаком добычи",
+     "stats": ((SPEED_KEY, 100), (WEIGHT_KEY, 70))},
 )
+RANDOM_BUDGETS = (100_000, 300_000, 500_000, 1_000_000, 3_000_000,
+                  5_000_000, 10_000_000, 25_000_000, 50_000_000)
+RANDOM_CARDS = 4
+RANDOM_TTL = 3600.0    # с; сборка (профиль × бюджет) живёт час, потом пересчёт
+RANDOM_WARM_PAUSE = 1.0  # с между расчётами прогрева: один расчёт держит цикл ~0.5 с
 
-_ready_cache: dict = {"ts": 0.0, "payload": None}
+_random_cache: dict = {}   # (profile_id, budget) -> (ts, build | None)
 
 
 def _ready_container() -> dict | None:
-    """Хранилище для готовых сборок — правилом, а не зашитым id: база предметов
+    """Хранилище для готовых сборок /sborki — правилом, а не зашитым id: база предметов
     едет с патчами. Топ-редкость, максимум слотов, при равенстве — эффективность
     (id последним, чтобы выбор был детерминирован при полном равенстве).
 
@@ -1094,27 +1123,199 @@ def _ready_container() -> dict | None:
                                      c.get("efficiency") or 0.0, c["id"]))
 
 
-def ready_builds() -> dict:
-    """Три готовые сборки под типовые задачи на живых ценах, кэш READY_TTL.
-    Профиль, под который сборка считалась, отдаём вместе с ней — фронт кладёт
-    его в автоподбор, чтобы посетитель пересчитал под свой бюджет."""
-    if _ready_cache["payload"] and time.time() - _ready_cache["ts"] <= READY_TTL:
-        return _ready_cache["payload"]
+def _random_one(p: dict, budget: int, cont: dict) -> dict | None:
+    """Сборка профиля под бюджет из кэша или расчётом. Пустой результат тоже
+    кэшируется: 100 тыс. под «пулестойкость» может не собраться весь час."""
+    key = (p["id"], budget)
+    hit = _random_cache.get(key)
+    if hit and time.time() - hit[0] <= RANDOM_TTL:
+        return hit[1]
+    stats_req = [{"key": k, "weight": w} for k, w in p["stats"]]
+    res = auto_build(float(budget), cont["id"], stats_req)
+    build = (res.get("builds") or [None])[0]
+    if build or res.get("error") != "no_priced_variants":   # биржа не прогрелась — не кэшируем
+        _random_cache[key] = (time.time(), build)
+    return build
+
+
+def random_builds() -> dict:
+    """Четыре случайных профиля из пяти, каждому — случайный бюджет из
+    лестницы. Берём бюджеты, уже посчитанные прогревом (random_warm_loop):
+    расчёт на лету держит цикл событий ~0.5 с на карточку. Если под профиль
+    в кэше пусто — считаем один-два бюджета на месте."""
     cont = _ready_container()
     if not cont:
-        return {"budget": READY_BUDGET, "presets": [], "error": "no_containers"}
-    presets = []
-    for p in READY_PRESETS:
-        stats_req = [{"key": k, "weight": w} for k, w in p["stats"]]
-        res = auto_build(float(READY_BUDGET), cont["id"], stats_req)
-        build = (res.get("builds") or [None])[0]
-        if not build:      # под профиль нет корзин с ценами — молча пропускаем карточку
+        return {"cards": [], "error": "no_containers"}
+    rnd = random.Random()
+    cards = []
+    now = time.time()
+    for p in rnd.sample(RANDOM_PROFILES, min(RANDOM_CARDS, len(RANDOM_PROFILES))):
+        ready = [b for b in RANDOM_BUDGETS
+                 if (h := _random_cache.get((p["id"], b))) and h[1] and now - h[0] <= RANDOM_TTL]
+        budgets = [rnd.choice(ready)] if ready else rnd.sample(RANDOM_BUDGETS, 2)
+        for budget in budgets:
+            build = _random_one(p, budget, cont)
+            if build:
+                cards.append({"id": p["id"], "title": p["title"], "note": p["note"],
+                              "budget": budget,
+                              "stats_req": [{"key": k, "weight": w} for k, w in p["stats"]],
+                              "build": build})
+                break
+    return {"container": cont, "cards": cards, "price_note": _price_note()}
+
+
+async def random_warm_loop() -> None:
+    """Прогрев кэша случайных сборок: все профили × бюджеты раз в RANDOM_TTL,
+    с паузой между расчётами, чтобы не держать цикл событий подряд."""
+    await asyncio.sleep(120)   # после старта биржа артефактов догружает цены
+    while True:
+        cont = _ready_container()
+        if cont:
+            for p in RANDOM_PROFILES:
+                for b in RANDOM_BUDGETS:
+                    try:
+                        _random_cache.pop((p["id"], b), None)
+                        _random_one(p, b, cont)
+                    except Exception:
+                        logger.exception("random build %s %s", p["id"], b)
+                    await asyncio.sleep(RANDOM_WARM_PAUSE)
+        await asyncio.sleep(max(60.0, RANDOM_TTL - 120))
+
+
+# ---------- сборки игроков (/sborki): расчёт состава и выдача пула ----------
+# В базе лежит только состав: хранилище и слоты {item, m, ptn, bx}. Статы и
+# цену считаем при выдаче — цены живые, а статы едут с патчами базы.
+_EVAL_TTL = 60.0              # с; столько же живёт кэш цен bucket_prices
+_eval_cache: dict = {}        # build_id -> (ts, result)
+_stat_ref_cache: dict = {}
+
+
+def normalize_slots(raw, cont: dict) -> list[dict] | None:
+    """Слоты из запроса → [{item, m, ptn, bx}] или None, если мусор.
+    Пустые слоты выкидываем, лишние сверх вместимости хранилища — тоже."""
+    if not isinstance(raw, list):
+        return None
+    out = []
+    for s in raw:
+        if not s:
             continue
-        presets.append({"id": p["id"], "title": p["title"], "note": p["note"],
-                        "stats_req": stats_req, "build": build})
-    payload = {"budget": READY_BUDGET, "container": cont, "presets": presets,
-               "price_note": _price_note()}
-    if presets:        # пустое (биржа не прогрелась) не кэшируем — повторим позже
-        _ready_cache["payload"] = payload
-        _ready_cache["ts"] = time.time()
-    return payload
+        if not isinstance(s, dict):
+            return None
+        iid = str(s.get("item") or s.get("id") or "")
+        if iid not in db.artefacts:
+            return None
+        try:
+            m = min(M_MAX, max(M_MIN, float(s.get("m", 1.0))))
+            ptn = min(15, max(0, int(s.get("ptn", 0))))
+        except (TypeError, ValueError):
+            return None
+        keys = {bp["key"] for bp in BONUS_PROPS.get(iid, [])}
+        bx = [k for k in (s.get("bx") or []) if isinstance(k, str) and k in keys][:3]
+        out.append({"item": iid, "m": round(m, 4), "ptn": ptn, "bx": bx})
+    return out[:cont.get("slots") or 0]
+
+
+def _good_sign(key: str) -> int:
+    """Полезное направление стата: знак его зелёной версии (у отдачи полезен
+    минус). Нет зелёной — противоположно красной; допы порогов — по их базе."""
+    for art in db.artefacts.values():
+        st = art["stats"].get(key)
+        if st and not st["harmful"] and stat_base(st):
+            return 1 if stat_base(st) > 0 else -1
+    for pool in BONUS_PROPS.values():
+        for bp in pool:
+            if bp["key"] == key and bp.get("base"):
+                return 1 if bp["base"] > 0 else -1
+    return -_harm_sign(key) or 1
+
+
+def _stat_ref(key: str) -> float:
+    """Масштаб стата — модуль самого сильного значения на одном арте. Нужен,
+    чтобы сравнивать +12 пулестойкости и +0.3 скорости при выборе «главных»."""
+    if key not in _stat_ref_cache:
+        m = 0.0
+        for art in db.artefacts.values():
+            st = art["stats"].get(key)
+            if st and not st["harmful"]:
+                m = max(m, abs(stat_base(st)))
+        for pool in BONUS_PROPS.values():
+            for bp in pool:
+                if bp["key"] == key:
+                    m = max(m, abs(bp.get("base") or 0.0))
+        _stat_ref_cache[key] = m or 1.0
+    return _stat_ref_cache[key]
+
+
+def evaluate(container_id: str, slots: list[dict]) -> dict:
+    """Статы, заражение и цена сборки из ручного калькулятора — формулы те же,
+    что у manualTotals на фронте: полезное × эффективность, вредное как есть,
+    допы порогов — отмеченные (active_bonus), собственные статы хранилища плоско."""
+    cont = db.storage(container_id)
+    if not cont:
+        return {"error": "container_not_found"}
+    eff = (cont.get("efficiency") or 100.0) / 100.0
+    prices = bucket_prices()
+    stats: dict = {}
+    cost = 0
+    unpriced = 0
+    weight = cont.get("weight") or 0.0
+    slots_out = []
+    for v in slots:
+        art = db.artefacts.get(v["item"])
+        if not art:           # арт пропал из базы с патчем — слот просто не считаем
+            continue
+        it = db.items.get(v["item"], {})
+        weight += art["weight"] or 0.0
+        for k, st in art["stats"].items():
+            if k in ACCUM_KEYS:
+                continue
+            val = stat_value(st, v["m"], v["ptn"])
+            t = stats.setdefault(k, {"name": st["name"], "total": 0.0})
+            t["total"] += val if st["harmful"] else val * eff
+        for bp, f in active_bonus(v):
+            if bp["key"] in ACCUM_KEYS:
+                continue
+            t = stats.setdefault(bp["key"], {"name": bp["name"], "total": 0.0})
+            t["total"] += bonus_value(bp, v["m"], v["ptn"]) * f * eff
+        qlt = qlt_from_m(v["m"])
+        p = prices.get((v["item"], qlt, market.ptn_bucket(v["ptn"])))
+        if p:
+            cost += p["price"]
+        else:
+            unpriced += 1
+        slots_out.append({"item": v["item"], "name": it.get("name", v["item"]),
+                          "icon": it.get("icon", ""), "color": it.get("color", "DEFAULT"),
+                          "qlt": qlt, "m": v["m"], "ptn": v["ptn"], "bx": v.get("bx") or [],
+                          "price": round(p["price"]) if p else None})
+    for s in _self_bonus(cont):
+        t = stats.setdefault(s["key"], {"name": s["name"], "total": 0.0})
+        t["total"] += s["val"]
+    for k, t in stats.items():
+        t["total"] = round(t["total"], 3)
+        t["good"] = t["total"] * _good_sign(k) > 1e-9
+        t["harmful"] = not t["good"] and abs(t["total"]) > 1e-9
+    # главные статы: полезные по убыванию относительной силы
+    main = sorted((k for k, t in stats.items() if t["good"]),
+                  key=lambda k: -abs(stats[k]["total"]) / _stat_ref(k))
+    return {"container": cont, "slots": slots_out,
+            "totals": {"cost": round(cost), "unpriced": unpriced,
+                       "weight": round(weight, 2), "stats": stats,
+                       "contamination": contamination(
+                           [{**v, "bx": v.get("bx") or []} for v in slots
+                            if v["item"] in db.artefacts], cont)},
+            "main": main}
+
+
+def evaluate_cached(bid: int, container_id: str, slots: list[dict]) -> dict:
+    hit = _eval_cache.get(bid)
+    if hit and time.time() - hit[0] <= _EVAL_TTL:
+        return hit[1]
+    res = evaluate(container_id, slots)
+    _eval_cache[bid] = (time.time(), res)
+    return res
+
+
+def auto_title(ev: dict) -> str:
+    """Название по умолчанию: два главных стата сборки."""
+    names = [ev["totals"]["stats"][k]["name"] for k in ev["main"][:2]]
+    return " + ".join(names) if names else "Сборка"

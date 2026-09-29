@@ -14,12 +14,12 @@ from fastapi.staticfiles import StaticFiles
 
 from app import config
 from app.db import (chat, craft_tuning, guides, loader, mapobjects, market, news,
-                    operations, promos, quests, sitenews, users)
+                    operations, promos, quests, sitenews, tg_posts, user_builds, users)
 from app.db.index import db
 from app.routers.api import router as api_router
 from app.routers.auth import router as auth_router
 from app.routers.pages import router as pages_router
-from app.services import exchange, fuel, oauth
+from app.services import builds, exchange, fuel, oauth
 from app.services.artefact_lots import artlots
 from app.services.artefact_watch import artwatch
 from app.services.ingredient_watch import watch
@@ -41,6 +41,8 @@ async def startup() -> None:
     loader.ensure_data()
     users.init()
     chat.init()
+    user_builds.init()
+    tg_posts.init()
     market.init()
     news.init()
     mapobjects.init()
@@ -74,6 +76,8 @@ async def startup() -> None:
         asyncio.create_task(artwatch.loop())       # биржа артефактов (корзины qlt×ptn)
     if config.ART_LOTS_ENABLED:
         asyncio.create_task(artlots.loop())        # живые лоты (цены сборок первой недели)
+    if config.ART_WATCH_ENABLED or config.ART_LOTS_ENABLED:
+        asyncio.create_task(builds.random_warm_loop())  # случайные готовые сборки /sborki
     if config.EMISSION_WATCH_ENABLED:
         from app.services.emission_watch import ewatch
         asyncio.create_task(ewatch.loop())         # история выбросов для дашборда
@@ -85,6 +89,8 @@ async def startup() -> None:
     if config.PATCH_WATCH_ENABLED:
         from app.services.patch_watch import pwatch
         asyncio.create_task(pwatch.loop())         # патчноуты с форума EXBO
+    from app.services.tg_bot import tgbot
+    asyncio.create_task(tgbot.cleanup_loop())      # автоудаление сообщений о выбросах в канале
     if config.OPS_WATCH_ENABLED:
         from app.services.operations_watch import opswatch
         asyncio.create_task(opswatch.loop())       # сессии PvE-режима «Операции»

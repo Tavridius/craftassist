@@ -259,6 +259,19 @@ PATCH_POLL_MIN = int(os.getenv("PATCH_POLL_MIN", "30"))
 PATCH_BACKFILL_MAX = int(os.getenv("PATCH_BACKFILL_MAX", "1000"))  # предохранитель бэкфилла
 NEWS_IMG_DIR = DATA_DIR / "news_img"                 # зеркало картинок патчноутов
 
+# --- Telegram-бот: патчи и выбросы в канал t.me/stalzone_helper ---
+# Бот создаётся в @BotFather и добавляется в канал админом с правами «публикация»
+# и «удаление сообщений». Без TG_BOT_TOKEN сервис молчит — локально ничего не шлёт.
+TG_BOT_TOKEN = os.getenv("TG_BOT_TOKEN", "").strip()
+TG_CHANNEL = os.getenv("TG_CHANNEL", "@stalzone_helper")        # @username или числовой id
+TG_API_BASE = os.getenv("TG_API_BASE", "https://api.telegram.org").rstrip("/")
+TG_NOTIFY_PATCHES = os.getenv("TG_NOTIFY_PATCHES", "1") not in ("0", "false", "False")
+TG_NOTIFY_EMISSIONS = os.getenv("TG_NOTIFY_EMISSIONS", "1") not in ("0", "false", "False")
+# выброс — тихое сообщение, которое бот сам удаляет: при 10-20 выбросах в сутки
+# канал иначе превратился бы в ленту тревог поверх постов
+TG_EMISSION_TTL_MIN = int(os.getenv("TG_EMISSION_TTL_MIN", "20"))
+SITE_URL = os.getenv("SITE_URL", PUBLIC_BASE_URL or "https://stalzone-helper.ru").rstrip("/")
+
 # --- Гайды (авторские статьи; админ-редактор) ---
 # Хранилище — SQLite data/guides.db в volume (переживает редеплой). Бандл
 # content/guides/*.json+html сидится в БД при старте (insert-if-absent). Картинки,

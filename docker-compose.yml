@@ -36,6 +36,14 @@ services:
       - MAIL_FROM=${MAIL_FROM:-}
       - MAIL_FROM_NAME=${MAIL_FROM_NAME:-StalZone Helper}
       - EMAIL_TOKEN_TTL_HOURS=${EMAIL_TOKEN_TTL_HOURS:-24}
+      # Telegram-бот канала t.me/stalzone_helper: патчи и выбросы (см. DEPLOY.md).
+      # Без TG_BOT_TOKEN бот молчит.
+      - TG_BOT_TOKEN=${TG_BOT_TOKEN:-}
+      - TG_CHANNEL=${TG_CHANNEL:-@stalzone_helper}
+      - TG_API_BASE=${TG_API_BASE:-https://api.telegram.org}
+      - TG_NOTIFY_PATCHES=${TG_NOTIFY_PATCHES:-1}
+      - TG_NOTIFY_EMISSIONS=${TG_NOTIFY_EMISSIONS:-1}
+      - TG_EMISSION_TTL_MIN=${TG_EMISSION_TTL_MIN:-20}
       # Биржа артефактов: снапшоты корзин качество×заточка (см. config.py)
       - ART_WATCH_ENABLED=${ART_WATCH_ENABLED:-1}
       - ART_WATCH_HOURS=${ART_WATCH_HOURS:-1,7,13,19}

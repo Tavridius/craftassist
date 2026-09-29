@@ -20,6 +20,7 @@ import httpx
 from app import config
 from app.db import news
 from app.services import imgopt
+from app.services.tg_bot import tgbot
 
 logger = logging.getLogger(__name__)
 
@@ -183,14 +184,14 @@ class PatchWatch:
         return out
 
     async def _ingest(self, client: httpx.AsyncClient, disc: dict,
-                      posts: dict[str, dict]) -> None:
+                      posts: dict[str, dict]) -> dict | None:
         pid = int(disc["id"])
         a = disc["attributes"]
         first_id = (((disc.get("relationships") or {}).get("firstPost") or {})
                     .get("data") or {}).get("id")
         post = posts.get(str(first_id))
         if not post:
-            return
+            return None
         html = (post.get("attributes") or {}).get("contentHtml") or ""
         clean, img_urls = sanitize(html)
         local = await self._mirror_images(client, pid, img_urls)
@@ -199,14 +200,17 @@ class PatchWatch:
                                   f'<img src="{_esc(src)}" loading="lazy" alt="">')
         clean = re.sub(r"\x00IMG\d+\x00", "", clean)  # на случай несоответствия
         title = " ".join((a.get("title") or f"Патч {pid}").split())
+        anons = _plain(clean)
         news.upsert_patch(
-            pid, title, a.get("createdAt") or "", clean, _plain(clean),
+            pid, title, a.get("createdAt") or "", clean, anons,
             f"{config.FORUM_API}/d/{pid}", a.get("lastPostedAt"))
         logger.info("patch_watch: ingested %s «%s» (%d imgs)", pid, title, len(img_urls))
+        return {"title": title, "anons": anons, "created_at": a.get("createdAt") or ""}
 
     async def _poll_page(self, client: httpx.AsyncClient, offset: int,
-                         limit: int = 20) -> tuple[int, bool]:
-        """Одна страница списка: инжестим новые/правленные. -> (кол-во тем, есть ли ещё)."""
+                         limit: int = 20, notify: bool = False) -> tuple[int, bool]:
+        """Одна страница списка: инжестим новые/правленные. -> (кол-во тем, есть ли ещё).
+        notify — ранее неизвестную тему отправить в Telegram-канал (не в бэкфилле)."""
         doc = await self._get_json(client, self._list_url(offset, limit))
         if not doc:
             return 0, False
@@ -218,7 +222,9 @@ class PatchWatch:
                 known = news.patch_meta(pid)
                 if known and known.get("last_posted") == a.get("lastPostedAt"):
                     continue
-                await self._ingest(client, disc, posts)
+                got = await self._ingest(client, disc, posts)
+                if notify and got and not known:
+                    await tgbot.patch(pid, got["title"], got["anons"], got["created_at"])
             except Exception:
                 logger.exception("patch_watch: ingest %s failed", disc.get("id"))
         return len(doc.get("data", [])), bool((doc.get("links") or {}).get("next"))
@@ -241,7 +247,7 @@ class PatchWatch:
                 logger.info("patch_watch: backfill done (%d patches)", news.patch_count())
             while True:
                 try:
-                    await self._poll_page(client, 0, 20)
+                    await self._poll_page(client, 0, 20, notify=True)
                     self.last_poll = asyncio.get_event_loop().time()
                 except Exception:
                     logger.exception("patch_watch: poll failed")

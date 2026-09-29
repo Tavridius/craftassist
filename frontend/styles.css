@@ -191,6 +191,7 @@ a.brand-wrap:hover .brand { color: var(--green); text-shadow: var(--glow); }
 .foot-links { margin-top: 10px !important; letter-spacing: 0.04em; }
 .foot-links a { color: var(--dim); text-decoration: none; border-bottom: 1px dotted var(--border); }
 .foot-links a:hover { color: var(--green); border-color: var(--green-border); }
+.foot-links a.tg-link { color: #5fa8ff; border-color: #1f3550; }
 .topstats { display: flex; align-items: center; gap: 20px; font-size: 11px; letter-spacing: 0.06em; color: var(--dim); }
 .topstats .stat span { color: var(--text); }
 .clock { color: var(--bright); font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -787,18 +788,17 @@ a.auth-user:hover { color: var(--green); border-color: var(--green-border); text
 }
 .bbar select:hover, .aform select:hover { border-color: var(--green-border); }
 
-/* ---------- готовые сборки (верх /builds) ----------
-   Страница открывалась пустой сеткой слотов, и посетитель из поиска уходил
-   (отказы с поиска 43%). Три посчитанные сборки идут до конструктора. */
+/* ---------- готовые сборки (карточки /sborki) ----------
+   /builds открывался пустой сеткой слотов, и посетитель из поиска уходил
+   (отказы с поиска 43%). Теперь посчитанные сборки живут на /sborki. */
 .ready { margin-bottom: 18px; }
 .ready-load { margin-bottom: 18px; font-size: 11px; letter-spacing: 0.1em; color: var(--dimmer); }
-.ready-head { margin-bottom: 10px; }
+.ready-head { margin-bottom: 10px; display: flex; align-items: flex-end; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
 .ready-title {
   font-size: 12px; letter-spacing: 0.14em; color: var(--green);
   margin: 0 0 4px; font-weight: 400;
 }
 .ready-sub { font-size: 10px; color: var(--dimmer); letter-spacing: 0.04em; line-height: 1.5; }
-.ready-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
 .ready-card {
   border: 1px solid var(--green-border); background: rgba(124, 230, 142, 0.04);
   padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; min-width: 0;
@@ -826,6 +826,110 @@ a.auth-user:hover { color: var(--green); border-color: var(--green-border); text
 .rc-act button:hover { color: var(--green); border-color: var(--green-border); }
 .rc-act .rc-go { color: var(--green); border-color: var(--green-border); }
 .rc-act .rc-go:hover { background: rgba(124, 230, 142, 0.08); }
+a.btab { display: inline-block; text-decoration: none; }
+
+/* ---------- /sborki: готовые и игроков ----------
+   Четыре случайные сборки и пул игроков — одна сетка: 4 в ряд на широком,
+   дальше 3 → 2 → 1. auto-fit растягивал одиночную карточку на всю ширину. */
+.cb-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+@media (max-width: 1400px) { .cb-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 1000px) { .cb-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 640px)  { .cb-grid { grid-template-columns: minmax(0, 1fr); } }
+.rc-budget { font-size: 10px; letter-spacing: 0.1em; color: var(--amber); }
+.rc-warn.bad { color: var(--red); }
+.cb { margin-top: 22px; }
+.cb-card { border-color: var(--border); background: var(--panel); }
+.cb-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.cb-top .rc-title { min-width: 0; overflow-wrap: anywhere; }
+.cb-by, .cb-cont { font-size: 10px; color: var(--dimmer); letter-spacing: 0.04em; line-height: 1.5; }
+.cb-own { color: var(--green); }
+.cb-like {
+  flex: none; background: none; border: 1px solid var(--border); color: var(--dim);
+  font: inherit; font-size: 11px; padding: 3px 8px; cursor: pointer;
+}
+.cb-like:hover, .cb-like.on { color: var(--red); border-color: var(--red-border); }
+.cb-del:hover { color: var(--red) !important; border-color: var(--red-border) !important; }
+.cb-btn {
+  background: none; border: 1px solid var(--border); color: var(--dim); text-decoration: none;
+  font: inherit; font-size: 10px; letter-spacing: 0.08em; padding: 7px 12px; cursor: pointer;
+}
+.cb-btn:hover, .cb-btn.on { color: var(--green); border-color: var(--green-border); }
+.cb-filters {
+  display: flex; flex-direction: column; gap: 8px; margin: 10px 0 12px; padding: 10px 12px;
+  border: 1px solid var(--border); background: var(--panel-deep);
+}
+.cbf-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; }
+.cbf-row .albl input { width: 130px; }
+.cbf-cont { flex: 0 1 280px; min-width: 200px; }
+.cbf-stat { flex: 0 1 260px; min-width: 200px; }
+.cbf-sort {
+  background: var(--panel); border: 1px solid var(--border); color: var(--text);
+  height: 32px; padding: 0 8px; font: inherit; font-size: 11px; letter-spacing: 0.04em;
+  border-radius: 0; cursor: pointer;
+}
+.cbf-q {
+  flex: 1 1 240px; min-width: 0; background: var(--panel); border: 1px solid var(--border);
+  color: var(--bright); font: inherit; font-size: 12px; padding: 7px 10px; outline: none;
+}
+.cbf-q:focus { border-color: var(--green); }
+.cbf-mine { font-size: 11px; color: var(--dim); letter-spacing: 0.08em; display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.xchip.ok { background: rgba(124, 230, 142, 0.06); border-color: var(--green-border); color: var(--green); }
+.xchip.ok:hover { border-color: var(--green); }
+.cb-more {
+  display: block; width: 100%; margin-top: 10px; background: none; border: 1px dashed var(--border);
+  color: var(--dim); font: inherit; font-size: 11px; letter-spacing: 0.1em; padding: 10px; cursor: pointer;
+}
+.cb-more:hover { color: var(--green); border-color: var(--green-border); }
+@media (max-width: 640px) {
+  .cbf-row .albl { flex: 1 1 100%; }
+  .cbf-row .albl input { flex: 1; width: auto; min-width: 0; }
+  .cbf-cont, .cbf-stat { flex: 1 1 100%; min-width: 0; }
+}
+
+/* ссылка на готовые сборки над калькулятором (вместо старой полосы из трёх) */
+.sb-cta {
+  display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin-bottom: 14px;
+  padding: 10px 14px; border: 1px solid var(--green-border); background: rgba(124, 230, 142, 0.04);
+  text-decoration: none; font-size: 11px; letter-spacing: 0.06em;
+}
+.sb-cta b { color: var(--green); font-weight: 400; letter-spacing: 0.12em; }
+.sb-cta span { color: var(--dim); }
+.sb-cta:hover { border-color: var(--green); }
+
+/* ссылки в Telegram (t.me/stalzone_helper) */
+.tg-link { color: #5fa8ff; }
+.tg-link:hover { text-shadow: 0 0 6px rgba(95, 168, 255, 0.5); }
+.tg-cta {
+  margin: 14px 0; padding: 10px 14px; border: 1px solid #1f3550; background: rgba(95, 168, 255, 0.05);
+  font-size: 11px; color: var(--dim); letter-spacing: 0.04em; line-height: 1.6;
+}
+.tg-cta .tg-link { letter-spacing: 0.1em; white-space: nowrap; }
+.chat-tg {
+  padding: 5px 10px; border-bottom: 1px solid var(--border); font-size: 10px;
+  letter-spacing: 0.08em; color: var(--dimmer);
+}
+
+/* публикация сборки */
+.pub-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; margin: 4px 0 16px; }
+.pub-bar span { font-size: 10px; color: var(--dimmer); letter-spacing: 0.04em; line-height: 1.5; }
+.pub-bar a { color: var(--green); }
+.abuild .pub-bar { margin: 0 12px 12px; }
+.prof-save[disabled] { opacity: 0.45; cursor: not-allowed; box-shadow: none; }
+a.prof-save { display: inline-block; text-decoration: none; }
+.pub { max-width: 520px; margin: 0 auto; display: flex; flex-direction: column; gap: 10px; padding: 6px 0; }
+.pub-h { margin: 0; font-size: 13px; font-weight: 400; letter-spacing: 0.14em; color: var(--green); }
+.pub-p, .pub-sum { margin: 0; font-size: 11px; color: var(--dim); line-height: 1.6; }
+.pub-lbl { display: flex; flex-direction: column; gap: 6px; font-size: 11px; color: var(--dim); letter-spacing: 0.08em; }
+.pub-lbl input {
+  background: var(--panel); border: 1px solid var(--border); color: var(--bright);
+  font: inherit; font-size: 13px; padding: 8px 10px; outline: none;
+}
+.pub-lbl input:focus { border-color: var(--green); }
+.pub-hint { font-size: 10px; color: var(--dimmer); margin-top: -4px; line-height: 1.5; }
+.pub-anon { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--text); letter-spacing: 0.08em; cursor: pointer; }
+.pub .auth-err { font-size: 11px; line-height: 1.5; }
+.pub .auth-err:empty { display: none; }
+.pub .prof-save { align-self: flex-start; }
 
 .bgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; margin-bottom: 14px; }
 .bslot { border: 1px solid var(--border); background: var(--panel-deep); padding: 10px 12px; min-width: 0; }
@@ -1167,6 +1271,30 @@ a.auth-user:hover { color: var(--green); border-color: var(--green-border); text
 }
 .gadm-btn:hover { border-color: var(--green); color: var(--green); }
 .gadm-del:hover { border-color: var(--red); color: var(--red); }
+
+/* ДЕВ · посты для Telegram */
+.tgp-bot {
+  margin: 0 0 10px; padding: 8px 12px; font-size: 10px; letter-spacing: 0.08em;
+  border: 1px solid var(--red-border); color: var(--red);
+}
+.tgp-bot.on { border-color: var(--green-border); color: var(--green); }
+.tgp-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+  margin-bottom: 10px; font-size: 10px; letter-spacing: 0.08em; color: var(--dim); }
+.tgp-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 10px; }
+@media (max-width: 640px) { .tgp-list { grid-template-columns: minmax(0, 1fr); } }
+.tgp { border: 1px solid var(--border); background: var(--panel); padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.tgp.off { opacity: 0.5; }
+.tgp-head { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: 10px; letter-spacing: 0.08em; }
+.tgp-rub { color: var(--amber); }
+.tgp-when { color: var(--dimmer); }
+.tgp-note { font-size: 10px; color: var(--dim); line-height: 1.5; border-left: 2px solid var(--amber-border); padding-left: 8px; }
+.tgp-text {
+  margin: 4px 0; padding: 10px 12px; background: var(--panel-deep); border: 1px solid var(--border-dim);
+  white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 12px; line-height: 1.55;
+  color: var(--text); max-height: 420px; overflow-y: auto;
+}
+.tgp .gadm-row-a { flex-wrap: wrap; }
 
 .gform { display: flex; flex-direction: column; gap: 12px; max-width: 860px; }
 .gform-l { display: flex; flex-direction: column; gap: 5px;

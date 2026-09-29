@@ -7,9 +7,19 @@ const PERK_MAX = 5;   // максимум навыка крафта в игре 
 // ---------- Я.Метрика: целевые действия ----------
 // Цели-«JavaScript-событие» в счётчике 110585101: signup (регистрация) / login (вход).
 const YM_ID = 110585101;
-function ymGoal(name) {
-  try { if (window.ym) ym(YM_ID, "reachGoal", name); } catch (e) { /* счётчик не загрузился */ }
+function ymGoal(name, params) {
+  try { if (window.ym) ym(YM_ID, "reachGoal", name, params); } catch (e) { /* счётчик не загрузился */ }
 }
+
+// Telegram-канал и чат сайта. Каждая ссылка несёт data-tg=<место>: цель tg_click
+// с параметром place показывает, какое место реально приводит людей.
+const TG_URL = "https://t.me/stalzone_helper";
+const tgLink = (place, text, cls = "") =>
+  `<a class="tg-link ${cls}" href="${TG_URL}" target="_blank" rel="noopener" data-tg="${place}">${text}</a>`;
+document.addEventListener("click", (e) => {
+  const a = e.target.closest("a[data-tg]");
+  if (a) ymGoal("tg_click", { place: a.dataset.tg });
+});
 
 // SPA-переходы Метрика сама не видит: navigate() меняет URL через pushState, а
 // счётчик считает хит только на загрузке документа. Без этого «глубина просмотра»
@@ -2129,6 +2139,8 @@ function chatDockRender() {
     `<button class="chat-tab ${id === chatRoom ? "on" : ""}" data-room="${id}">${label}</button>`).join("");
   dock.innerHTML = `
     <div class="chat-head">${tabs}<button class="chat-min" id="chatMin" title="Свернуть">▼</button></div>
+    <div class="chat-tg">${chatRoom === "bugs" ? "БАГИ МОЖНО СЛАТЬ И" : "БОЛЬШЕ ЛЮДЕЙ —"}
+      ${tgLink(chatRoom === "bugs" ? "sitechat_bugs" : "sitechat", "В TELEGRAM-ЧАТ →")}</div>
     <div class="chat-msgs" id="chatMsgs"><div class="spinner">// ЗАГРУЗКА</div></div>
     <div class="chat-form">${chatFormHtml()}</div>`;
   dock.querySelectorAll(".chat-tab").forEach((b) => b.addEventListener("click", () => {
@@ -3515,7 +3527,7 @@ function adInsert(root) {
 // под полноэкранный холст), /profile, /home2 и /dev/* (админские), юридические
 // страницы.
 const AD_BOTTOM_PATHS = new Set([
-  "/", "/market", "/auction", "/barter", "/obmen", "/builds", "/compare",
+  "/", "/market", "/auction", "/barter", "/obmen", "/builds", "/sborki", "/compare",
   "/operations", "/items", "/guides", "/patches", "/quests", "/promo",
   "/craft", "/vygodno-kraftit",
 ]);
@@ -3669,6 +3681,8 @@ async function openGuide(slug) {
       <div class="patch-meta">${fmtPatchDate(g.created_at)} · ГАЙД · STALZONE (STALCRAFT)</div>
       <div class="patch-body">${g.html}</div>
     </article>
+    <div class="tg-cta">Остались вопросы по гайду? Задайте их в Telegram-чате STALZONE Helper —
+      там же разборы на цифрах два раза в неделю. ${tgLink("guide", "ПЕРЕЙТИ В TELEGRAM →")}</div>
     <div id="comments"></div>
   </div>`;
   $("guideBack").addEventListener("click", () => { navigate("/guides"); });
@@ -4968,8 +4982,8 @@ function renderArtCard(d) {
 
 // ---------- калькулятор сборок: ручной + автоподбор + приведённое ХП ----------
 let BUILD_DICT = null;   // /api/build/dict (кэш на сессию)
-let READY_BUILDS = null; // /api/build/ready — готовые сборки для верха страницы
-let readyLoading = false;
+let RANDOM_BUILDS = null; // /api/build/random — четыре случайные сборки для верха /sborki
+let randomLoading = false;
 let buildTab = "manual";
 const buildState = { container: null, slots: [] };  // слот: {id, ptn, m} | null
 const autoState = { budget: 500000, stats: [{ key: "", weight: 60 }],
@@ -5097,43 +5111,53 @@ function bonusRowsRO(bonus) {
       <span class="sv">${fmtStat(b.val)}</span></div>`).join("");
 }
 
+// справочник калькулятора — общий для /builds и /sborki (карточки, фильтры, «открыть»)
+async function ensureBuildDict() {
+  if (BUILD_DICT) return true;
+  page.innerHTML = `<div class="spinner">// ЗАГРУЗКА КАЛЬКУЛЯТОРА СБОРОК</div>`;
+  try {
+    BUILD_DICT = await fetch(api("/build/dict")).then((r) => r.json());
+  } catch (e) {
+    page.innerHTML = `<div class="empty">[!] ОШИБКА СЕТИ</div>`;
+    return false;
+  }
+  const first = STORAGES()[0];
+  buildState.container = first ? first.id : null;
+  buildState.slots = first ? Array(first.slots).fill(null) : [];
+  return true;
+}
+
 async function openBuilds() {
   home.classList.add("hidden");
   detail.classList.add("hidden");
   results.innerHTML = "";
   page.classList.remove("hidden");
-  if (!BUILD_DICT) {
-    page.innerHTML = `<div class="spinner">// ЗАГРУЗКА КАЛЬКУЛЯТОРА СБОРОК</div>`;
-    try {
-      BUILD_DICT = await fetch(api("/build/dict")).then((r) => r.json());
-    } catch (e) {
-      page.innerHTML = `<div class="empty">[!] ОШИБКА СЕТИ</div>`;
-      return;
-    }
-    const first = STORAGES()[0];
-    buildState.container = first ? first.id : null;
-    buildState.slots = first ? Array(first.slots).fill(null) : [];
-  }
+  if (!(await ensureBuildDict())) return;
+  restoreBuildDraft();
   renderBuilds();
-  loadReadyBuilds();
 }
 
-// Готовые сборки для верха страницы: холодный посетитель из поиска попадал на
-// пустую сетку слотов и уходил. Грузим отдельно от справочника — расчёт на
-// живых ценах идёт ~1.5 с, держать из-за него первую отрисовку незачем.
-async function loadReadyBuilds() {
-  if (READY_BUILDS || readyLoading) return;
-  readyLoading = true;
+// Черновик сборки на время входа: вход через EXBO уводит со страницы, и
+// собранная вручную сборка терялась ровно в тот момент, когда её хотели
+// опубликовать. Кладём состав в localStorage перед входом, возвращаем здесь.
+const DRAFT_KEY = "sz_build_draft";
+function saveBuildDraft() {
   try {
-    READY_BUILDS = await fetch(api("/build/ready")).then((r) => r.json());
-  } catch (e) {
-    READY_BUILDS = { presets: [] };   // сеть отвалилась — просто не показываем блок
-  }
-  readyLoading = false;
-  // ушли со страницы, переключили вкладку или уже выбирают артефакт — не трогаем
-  // DOM: перерисовка закрыла бы открытый пикер прямо под руками
-  if (location.pathname === "/builds" && buildTab === "manual" && pickerSlot < 0)
-    renderBuilds();
+    localStorage.setItem(DRAFT_KEY, JSON.stringify({ container: buildState.container,
+                                                     slots: buildState.slots, ts: Date.now() }));
+  } catch (e) { /* приватный режим — просто без черновика */ }
+}
+function restoreBuildDraft() {
+  let d = null;
+  try { d = JSON.parse(localStorage.getItem(DRAFT_KEY) || "null"); localStorage.removeItem(DRAFT_KEY); }
+  catch (e) { return; }
+  if (!d || Date.now() - d.ts > 3600e3) return;
+  const c = STORAGES().find((x) => x.id === d.container);
+  if (!c || buildState.slots.some(Boolean)) return;   // своя сборка на экране важнее
+  buildState.container = c.id;
+  buildState.slots = Array(c.slots).fill(null).map((_, i) => d.slots[i] || null);
+  buildTab = "manual";
+  buildState.slots.forEach((x) => x && loadArtPrices(x.id));
 }
 
 function buildContainer() {
@@ -5280,13 +5304,42 @@ function manualSlotCard(s, idx) {
   </div>`;
 }
 
-// ---------- готовые сборки (верх страницы) ----------
-function readyCard(p) {
+// ---------- готовые сборки: /sborki ----------
+// У готовых сборок своя страница под запрос «сборки сталкрафт»: на /builds он
+// давал отказы 44–56% — человек искал готовое, а попадал в конструктор.
+// Сверху четыре случайные сборки под разные задачи и бюджеты, ниже — сборки
+// игроков, опубликованные из калькулятора, с фильтрами.
+
+// иконки артов + схлопнутые названия: одинаковые арты занимают несколько слотов,
+// без «×2» список названий короче ряда иконок и выглядит ошибкой
+function cardArts(slots) {
+  const arts = slots.map((s) =>
+    `<img loading="lazy" src="${asset(s.icon)}" alt="${escapeHtml(s.name)}"
+       title="${escapeHtml(s.name)} · ${bucketBadge(s.qlt, s.ptn)}"
+       style="border-color:${qltColor(s.qlt)}">`).join("");
+  const cnt = new Map();
+  for (const s of slots) cnt.set(s.name, (cnt.get(s.name) || 0) + 1);
+  const names = [...cnt].map(([n, c]) => (c > 1 ? `${n} ×${c}` : n)).join(", ");
+  return `<div class="rc-arts">${arts}</div><div class="rc-names">${escapeHtml(names)}</div>`;
+}
+
+// сборки сверх лимитов не выдаются, но оптимизатор упирается в них вплотную —
+// умолчать об этом нельзя, игрок должен знать, чем платит
+function cardContamWarn(contam) {
+  const over = (contam || []).filter((c) => c.over).map((c) => c.name);
+  if (over.length) return `<div class="rc-warn bad">ВЫШЕ ЛИМИТА: ${escapeHtml(over.join(", ").toUpperCase())}</div>`;
+  const maxed = (contam || []).filter((c) => c.limit && c.net >= c.limit * 0.95).map((c) => c.name);
+  return maxed.length ? `<div class="rc-warn">У ПРЕДЕЛА: ${escapeHtml(maxed.join(", ").toUpperCase())}</div>` : "";
+}
+
+const statRow = (st) => `<div class="rc-stat ${st.harmful ? "bad" : ""}">
+    <span class="k">${escapeHtml(st.name)}</span><span class="v">${fmtStat(st.total)}</span></div>`;
+
+// карточка случайной сборки. Сперва статы профиля — карточка обещает именно их;
+// отсутствующие (бюджет ушёл в первый стат) пропускаем. Добор — крупнейшим из
+// остальных: сортировать всё подряд по модулю нельзя, единицы разные
+function randomCard(p, i) {
   const t = p.build.totals;
-  // Сперва статы профиля — карточка обещает именно их; отсутствующие (бюджет
-  // ушёл в первый стат) пропускаем, вместо «Живучесть —». Добор — крупнейшим из
-  // остальных: сортировать всё подряд по модулю нельзя, единицы разные, и «под
-  // ходки» выносило защиту от радиации вперёд скорости передвижения.
   const shown = new Set();
   const pick = [];
   for (const s of p.stats_req) {
@@ -5294,92 +5347,424 @@ function readyCard(p) {
     if (st) { pick.push(st); shown.add(s.key); }
   }
   const rest = Object.keys(t.stats).filter((k) => !shown.has(k))
-    .map((k) => t.stats[k])
-    .sort((a, b) => Math.abs(b.total) - Math.abs(a.total));
+    .map((k) => t.stats[k]).sort((a, b) => Math.abs(b.total) - Math.abs(a.total));
   while (pick.length < 3 && rest.length) pick.push(rest.shift());
-  const rows = pick.map((st) => `<div class="rc-stat ${st.harmful ? "bad" : ""}">
-      <span class="k">${escapeHtml(st.name)}</span>
-      <span class="v">${fmtStat(st.total)}</span></div>`).join("");
-  // сборки сверх лимитов не выдаются, но оптимизатор упирается в них вплотную —
-  // умолчать об этом нельзя, игрок должен знать, чем платит
-  const maxed = (t.contamination || [])
-    .filter((c) => c.limit && c.net >= c.limit * 0.95).map((c) => c.name);
-  const arts = p.build.slots.map((s) =>
-    `<img loading="lazy" src="${asset(s.icon)}" alt="${escapeHtml(s.name)}"
-       title="${escapeHtml(s.name)} · ${bucketBadge(s.qlt, s.ptn)}"
-       style="border-color:${qltColor(s.qlt)}">`).join("");
-  // одинаковые арты занимают несколько слотов — схлопываем с количеством,
-  // иначе список названий короче ряда иконок и выглядит ошибкой
-  const cnt = new Map();
-  for (const s of p.build.slots) cnt.set(s.name, (cnt.get(s.name) || 0) + 1);
-  const names = [...cnt].map(([n, c]) => (c > 1 ? `${n} ×${c}` : n)).join(", ");
   return `<article class="ready-card">
     <div class="rc-title">${escapeHtml(p.title)}</div>
+    <div class="rc-budget">БЮДЖЕТ ${fmt(p.budget)} ₽</div>
     <div class="rc-note">${escapeHtml(p.note)}</div>
-    <div class="rc-arts">${arts}</div>
-    <div class="rc-names">${escapeHtml(names)}</div>
-    <div class="rc-stats">${rows}</div>
-    ${maxed.length ? `<div class="rc-warn">У ПРЕДЕЛА: ${escapeHtml(maxed.join(", ").toUpperCase())}</div>` : ""}
+    ${cardArts(p.build.slots)}
+    <div class="rc-stats">${pick.map(statRow).join("")}</div>
+    ${cardContamWarn(t.contamination)}
     <div class="rc-cost">${fmt(t.cost)} ₽</div>
     <div class="rc-act">
-      <button class="rc-go" data-ropen="${p.id}">ОТКРЫТЬ В КАЛЬКУЛЯТОРЕ</button>
-      <button class="rc-alt" data-rauto="${p.id}">ПОД СВОЙ БЮДЖЕТ</button>
+      <button class="rc-go" data-ropen="${i}">ОТКРЫТЬ В КАЛЬКУЛЯТОРЕ</button>
+      <button class="rc-alt" data-rauto="${i}">ПОД СВОЙ БЮДЖЕТ</button>
     </div>
   </article>`;
 }
 
-function readyStrip() {
-  if (!READY_BUILDS) return `<div class="ready-load">// СЧИТАЮ ГОТОВЫЕ СБОРКИ НА ЖИВЫХ ЦЕНАХ…</div>`;
-  const ps = READY_BUILDS.presets || [];
-  if (!ps.length) return "";   // биржа не прогрелась — блока просто нет
-  const c = READY_BUILDS.container || {};
+function randomStrip() {
+  if (!RANDOM_BUILDS) return `<div class="ready-load">// СЧИТАЮ ГОТОВЫЕ СБОРКИ НА ЖИВЫХ ЦЕНАХ…</div>`;
+  const cards = RANDOM_BUILDS.cards || [];
+  if (!cards.length) return `<div class="empty-sm">ГОТОВЫЕ СБОРКИ ПОЯВЯТСЯ, КОГДА БИРЖА АРТЕФАКТОВ НАКОПИТ ЦЕНЫ</div>`;
+  const c = RANDOM_BUILDS.container || {};
   return `<section class="ready">
     <div class="ready-head">
-      <h2 class="ready-title">ГОТОВЫЕ СБОРКИ ПОД БЮДЖЕТ ${fmt(READY_BUILDS.budget)} ₽</h2>
-      <div class="ready-sub">Подобраны по живым ценам аукциона${c.name ? ` · хранилище ${escapeHtml(c.name)}` : ""} · ниже можно собрать свою</div>
+      <div>
+        <h2 class="ready-title">СЛУЧАЙНЫЕ СБОРКИ НА ЖИВЫХ ЦЕНАХ</h2>
+        <div class="ready-sub">Разные задачи и бюджеты от 100 тыс. до 50 млн${c.name ? ` · хранилище ${escapeHtml(c.name)}` : ""} · лимиты заражения соблюдены</div>
+      </div>
+      <button class="cb-btn" id="rReroll">↻ ДРУГИЕ СБОРКИ</button>
     </div>
-    <div class="ready-grid">${ps.map(readyCard).join("")}</div>
+    <div class="cb-grid">${cards.map(randomCard).join("")}</div>
   </section>`;
 }
 
-// перенос готовой сборки в ручной конструктор: качество — верх тира (бэк в пуле
-// вариантов берёт ровно его), заточка как подобрана
-function readyOpen(pid) {
-  const p = (READY_BUILDS.presets || []).find((x) => x.id === pid);
-  if (!p) return;
-  const cont = READY_BUILDS.container || {};
-  const n = cont.slots || p.build.slots.length;
-  buildState.container = cont.id || buildState.container;
-  buildState.slots = Array(n).fill(null);
-  p.build.slots.slice(0, n).forEach((s, i) => {
-    buildState.slots[i] = { id: s.item, ptn: s.ptn, m: tierTop(s.qlt) };
-  });
-  buildTab = "manual";
-  ymGoal("build_ready_open");
-  renderBuilds();
-  p.build.slots.forEach((s) => loadArtPrices(s.item));   // цены подтянутся и перерисуют
+async function loadRandomBuilds(force = false) {
+  if (randomLoading || (RANDOM_BUILDS && !force)) return;
+  randomLoading = true;
+  try {
+    RANDOM_BUILDS = await fetch(api("/build/random")).then((r) => r.json());
+  } catch (e) {
+    RANDOM_BUILDS = { cards: [] };
+  }
+  randomLoading = false;
+  const host = $("rStrip");
+  if (host && location.pathname === "/sborki") { host.innerHTML = randomStrip(); wireRandomStrip(); }
 }
 
-// та же сборка в автоподборе: профиль и результат уже посчитаны — посетителю
+// перенос сборки в ручной конструктор: состав слотов как есть
+function openInCalculator(contId, slots, goal) {
+  const cont = STORAGES().find((c) => c.id === contId);
+  if (!cont) return;
+  buildState.container = cont.id;
+  buildState.slots = Array(cont.slots).fill(null);
+  slots.slice(0, cont.slots).forEach((s, i) => {
+    buildState.slots[i] = { id: s.item, ptn: s.ptn, m: s.m != null ? s.m : tierTop(s.qlt),
+                            ...(s.bx && s.bx.length ? { bx: s.bx } : {}) };
+  });
+  buildTab = "manual";
+  pickerSlot = -1;
+  ymGoal(goal);
+  slots.forEach((s) => loadArtPrices(s.item));   // цены подтянутся и перерисуют
+  navigate("/builds");
+}
+
+// случайная сборка в автоподборе: профиль и результат уже посчитаны — посетителю
 // остаётся поменять бюджет и пересчитать
-function readyAuto(pid) {
-  const p = (READY_BUILDS.presets || []).find((x) => x.id === pid);
+function randomAuto(i) {
+  const p = (RANDOM_BUILDS.cards || [])[+i];
   if (!p) return;
-  const cont = READY_BUILDS.container || {};
+  const cont = RANDOM_BUILDS.container || {};
   if (cont.id) {
     buildState.container = cont.id;
     buildState.slots = Array(cont.slots || 0).fill(null);
   }
-  autoState.budget = READY_BUILDS.budget;
+  autoState.budget = p.budget;
   autoState.stats = p.stats_req.map((s) => ({ key: s.key, weight: s.weight }));
   autoState.exclude = [];
   autoState.noNeg = false;
   autoState.result = { container: cont, builds: [p.build],
-                       warnings: READY_BUILDS.price_note ? [READY_BUILDS.price_note] : [] };
+                       warnings: RANDOM_BUILDS.price_note ? [RANDOM_BUILDS.price_note] : [] };
   buildTab = "auto";
   ymGoal("build_ready_auto");
-  renderBuilds();
+  navigate("/builds");
 }
+
+function wireRandomStrip() {
+  page.querySelectorAll("[data-ropen]").forEach((b) => b.addEventListener("click", () => {
+    const p = (RANDOM_BUILDS.cards || [])[+b.dataset.ropen];
+    if (p) openInCalculator((RANDOM_BUILDS.container || {}).id, p.build.slots, "build_ready_open");
+  }));
+  page.querySelectorAll("[data-rauto]").forEach((b) =>
+    b.addEventListener("click", () => randomAuto(b.dataset.rauto)));
+  const rr = $("rReroll");
+  if (rr) rr.addEventListener("click", () => {
+    rr.textContent = "СЧИТАЮ…";
+    ymGoal("build_ready_reroll");
+    loadRandomBuilds(true);
+  });
+}
+
+// ---------- сборки игроков ----------
+const CB_PAGE = 24;
+const CB_SORTS = [["new", "СНАЧАЛА НОВЫЕ"], ["top", "ПОПУЛЯРНЫЕ"],
+                  ["cheap", "СНАЧАЛА ДЕШЁВЫЕ"], ["expensive", "СНАЧАЛА ДОРОГИЕ"]];
+const cbState = { min: 0, max: 0, stats: [], container: "", q: "", sort: "new", mine: false,
+                  items: [], total: 0, facets: null, loading: false, error: false };
+let cbTimer = null, cbReq = 0;
+
+function cbQuery(offset) {
+  const u = new URLSearchParams({ sort: cbState.sort, offset, limit: CB_PAGE });
+  if (cbState.min) u.set("min_price", cbState.min);
+  if (cbState.max) u.set("max_price", cbState.max);
+  if (cbState.stats.length) u.set("stats", cbState.stats.join(","));
+  if (cbState.container) u.set("container", cbState.container);
+  if (cbState.q.trim()) u.set("q", cbState.q.trim());
+  if (cbState.mine) u.set("mine", 1);
+  return u.toString();
+}
+
+async function loadCommunity(more = false) {
+  const my = ++cbReq;   // ответ устаревшего запроса (фильтр уже сменили) выбрасываем
+  cbState.loading = true;
+  if (!more) renderCbList();
+  try {
+    const d = await fetch(api(`/build/community?${cbQuery(more ? cbState.items.length : 0)}`))
+      .then((r) => r.json());
+    if (my !== cbReq) return;
+    cbState.items = more ? cbState.items.concat(d.items) : d.items;
+    cbState.total = d.total;
+    const firstFacets = !cbState.facets;
+    cbState.facets = d.facets;
+    cbState.error = false;
+    if (firstFacets) renderCbFilters();   // счётчики в списках статов и хранилищ
+  } catch (e) {
+    if (my !== cbReq) return;
+    cbState.error = true;
+  }
+  cbState.loading = false;
+  renderCbList();
+}
+
+const cbStatKeys = () => (BUILD_DICT.stats || []).filter((s) => !s.harmful && !isContamKey(s.key));
+const cbStatName = (k) => (BUILD_DICT.stats.find((s) => s.key === k) || {}).name || k;
+
+function cbCard(b) {
+  const t = b.totals;
+  // сперва статы из фильтра — человек искал именно их, потом главные сборки
+  const keys = [...cbState.stats.filter((k) => t.stats[k]), ...b.main.filter((k) => !cbState.stats.includes(k))];
+  const good = keys.slice(0, 4).map((k) => t.stats[k]);
+  const bad = Object.values(t.stats).filter((st) => st.harmful)
+    .sort((a, c) => Math.abs(c.total) - Math.abs(a.total)).slice(0, 1);
+  const date = new Date(b.ts * 1000).toLocaleDateString("ru-RU");
+  const c = b.container;
+  return `<article class="ready-card cb-card" data-id="${b.id}">
+    <div class="cb-top">
+      <div class="rc-title">${escapeHtml(b.title)}</div>
+      <button class="cb-like ${b.liked ? "on" : ""}" data-like="${b.id}" title="Полезная сборка">♥ ${b.likes}</button>
+    </div>
+    <div class="cb-by">${b.author ? escapeHtml(b.author) : "АНОНИМ"} · ${date}${b.own ? ` · <span class="cb-own">ВАША</span>` : ""}</div>
+    <div class="cb-cont"><span style="color:${rank(c.color).color}">${escapeHtml(c.name)}</span> · ${c.slots} СЛОТ${c.slots > 1 ? "А" : ""}</div>
+    ${cardArts(b.slots)}
+    <div class="rc-stats">${good.map(statRow).join("")}${bad.map(statRow).join("")}</div>
+    ${cardContamWarn(t.contamination)}
+    <div class="rc-cost">${t.unpriced >= b.slots.length ? "НЕТ ЦЕН"
+      : `${fmt(t.cost)} ₽${t.unpriced ? ` <span class="warn">+ ${t.unpriced} БЕЗ ЦЕНЫ</span>` : ""}`}</div>
+    <div class="rc-act">
+      <button class="rc-go" data-cbopen="${b.id}">ОТКРЫТЬ В КАЛЬКУЛЯТОРЕ</button>
+      ${b.can_delete ? `<button class="rc-alt cb-del" data-cbdel="${b.id}">УДАЛИТЬ</button>` : ""}
+    </div>
+  </article>`;
+}
+
+function renderCbList() {
+  const host = $("cbList");
+  if (!host) return;
+  const n = $("cbCount");
+  if (n) n.textContent = cbState.total ? `· ${cbState.total}` : "";
+  if (cbState.error) { host.innerHTML = `<div class="empty">[!] ОШИБКА СЕТИ</div>`; return; }
+  if (!cbState.items.length) {
+    const filtered = cbState.min || cbState.max || cbState.stats.length || cbState.container
+      || cbState.q.trim() || cbState.mine;
+    host.innerHTML = cbState.loading ? `<div class="ready-load">// ЗАГРУЖАЮ СБОРКИ ИГРОКОВ…</div>`
+      : filtered ? `<div class="empty">ПОД ТАКИЕ ФИЛЬТРЫ СБОРОК НЕТ. <button class="cb-btn" data-cbreset>СБРОСИТЬ ФИЛЬТРЫ</button></div>`
+      : `<div class="empty">ПОКА НИКТО НЕ ОПУБЛИКОВАЛ СБОРКУ. <a href="/builds">СОБЕРИТЕ СВОЮ</a> И СТАНЬТЕ ПЕРВЫМ.</div>`;
+  } else {
+    host.innerHTML = `<div class="cb-grid">${cbState.items.map(cbCard).join("")}</div>
+      ${cbState.items.length < cbState.total
+        ? `<button class="cb-more" id="cbMore">${cbState.loading ? "ЗАГРУЖАЮ…" : `ПОКАЗАТЬ ЕЩЁ · ${cbState.total - cbState.items.length}`}</button>` : ""}`;
+  }
+  wireCbList(host);
+}
+
+function wireCbList(host) {
+  host.querySelectorAll("[data-cbopen]").forEach((el) => el.addEventListener("click", () => {
+    const b = cbState.items.find((x) => x.id === +el.dataset.cbopen);
+    if (b) openInCalculator(b.container.id, b.slots, "build_community_open");
+  }));
+  host.querySelectorAll("[data-like]").forEach((el) => el.addEventListener("click", async () => {
+    if (!(ME && ME.authenticated)) { loginPrompt("ОЦЕНИВАТЬ СБОРКИ МОГУТ ТОЛЬКО ВОШЕДШИЕ."); return; }
+    const b = cbState.items.find((x) => x.id === +el.dataset.like);
+    try {
+      const r = await fetch(api(`/build/community/${b.id}/like`), { method: "POST" });
+      if (!r.ok) return;
+      const d = await r.json();
+      b.liked = d.liked; b.likes = d.likes;
+      el.classList.toggle("on", d.liked);
+      el.textContent = `♥ ${d.likes}`;
+      if (d.liked) ymGoal("build_like");
+    } catch (e) { /* сеть — лайк просто не встал */ }
+  }));
+  host.querySelectorAll("[data-cbdel]").forEach((el) => el.addEventListener("click", async () => {
+    if (!confirm("Удалить сборку из общего пула?")) return;
+    const r = await fetch(api(`/build/community/${el.dataset.cbdel}`), { method: "DELETE" }).catch(() => null);
+    if (r && r.ok) loadCommunity();
+  }));
+  const more = $("cbMore");
+  if (more) more.addEventListener("click", () => { if (!cbState.loading) loadCommunity(true); });
+  host.querySelectorAll("[data-cbreset]").forEach((el) => el.addEventListener("click", cbReset));
+}
+
+function cbReset() {
+  Object.assign(cbState, { min: 0, max: 0, stats: [], container: "", q: "", sort: "new", mine: false });
+  renderCbFilters();
+  loadCommunity();
+}
+
+function renderCbFilters() {
+  const host = $("cbFilters");
+  if (!host) return;
+  const chips = cbState.stats.map((k) =>
+    `<button class="xchip ok" data-cbunstat="${k}" title="Убрать">${escapeHtml(cbStatName(k))} ✕</button>`).join("");
+  const authed = ME && ME.authenticated;
+  host.innerHTML = `
+    <div class="cbf-row">
+      <label class="albl">ЦЕНА ОТ <input id="cbMin" type="text" inputmode="numeric" placeholder="0" value="${cbState.min ? fmt(cbState.min) : ""}"></label>
+      <label class="albl">ДО <input id="cbMax" type="text" inputmode="numeric" placeholder="БЕЗ ЛИМИТА" value="${cbState.max ? fmt(cbState.max) : ""}"></label>
+      <div class="isel cbf-cont" id="cbContSel"></div>
+      <select id="cbSort" class="cbf-sort">${CB_SORTS.map(([v, l]) =>
+        `<option value="${v}" ${cbState.sort === v ? "selected" : ""}>${l}</option>`).join("")}</select>
+    </div>
+    <div class="cbf-row">
+      <span class="albl">ХАРАКТЕРИСТИКИ:</span>
+      ${chips}
+      ${cbState.stats.length < 5 ? `<div class="isel cbf-stat" id="cbStatSel"></div>` : ""}
+    </div>
+    <div class="cbf-row">
+      <input id="cbQ" class="cbf-q" type="text" placeholder="ПОИСК ПО НАЗВАНИЮ ИЛИ АВТОРУ" value="${escapeHtml(cbState.q)}" maxlength="60">
+      ${authed ? `<label class="cbf-mine"><input type="checkbox" id="cbMine" ${cbState.mine ? "checked" : ""}> ТОЛЬКО МОИ</label>` : ""}
+      <button class="cb-btn" data-cbreset>СБРОСИТЬ</button>
+    </div>`;
+
+  const counts = new Map(((cbState.facets || {}).stats || []).map((f) => [f.key, f.n]));
+  const statHost = $("cbStatSel");
+  if (statHost) iconSelect(statHost,
+    [{ id: "", label: "+ ДОБАВИТЬ ХАРАКТЕРИСТИКУ", search: "" },
+     ...cbStatKeys().filter((s) => !cbState.stats.includes(s.key))
+       .sort((a, b) => (counts.get(b.key) || 0) - (counts.get(a.key) || 0) || a.name.localeCompare(b.name, "ru"))
+       .map((s) => ({ id: s.key, search: s.name,
+                      label: counts.get(s.key) ? `${s.name} · ${counts.get(s.key)}` : s.name }))],
+    "", (id) => { if (id) { cbState.stats.push(id); renderCbFilters(); loadCommunity(); } });
+
+  const ccounts = new Map(((cbState.facets || {}).containers || []).map((f) => [f.id, f.n]));
+  iconSelect($("cbContSel"),
+    [{ id: "", label: "ЛЮБОЕ ХРАНИЛИЩЕ", search: "" },
+     ...STORAGES().slice().sort((a, b) => (ccounts.get(b.id) || 0) - (ccounts.get(a.id) || 0))
+       .map((c) => ({ id: c.id, icon: c.icon, color: c.color, search: c.name,
+                      labelHtml: `<span style="color:${rank(c.color).color}">${escapeHtml(c.name)}</span>` +
+                                 (ccounts.get(c.id) ? ` · ${ccounts.get(c.id)}` : "") }))],
+    cbState.container, (id) => { cbState.container = id; renderCbFilters(); loadCommunity(); });
+
+  const debounced = () => { clearTimeout(cbTimer); cbTimer = setTimeout(() => loadCommunity(), 400); };
+  wireBudget($("cbMin"), (v) => { cbState.min = $("cbMin").value ? v : 0; debounced(); });
+  wireBudget($("cbMax"), (v) => { cbState.max = $("cbMax").value ? v : 0; debounced(); });
+  $("cbQ").addEventListener("input", (e) => { cbState.q = e.target.value; debounced(); });
+  $("cbSort").addEventListener("change", (e) => { cbState.sort = e.target.value; loadCommunity(); });
+  const mine = $("cbMine");
+  if (mine) mine.addEventListener("change", () => { cbState.mine = mine.checked; loadCommunity(); });
+  host.querySelectorAll("[data-cbunstat]").forEach((el) => el.addEventListener("click", () => {
+    cbState.stats = cbState.stats.filter((k) => k !== el.dataset.cbunstat);
+    renderCbFilters();
+    loadCommunity();
+  }));
+  host.querySelectorAll("[data-cbreset]").forEach((el) => el.addEventListener("click", cbReset));
+}
+
+// вкладки раздела сборок — ссылки: «Готовые сборки» живут на своём URL /sborki,
+// остальные три — вкладки калькулятора /builds
+function buildTabsHtml(active) {
+  const t = (id, label, href) =>
+    `<a class="btab ${active === id ? "on" : ""}" href="${href}" data-tab="${id}">${label}</a>`;
+  return `<div class="btabs">
+      ${t("ready", "ГОТОВЫЕ СБОРКИ", "/sborki")}
+      ${t("manual", "СОБРАТЬ ВРУЧНУЮ", "/builds")}
+      ${t("auto", "АВТОПОДБОР ПОД БЮДЖЕТ", "/builds")}
+      ${t("hp", "ПРИВЕДЁННОЕ ХП", "/builds")}
+    </div>`;
+}
+
+function wireBuildTabs() {
+  page.querySelectorAll(".btab").forEach((b) => b.addEventListener("click", (e) => {
+    const tab = b.dataset.tab;
+    if (tab === "ready") return;               // обычная ссылка, SPA-перехват уведёт на /sborki
+    buildTab = tab;
+    if (location.pathname === "/builds") { e.preventDefault(); renderBuilds(); }
+  }));
+}
+
+async function openSborki() {
+  home.classList.add("hidden");
+  detail.classList.add("hidden");
+  results.innerHTML = "";
+  page.classList.remove("hidden");
+  if (!(await ensureBuildDict())) return;
+  page.innerHTML = `<div class="section-head">
+      <div class="section-title">▸ ГОТОВЫЕ СБОРКИ АРТЕФАКТОВ</div>
+      <div class="section-note">ЦЕНЫ ПО АУКЦИОНУ RU · ЛИМИТЫ ЗАРАЖЕНИЯ ПОСЛЕ РЕБАЛАНСА</div>
+    </div>
+    ${buildTabsHtml("ready")}
+    <div id="rStrip">${randomStrip()}</div>
+    <section class="cb">
+      <div class="ready-head">
+        <div>
+          <h2 class="ready-title">СБОРКИ ИГРОКОВ <span id="cbCount"></span></h2>
+          <div class="ready-sub">Опубликованы из калькулятора · цены пересчитываются по живому аукциону ·
+            обсудить сборку — ${tgLink("sborki", "в нашем Telegram")}</div>
+        </div>
+        <a class="cb-btn on" href="/builds" data-tab="manual">+ ОПУБЛИКОВАТЬ СВОЮ</a>
+      </div>
+      <div class="cb-filters" id="cbFilters"></div>
+      <div id="cbList"></div>
+    </section>`;
+  wireBuildTabs();
+  page.querySelector(".cb-btn.on").addEventListener("click", () => { buildTab = "manual"; });
+  wireRandomStrip();
+  renderCbFilters();
+  loadRandomBuilds();
+  loadCommunity();
+}
+
+// ---------- публикация сборки из калькулятора ----------
+function loginPrompt(msg) {
+  gModalOpen(`<div class="pub">
+    <h3 class="pub-h">НУЖЕН ВХОД</h3>
+    <p class="pub-p">${escapeHtml(msg)} Вход — через аккаунт EXBO или почту, это минута.</p>
+    <button class="prof-save" id="pubLogin">ВОЙТИ</button>
+  </div>`);
+  $("pubLogin").addEventListener("click", () => { gModalClose(); openAuthModal("signin"); });
+}
+
+// src: {container, slots: [{item, m, ptn, bx}]}; из ручного режима — текущая
+// сборка, из автоподбора — подобранная (качество — верх тира, как в пуле бэка)
+function openPublishModal(src) {
+  if (!(ME && ME.authenticated)) {
+    if (src.fromManual) saveBuildDraft();   // вход через EXBO уводит со страницы
+    loginPrompt("ПУБЛИКОВАТЬ СБОРКИ МОГУТ ТОЛЬКО ВОШЕДШИЕ.");
+    ymGoal("build_publish_login");
+    return;
+  }
+  const cont = STORAGES().find((c) => c.id === src.container);
+  const slots = src.slots.filter(Boolean);
+  if (!cont || !slots.length) return;
+  const over = clientContam(slots.map((s) => ({ id: s.item, m: s.m, ptn: s.ptn, bx: s.bx })), cont)
+    .filter((c) => c.over);
+  const names = [...new Set(slots.map((s) => (BUILD_DICT.artefacts.find((a) => a.id === s.item) || {}).name))];
+  gModalOpen(`<div class="pub">
+    <h3 class="pub-h">ОПУБЛИКОВАТЬ СБОРКУ</h3>
+    <div class="pub-sum"><span style="color:${rank(cont.color).color}">${escapeHtml(cont.name)}</span> ·
+      ${slots.length} АРТ. · ${escapeHtml(names.join(", "))}</div>
+    <label class="pub-lbl">НАЗВАНИЕ
+      <input id="pubTitle" type="text" maxlength="60" placeholder="Например: «Пулестойка на 5 млн для PvP»"></label>
+    <div class="pub-hint">Пусто — назовём по двум главным статам сборки. Без ссылок.</div>
+    <label class="pub-anon"><input type="checkbox" id="pubAnon"> ОПУБЛИКОВАТЬ АНОНИМНО</label>
+    <div class="pub-hint">Имя не покажем никому. Удалить сборку сможете только вы.</div>
+    ${over.length ? `<div class="auth-err">СБОРКА ВЫШЕ ЛИМИТА ЗАРАЖЕНИЯ: ${escapeHtml(over.map((c) => `${c.name} ${c.net} / ${c.limit}`).join(", "))}. ТАКИЕ НЕ ПУБЛИКУЮТСЯ.</div>` : ""}
+    <div class="auth-err" id="pubErr"></div>
+    <button class="prof-save" id="pubGo" ${over.length ? "disabled" : ""}>ОПУБЛИКОВАТЬ</button>
+  </div>`);
+  const go = $("pubGo");
+  $("pubTitle").focus();
+  go.addEventListener("click", async () => {
+    go.disabled = true;
+    go.textContent = "ПУБЛИКУЮ…";
+    $("pubErr").textContent = "";
+    try {
+      const r = await fetch(api("/build/publish"), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ container: cont.id, slots, title: $("pubTitle").value,
+                               anonymous: $("pubAnon").checked }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.detail || "ОШИБКА ПУБЛИКАЦИИ");
+      ymGoal("build_publish");
+      cbState.facets = null;   // пул изменился — счётчики фильтров пересчитаются
+      gModalOpen(`<div class="pub">
+        <h3 class="pub-h">СБОРКА ОПУБЛИКОВАНА</h3>
+        <p class="pub-p">«${escapeHtml(d.title)}» теперь в общем пуле сборок игроков.
+          Хотите разбор — скиньте её ${tgLink("publish", "в Telegram-чат")}.</p>
+        <a class="prof-save" href="/sborki" id="pubSee">ПОСМОТРЕТЬ В СБОРКАХ ИГРОКОВ</a>
+      </div>`);
+      $("pubSee").addEventListener("click", () => {
+        Object.assign(cbState, { mine: true, sort: "new" });
+        gModalClose();
+      });
+    } catch (e) {
+      $("pubErr").textContent = String(e.message || e).toUpperCase();
+      go.disabled = false;
+      go.textContent = "ОПУБЛИКОВАТЬ";
+    }
+  });
+}
+
+const manualPublishSrc = () => ({
+  fromManual: true, container: buildState.container,
+  slots: buildState.slots.filter(Boolean).map((s) => ({ item: s.id, m: s.m, ptn: s.ptn, bx: s.bx || [] })),
+});
+const autoPublishSrc = (b, cont) => ({
+  container: cont.id, slots: b.slots.map((s) => ({ item: s.item, m: tierTop(s.qlt), ptn: s.ptn, bx: [] })),
+});
 
 function renderBuilds() {
   const cont = buildContainer();
@@ -5397,12 +5782,9 @@ function renderBuilds() {
       <a href="/auction">ЦЕНЫ АРТЕФАКТОВ НА АУКЦИОНЕ</a> ·
       <a href="/compare">СРАВНИТЬ ДВА АРТЕФАКТА</a> ·
       <a href="/guides/zatochka-artefaktov-cena">СКОЛЬКО СТОИТ ЗАТОЧКА</a></div>
-    <div class="btabs">
-      <button class="btab ${buildTab === "manual" ? "on" : ""}" data-tab="manual">СОБРАТЬ ВРУЧНУЮ</button>
-      <button class="btab ${buildTab === "auto" ? "on" : ""}" data-tab="auto">АВТОПОДБОР ПОД БЮДЖЕТ</button>
-      <button class="btab ${buildTab === "hp" ? "on" : ""}" data-tab="hp">ПРИВЕДЁННОЕ ХП</button>
-    </div>
-    ${buildTab === "manual" ? readyStrip() : ""}
+    ${buildTabsHtml(buildTab)}
+    ${buildTab === "manual" ? `<a class="sb-cta" href="/sborki"><b>ГОТОВЫЕ СБОРКИ →</b>
+      <span>четыре под разные бюджеты и сборки игроков с фильтрами по цене и статам</span></a>` : ""}
     <div class="bbar"><div class="isel" id="bContSel"></div></div>`;
 
   h += buildTab === "manual" ? renderManual(cont)
@@ -5410,11 +5792,11 @@ function renderBuilds() {
   const footer = buildTab === "manual"
     ? `КАЧЕСТВО — РЕДКОСТЬ ИЛИ ПОЛЕ % (85–175%): ВЫХОД ЗА ТИР МЕНЯЕТ РЕДКОСТЬ. ЦВЕТ ИМЕНИ — РЕДКОСТЬ.
        ЭФФЕКТИВНОСТЬ КОНТЕЙНЕРА УСИЛИВАЕТ ПОЛОЖИТЕЛЬНЫЕ СТАТЫ; ВНУТР. ЗАЩИТА ГАСИТ ЗАРАЖЕНИЯ (КРОМЕ ХОЛОДА).
-       ЛИМИТЫ ИГРОКА: РАД/ТЕМП/БИО — 0.5, ПСИ — 1.5, ХОЛОД — 1.0; МИНУС — ЗАПАС ЗАЩИТЫ, НЕ ВРЕДЕН.
+       ЛИМИТЫ ИГРОКА: РАД/ТЕМП/БИО/ПСИ — 0.5, ХОЛОД — 1.0; МИНУС — ЗАПАС ЗАЩИТЫ, НЕ ВРЕДЕН.
        ДОП. СВОЙСТВА ЗАТОЧКИ: +5/+10/+15 ОТКРЫВАЮТ ПО ОДНОМУ ИЗ ПУЛА АРТА В СЛУЧАЙНОМ ПОРЯДКЕ —
        НА +15 АКТИВНЫ ВСЕ (УЧТУТСЯ САМИ), НИЖЕ — ОТМЕТЬТЕ ВЫПАВШИЕ ГАЛОЧКАМИ.`
     : `ПОЛОЖИТЕЛЬНЫЕ СТАТЫ АРТОВ × ЭФФЕКТИВНОСТЬ КОНТЕЙНЕРА; ЗАРАЖЕНИЯ ГАСЯТСЯ ВНУТР. ЗАЩИТОЙ (КРОМЕ ХОЛОДА).
-       ЛИМИТЫ РАД/ТЕМП/БИО — 0.5, ПСИ — 1.5, ХОЛОД — 1.0 — ЖЁСТКИЕ: СБОРКИ СВЕРХ ЛИМИТА НЕ ВЫДАЮТСЯ,
+       ЛИМИТЫ РАД/ТЕМП/БИО/ПСИ — 0.5, ХОЛОД — 1.0 — ЖЁСТКИЕ: СБОРКИ СВЕРХ ЛИМИТА НЕ ВЫДАЮТСЯ,
        ПРИ НУЖДЕ ДОБАВЛЯЮТСЯ КОНТРАРТЫ. ДОП. СВОЙСТВА ЗАТОЧКИ УЧТЕНЫ: НА +15 — ВСЕ (ДЕТЕРМИНИРОВАНО),
        НА +5/+10 — МАТОЖИДАНИЕМ (ПОРЯДОК ВЫПАДЕНИЯ СЛУЧАЕН).`;
   h += `<div class="side-foot">${footer}</div>`;
@@ -5424,8 +5806,14 @@ function renderBuilds() {
 
 function renderManual(cont) {
   const t = manualTotals(cont);
+  const filled = buildState.slots.some(Boolean);
   return `<div class="bgrid">${buildState.slots.map((s, i) => manualSlotCard(s, i)).join("")}</div>
-    ${totalsBlock(t, cont, null)}`;
+    ${totalsBlock(t, cont, null)}
+    <div class="pub-bar">
+      <button class="prof-save" id="bPublish" ${filled ? "" : "disabled"}>ОПУБЛИКОВАТЬ СБОРКУ</button>
+      <span>${filled ? "Сборка попадёт в общий пул на странице <a href=\"/sborki\">готовых сборок</a>"
+                     : "Добавьте артефакты — собранное можно опубликовать для всех"}</span>
+    </div>`;
 }
 
 // Обычные статы, встречающиеся хотя бы на одном артефакте в красной (вредной)
@@ -5467,6 +5855,7 @@ function renderAuto(cont) {
     res = `<div class="note-warn"><span class="mark">[!]</span> ${escapeHtml(r.hint || "НЕТ ЦЕНОВЫХ ДАННЫХ")}</div>`;
   else if (r && r.builds && r.builds.length) res = renderAutoResult(r, autoState.budget);
   else if (r && r.builds) res = `<div class="empty">НИЧЕГО НЕ ПОДОБРАЛОСЬ ПОД БЮДЖЕТ.</div>`;
+  if (r) res += buildsTgCta(r);
   return `<div class="aform">
       <label class="albl">БЮДЖЕТ, ₽ <input id="aBudget" type="text" inputmode="numeric" value="${fmt(autoState.budget)}"></label>
       ${rows}
@@ -5481,6 +5870,11 @@ function renderAuto(cont) {
     </div>${res}`;
 }
 
+// под результатом автоподбора: не собралось или сомневаетесь — разбор в Telegram
+const buildsTgCta = (r) => `<div class="tg-cta">${r.error || !(r.builds || []).length
+    ? "Не собирается под ваши условия?" : "Сомневаетесь в сборке?"} Скиньте её в Telegram-чат —
+  разберём, что заменить. ${tgLink("builds", "ОТКРЫТЬ TELEGRAM →")}</div>`;
+
 // карточка подобранного арта: цвет редкости, полные статы, майлстоуны, цена
 function resultSlotCard(s) {
   return `<div class="bslot ro">
@@ -5494,15 +5888,16 @@ function resultSlotCard(s) {
 }
 
 function renderAutoResult(r, budget) {
-  const build = (b, title, open) => `<details class="alt abuild" ${open ? "open" : ""}>
+  const build = (b, title, open, i) => `<details class="alt abuild" ${open ? "open" : ""}>
     <summary><b>${title}</b> · ${fmt(b.totals.cost)} ₽ · ${b.slots.length} СЛОТ</summary>
     <div class="bgrid">${b.slots.map(resultSlotCard).join("")}</div>
     ${totalsBlock({ stats: b.totals.stats, cost: b.totals.cost, unpriced: 0,
                     weight: b.totals.weight, contamination: b.totals.contamination },
                   r.container, budget)}
+    <div class="pub-bar"><button class="prof-save" data-pubauto="${i}">ОПУБЛИКОВАТЬ СБОРКУ</button></div>
   </details>`;
-  let h = build(r.builds[0], "ОПТИМАЛЬНАЯ СБОРКА", true);
-  r.builds.slice(1).forEach((b, i) => { h += build(b, `АЛЬТЕРНАТИВА ${i + 1}`, false); });
+  let h = build(r.builds[0], "ОПТИМАЛЬНАЯ СБОРКА", true, 0);
+  r.builds.slice(1).forEach((b, i) => { h += build(b, `АЛЬТЕРНАТИВА ${i + 1}`, false, i + 1); });
   if (r.warnings && r.warnings.length)
     h += `<div class="note-warn"><span class="mark">[!]</span> ${r.warnings.map(escapeHtml).join("<br>")}</div>`;
   return h;
@@ -5518,6 +5913,7 @@ function renderHP(cont) {
   const r = hpState.result;
   if (r && r.error) res = `<div class="note-warn"><span class="mark">[!]</span> ${escapeHtml(r.hint || "НЕТ ДАННЫХ")}</div>`;
   else if (r && r.builds && r.builds.length) res = renderHPResult(r);
+  if (r) res += buildsTgCta(r);
   return `<div class="hp-intro">Подбор артефактов на максимум <b>приведённого ХП от пуль</b>:
       <span class="mono">(100 + пулестойкость) × живучесть</span>. Броня и контейнер — фикс, бюджет — на артефакты.</div>
     <div class="aform">
@@ -5548,7 +5944,8 @@ function renderHPResult(r) {
     <div class="bgrid">${b.slots.map(resultSlotCard).join("")}</div>
     ${totalsBlock({ stats: b.totals.stats, cost: b.totals.cost, unpriced: 0,
                     weight: b.totals.weight, contamination: b.totals.contamination },
-                  r.container, hpState.budget)}`;
+                  r.container, hpState.budget)}
+    <div class="pub-bar"><button class="prof-save" data-pubauto="0">ОПУБЛИКОВАТЬ СБОРКУ</button></div>`;
   if (r.warnings && r.warnings.length)
     h += `<div class="note-warn"><span class="mark">[!]</span> ${r.warnings.map(escapeHtml).join("<br>")}</div>`;
   return h;
@@ -5620,9 +6017,14 @@ function wireBudget(el, setter) {
 }
 
 function wireBuilds(cont) {
-  page.querySelectorAll(".btab").forEach((b) => b.addEventListener("click", () => {
-    buildTab = b.dataset.tab;
-    renderBuilds();
+  wireBuildTabs();
+  // публикация: из ручного режима — текущая сборка, из авто/ХП — подобранная
+  const pub = $("bPublish");
+  if (pub) pub.addEventListener("click", () => openPublishModal(manualPublishSrc()));
+  page.querySelectorAll("[data-pubauto]").forEach((el) => el.addEventListener("click", () => {
+    const r = buildTab === "hp" ? hpState.result : autoState.result;
+    const b = r && r.builds && r.builds[+el.dataset.pubauto];
+    if (b && r.container) openPublishModal(autoPublishSrc(b, r.container));
   }));
   iconSelect($("bContSel"),
     STORAGES().map((c) => ({ id: c.id, icon: c.icon, color: c.color,
@@ -5634,11 +6036,6 @@ function wireBuilds(cont) {
       buildState.slots = Array(c.slots).fill(null).map((_, i) => old[i] || null);
       renderBuilds();
     });
-
-  page.querySelectorAll("[data-ropen]").forEach((b) =>
-    b.addEventListener("click", () => readyOpen(b.dataset.ropen)));
-  page.querySelectorAll("[data-rauto]").forEach((b) =>
-    b.addEventListener("click", () => readyAuto(b.dataset.rauto)));
 
   if (buildTab === "auto") {
     wireBudget($("aBudget"), (v) => { autoState.budget = v; });
@@ -6761,6 +7158,7 @@ const devSubnav = (on) => `<div class="dev-subnav">
   <a href="/dev/craft"${on === "craft" ? ' class="on"' : ""}>РЕЦЕПТЫ</a>
   <a href="/dev/scan"${on === "scan" ? ' class="on"' : ""}>СКАНЕР</a>
   <a href="/dev/news"${on === "news" ? ' class="on"' : ""}>НОВОСТИ</a>
+  <a href="/dev/tgposts"${on === "tgposts" ? ' class="on"' : ""}>ТГ-ПОСТЫ</a>
   <a href="/home2">МАКЕТЫ ↗</a>
 </div>`;
 
@@ -6930,6 +7328,80 @@ async function renderDevGuideForm(slug) {
 }
 
 // ---------- ДЕВ · редактор промокодов (только админ) ----------
+// ---------- ДЕВ · заготовки постов для Telegram-канала ----------
+// Тексты живут в backend/content/tg_posts.json (их дописывают в репозитории),
+// здесь админ копирует пост и скрывает использованный — флаг хранится в базе.
+let tgpShowHidden = false;
+
+async function openDevTgPosts() {
+  if (!devGate()) return;
+  await renderDevTgPosts();
+}
+
+async function renderDevTgPosts() {
+  page.innerHTML = `<div class="mapmod"><div class="spinner">// ЗАГРУЗКА ПОСТОВ</div></div>`;
+  let d;
+  try {
+    const r = await fetch(api("/admin/tg-posts"));
+    if (!r.ok) throw new Error();
+    d = await r.json();
+  } catch (e) { page.innerHTML = `<div class="empty">[!] ОШИБКА СЕТИ</div>`; return; }
+  if (location.pathname !== "/dev/tgposts") return;
+  const items = d.items || [];
+  const used = items.filter((p) => p.hidden).length;
+  const shown = items.filter((p) => tgpShowHidden || !p.hidden);
+  const b = d.bot || {};
+  const bot = b.enabled
+    ? `БОТ ПОДКЛЮЧЁН · ${escapeHtml(b.channel)} · ОТПРАВЛЕНО С РЕСТАРТА: ${b.sent} · ОШИБОК: ${b.errors}`
+    : "БОТ ВЫКЛЮЧЕН: НА СЕРВЕРЕ НЕ ЗАДАН TG_BOT_TOKEN — ПАТЧИ И ВЫБРОСЫ В КАНАЛ НЕ УХОДЯТ";
+  const card = (p) => {
+    const n = [...p.text].length;
+    return `<article class="tgp ${p.hidden ? "off" : ""}">
+      <div class="tgp-head"><span class="tgp-rub">${escapeHtml(p.rubric)}</span>
+        <span class="tgp-when">${escapeHtml(p.planned)}</span></div>
+      <div class="gadm-row-t">${escapeHtml(p.title)}</div>
+      <div class="gadm-row-s">ССЫЛКА НА САЙТ: ${escapeHtml(p.link || "нет")} · ${n} СИМВ.${n > 1024 ? " · ДЛИННЕЕ ПОДПИСИ К ФОТО (1024)" : ""}</div>
+      ${p.note ? `<div class="tgp-note">${escapeHtml(p.note)}</div>` : ""}
+      <pre class="tgp-text">${escapeHtml(p.text)}</pre>
+      <div class="gadm-row-a">
+        <button class="gadm-btn" data-tgcopy="${escapeHtml(p.slug)}">КОПИРОВАТЬ</button>
+        <button class="gadm-btn ${p.hidden ? "" : "gadm-del"}" data-tghide="${escapeHtml(p.slug)}" data-v="${p.hidden ? 0 : 1}">
+          ${p.hidden ? "ВЕРНУТЬ В СПИСОК" : "ИСПОЛЬЗОВАН — СКРЫТЬ"}</button>
+      </div>
+    </article>`;
+  };
+  page.innerHTML = `<div class="mapmod">
+    <div class="section-head">
+      <div class="section-title">▸ ДЕВ · ПОСТЫ ДЛЯ TELEGRAM</div>
+      <div class="section-note">Жирный — **звёздочками**: Telegram Desktop и мобильный сделают его жирным при отправке.
+        [В скобках] — что заполнить. Опрос — отдельным сообщением.</div>
+    </div>
+    ${devSubnav("tgposts")}
+    <div class="tgp-bot ${b.enabled ? "on" : ""}">${bot}</div>
+    <div class="tgp-bar">
+      <span>В РАБОТЕ: ${items.length - used} · ИСПОЛЬЗОВАНО: ${used}</span>
+      ${used ? `<button class="gadm-btn" id="tgpToggle">${tgpShowHidden ? "СПРЯТАТЬ ИСПОЛЬЗОВАННЫЕ" : `ПОКАЗАТЬ ИСПОЛЬЗОВАННЫЕ (${used})`}</button>` : ""}
+    </div>
+    <div class="tgp-list">${shown.map(card).join("") || `<div class="empty-sm">ВСЕ ПОСТЫ ИСПОЛЬЗОВАНЫ — ПОПРОСИ НОВЫХ.</div>`}</div>
+  </div>`;
+  const tog = $("tgpToggle");
+  if (tog) tog.addEventListener("click", () => { tgpShowHidden = !tgpShowHidden; renderDevTgPosts(); });
+  page.querySelectorAll("[data-tgcopy]").forEach((el) => el.addEventListener("click", async () => {
+    const p = items.find((x) => x.slug === el.dataset.tgcopy);
+    const ok = p && await copyText(p.text);
+    el.textContent = ok ? "СКОПИРОВАНО ✓" : "НЕ СКОПИРОВАЛОСЬ";
+    setTimeout(() => { el.textContent = "КОПИРОВАТЬ"; }, 1500);
+  }));
+  page.querySelectorAll("[data-tghide]").forEach((el) => el.addEventListener("click", async () => {
+    el.disabled = true;
+    await fetch(api(`/admin/tg-posts/${encodeURIComponent(el.dataset.tghide)}/hidden`), {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ hidden: el.dataset.v === "1" }),
+    }).catch(() => {});
+    renderDevTgPosts();
+  }));
+}
+
 async function openDevPromos() {
   if (!devGate()) return;
   await renderDevPromosList();
@@ -9167,6 +9639,10 @@ function route() {
     strip.classList.add("hidden");
     setNav("dev"); openDevNews(); return;
   }
+  if (path === "/dev/tgposts") {
+    strip.classList.add("hidden");
+    setNav("dev"); openDevTgPosts(); return;
+  }
   // черновик новой главной: своя страница, боевая «/» не меняется
   if (path === "/home2") {
     strip.classList.add("hidden"); page.classList.add("hidden");
@@ -9239,6 +9715,10 @@ function route() {
   if (path === "/builds") {
     strip.classList.add("hidden"); page.classList.add("hidden");
     setNav("builds"); openBuilds(); return;
+  }
+  if (path === "/sborki") {
+    strip.classList.add("hidden"); page.classList.add("hidden");
+    setNav("builds"); openSborki(); return;
   }
   if (path === "/operations") {
     strip.classList.add("hidden"); detail.classList.add("hidden");

@@ -20,7 +20,7 @@ from fastapi.responses import JSONResponse
 
 from app import config
 from app.db import (chat, craft_tuning, guides, mapobjects, market, news,
-                    operations as ops, promos, quests, sitenews, users)
+                    operations as ops, promos, quests, sitenews, tg_posts, user_builds, users)
 from app.db.index import db
 from app.routers.auth import SESSION_COOKIE, current_user, is_admin
 from app.services import (auction, barter, builds, compare, craft, exchange,
@@ -28,6 +28,7 @@ from app.services import (auction, barter, builds, compare, craft, exchange,
 from app.services.estorm import estorm
 from app.services import fuel as fuel_svc
 from app.services.artefact_lots import artlots
+from app.services.tg_bot import tgbot
 from app.services.artefact_watch import MSK
 from app.services.emission_watch import ewatch
 from app.services.ingredient_watch import watch
@@ -1860,10 +1861,10 @@ async def build_auto(payload: dict = Body(...)):
     return res  # включая error=no_priced_variants с подсказкой — фронт покажет
 
 
-@router.get("/build/ready")
-async def build_ready():
-    """Готовые сборки под типовые задачи для верха /builds (кэш 15 мин)."""
-    return builds.ready_builds()
+@router.get("/build/random")
+async def build_random():
+    """Четыре случайные готовые сборки для верха /sborki (профиль × бюджет)."""
+    return builds.random_builds()
 
 
 @router.get("/build/daily")
@@ -1887,6 +1888,162 @@ async def build_hp(payload: dict = Body(...)):
     return res
 
 
+# ---------- заготовки постов для Telegram (DEV /dev/tgposts) ----------
+@router.get("/admin/tg-posts")
+async def admin_tg_posts(request: Request):
+    """Заготовки постов канала: тексты из content/tg_posts.json + флаг «использован»."""
+    _require_admin(request)
+    return {"items": tg_posts.list_all(), "bot": tgbot.stats()}
+
+
+@router.post("/admin/tg-posts/{slug}/hidden")
+async def admin_tg_post_hidden(slug: str, request: Request, payload: dict = Body(...)):
+    """Скрыть использованный пост (или вернуть): {hidden: bool}."""
+    _require_admin(request)
+    if not tg_posts.set_hidden(slug, bool(payload.get("hidden"))):
+        raise HTTPException(404, "пост не найден")
+    return {"ok": True}
+
+
+# ---------- сборки игроков (/sborki) ----------
+_URL_RE = re.compile(r"https?://|www\.|t\.me/|\.(ru|com|net|gg|org)\b", re.I)
+_SORTS = ("new", "cheap", "expensive", "top")
+
+
+def _num(v) -> float | None:
+    try:
+        return float(v) if v not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
+@router.get("/build/community")
+async def build_community(request: Request, min_price: str = "", max_price: str = "",
+                          stats: str = "", container: str = "", q: str = "",
+                          sort: str = "new", mine: int = 0, offset: int = 0, limit: int = 24):
+    """Пул сборок игроков с фильтрами. Цена и статы — по живым ценам, поэтому
+    фильтры считаются здесь, а не в SQL. stats — ключи через запятую, сборка
+    должна давать ВСЕ выбранные (в полезную сторону). facets — что вообще есть
+    в пуле: фронт предлагает в фильтрах только непустые варианты."""
+    user = current_user(request)
+    admin = is_admin(user)
+    liked = user_builds.liked_by(user["id"]) if user else set()
+    lo, hi = _num(min_price), _num(max_price)
+    want = [k for k in stats.split(",") if k][:10]
+    needle = q.strip().lower()[:60]
+    rows = []
+    facet_stats: dict = {}
+    facet_conts: dict = {}
+    for b in user_builds.all_builds():
+        ev = builds.evaluate_cached(b["id"], b["container"], b["slots"])
+        if ev.get("error"):
+            continue
+        t = ev["totals"]
+        for k in ev["main"]:
+            facet_stats[k] = facet_stats.get(k, 0) + 1
+        facet_conts[b["container"]] = facet_conts.get(b["container"], 0) + 1
+        if mine and not (user and b["user_id"] == user["id"]):
+            continue
+        if container and b["container"] != container:
+            continue
+        if want and not all(t["stats"].get(k, {}).get("good") for k in want):
+            continue
+        priced = t["unpriced"] < len(ev["slots"])
+        if (lo is not None or hi is not None) and not priced:
+            continue
+        if lo is not None and t["cost"] < lo:
+            continue
+        if hi is not None and t["cost"] > hi:
+            continue
+        if needle and needle not in b["title"].lower() and needle not in (b["author"] or "").lower():
+            continue
+        c = ev["container"]
+        rows.append({"id": b["id"], "title": b["title"], "author": b["author"],
+                     "ts": b["ts"], "likes": b["likes"], "liked": b["id"] in liked,
+                     "own": bool(user and b["user_id"] == user["id"]),
+                     "can_delete": bool(user and (b["user_id"] == user["id"] or admin)),
+                     "container": {k: c.get(k) for k in ("id", "name", "icon", "color", "kind",
+                                                         "slots", "efficiency", "protection")},
+                     "slots": ev["slots"], "totals": t, "main": ev["main"]})
+    sort = sort if sort in _SORTS else "new"
+    if sort == "cheap":
+        rows.sort(key=lambda r: (r["totals"]["unpriced"] >= len(r["slots"]), r["totals"]["cost"]))
+    elif sort == "expensive":
+        rows.sort(key=lambda r: -r["totals"]["cost"])
+    elif sort == "top":
+        rows.sort(key=lambda r: (-r["likes"], -r["id"]))
+    limit = max(1, min(48, limit))
+    offset = max(0, offset)
+    names = {k: db.artefact_stat_names.get(k, {}).get("name", k) for k in facet_stats}
+    return {"total": len(rows), "items": rows[offset:offset + limit],
+            "facets": {
+                "stats": sorted(({"key": k, "name": names[k], "n": n}
+                                 for k, n in facet_stats.items()), key=lambda x: -x["n"]),
+                "containers": [{"id": cid, "n": n, "name": (db.storage(cid) or {}).get("name", cid)}
+                               for cid, n in sorted(facet_conts.items(), key=lambda kv: -kv[1])]}}
+
+
+@router.post("/build/publish")
+async def build_publish(request: Request, payload: dict = Body(...)):
+    """Публикация сборки из калькулятора в общий пул — только вошедшим.
+    {container, slots: [{item, m, ptn, bx}], title, anonymous}. Сборку
+    считаем на сервере: сверх лимита заражения и пустую не принимаем."""
+    user = current_user(request)
+    if not user:
+        raise HTTPException(401, "Публиковать сборки могут только вошедшие")
+    cont = db.storage(str(payload.get("container") or ""))
+    if not cont:
+        raise HTTPException(422, "Хранилище не найдено")
+    slots = builds.normalize_slots(payload.get("slots"), cont)
+    if slots is None:
+        raise HTTPException(422, "Сборка повреждена — обновите страницу")
+    if not slots:
+        raise HTTPException(422, "В сборке нет ни одного артефакта")
+    ev = builds.evaluate(cont["id"], slots)
+    over = [c for c in ev["totals"]["contamination"] if c["over"]]
+    if over:
+        raise HTTPException(422, "Сборка выше лимита заражения: " + ", ".join(
+            f"{c['name']} {c['net']} при лимите {c['limit']}" for c in over))
+    title = " ".join(str(payload.get("title") or "").split())[:user_builds.TITLE_MAX]
+    if _URL_RE.search(title):
+        raise HTTPException(422, "Ссылки в названии сборки нельзя")
+    if not title:
+        title = builds.auto_title(ev)
+    if user_builds.published_today(user["id"]) >= user_builds.DAY_LIMIT:
+        raise HTTPException(429, f"Не больше {user_builds.DAY_LIMIT} сборок в сутки")
+    dup = user_builds.duplicate_of(user["id"], user_builds.signature(cont["id"], slots))
+    if dup:
+        raise HTTPException(409, "Такая сборка у вас уже опубликована")
+    bid = user_builds.add(user["id"], user.get("display_login") or user["login"],
+                          bool(payload.get("anonymous")), title, cont["id"], slots)
+    return {"ok": True, "id": bid, "title": title}
+
+
+@router.delete("/build/community/{bid}")
+async def build_community_delete(bid: int, request: Request):
+    """Удалить сборку из пула — автор или админ."""
+    user = current_user(request)
+    b = user_builds.get(bid)
+    if not b:
+        raise HTTPException(404, "Сборка не найдена")
+    if not user or (b["user_id"] != user["id"] and not is_admin(user)):
+        raise HTTPException(403, "Удалить может только автор")
+    user_builds.delete(bid)
+    return {"ok": True}
+
+
+@router.post("/build/community/{bid}/like")
+async def build_community_like(bid: int, request: Request):
+    """Лайк сборки (повторный — снимает). Только вошедшим."""
+    user = current_user(request)
+    if not user:
+        raise HTTPException(401, "Оценивать сборки могут только вошедшие")
+    if not user_builds.get(bid):
+        raise HTTPException(404, "Сборка не найдена")
+    liked, n = user_builds.toggle_like(bid, user["id"])
+    return {"liked": liked, "likes": n}
+
+
 @router.get("/health")
 async def health():
     return {"status": "ok", "items": len(db.items),
@@ -1898,4 +2055,5 @@ async def health():
             "prices": store.stats(),
             "artmarket": market.stats(),
             "item_sales": market.item_sales_stats(),
-            "artlots": artlots.stats()}
+            "artlots": artlots.stats(),
+            "tg_bot": tgbot.stats()}

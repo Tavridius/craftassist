@@ -82,6 +82,26 @@ ssh pavel@88.87.70.167 "tar xzf /tmp/deploy.tgz -C /home/pavel/stalzone-craft \
   && rm /tmp/deploy.tgz && cd /home/pavel/stalzone-craft && docker compose up -d --build"
 ```
 
+## Telegram-бот канала — патчи и выбросы
+
+Бот (`backend/app/services/tg_bot.py`) постит в канал t.me/stalzone_helper новые
+патчи (со ссылкой на /patches/…) и старты выбросов. Выброс уходит без звука и
+удаляется ботом через `TG_EMISSION_TTL_MIN` минут, чтобы не засорять ленту.
+Статус виден в /dev/tgposts и в `/api/health` → `tg_bot`.
+
+1. @BotFather → `/newbot` → получить токен.
+2. Канал → Администраторы → добавить бота с правами «Публикация сообщений» и
+   «Удаление сообщений».
+3. На сервере дописать токен в боевой `.env` и пересоздать контейнер:
+
+```bash
+ssh pavel@88.87.70.167 "cd /home/pavel/stalzone-craft &&   sed -i '/^TG_BOT_TOKEN=/d' .env && echo 'TG_BOT_TOKEN=<токен>' >> .env && docker compose up -d"
+```
+
+Выключить по отдельности: `TG_NOTIFY_PATCHES=0` / `TG_NOTIFY_EMISSIONS=0`.
+Если api.telegram.org с сервера не открывается — `TG_API_BASE` на свой прокси
+Bot API. Дедуп и очередь удаления — `data/tg_bot.json` в томе.
+
 ## Реклама РСЯ — включение / выключение
 
 Два места, оба включаются своей переменной и независимо:
