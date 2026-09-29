@@ -81,7 +81,9 @@ class OperationsWatch:
     async def _poll(self, client: httpx.AsyncClient) -> bool:
         """Один проход опроса. False — API не ответил (ретрай по расписанию)."""
         await oauth.ensure(client)
-        have_data = ops.stats()["sessions"] > 0
+        # все обращения к operations.db (880 МБ) — в потоке: в цикле событий
+        # опрос раз в 10 минут подвешивал сайт до 1.2 с (замер 30.09.2026)
+        have_data = (await asyncio.to_thread(ops.stats))["sessions"] > 0
         total_added = 0
         got_any = False
         for page in range(config.OPS_MAX_PAGES):
@@ -101,7 +103,7 @@ class OperationsWatch:
                 break
             # сохраняем только сессии со снаряжением; свежие «пустые» пропускаем —
             # подхватим полными в следующем опросе (см. _has_gear)
-            added = ops.add_sessions([s for s in sessions if _has_gear(s)])
+            added = await asyncio.to_thread(ops.add_sessions, [s for s in sessions if _has_gear(s)])
             total_added += added
             # догнали прошлый опрос: страница не принесла новых ПОЛНЫХ сессий —
             # глубже старьё (на первом заполнении БД пусто — идём до OPS_MAX_PAGES)
@@ -112,9 +114,10 @@ class OperationsWatch:
 
         if total_added:
             before = int(datetime.now(timezone.utc).timestamp()) - config.OPS_KEEP_DAYS * 86400
-            ops.cleanup(before)
-            logger.info("operations_watch: +%d new sessions (%s)", total_added, ops.stats())
-        ops.set_meta("last_poll", datetime.now(timezone.utc).isoformat())
+            await asyncio.to_thread(ops.cleanup, before)
+            logger.info("operations_watch: +%d new sessions (%s)", total_added,
+                        await asyncio.to_thread(ops.stats))
+        await asyncio.to_thread(ops.set_meta, "last_poll", datetime.now(timezone.utc).isoformat())
         return got_any
 
     async def loop(self) -> None:
@@ -122,7 +125,7 @@ class OperationsWatch:
                     config.OPS_POLL_MIN, config.OPS_TIER_LOW_MAX,
                     config.OPS_TIER_LOW_MAX + 1, config.OPS_TIER_MID_MAX,
                     config.OPS_TIER_MID_MAX + 1)
-        ops.purge_incomplete()   # чистим накопленные «пустые» — переберутся полными
+        await asyncio.to_thread(ops.purge_incomplete)   # «пустые» — переберутся полными
         async with httpx.AsyncClient(trust_env=False) as client:
             while True:
                 try:

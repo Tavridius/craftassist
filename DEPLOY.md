@@ -106,6 +106,19 @@ ssh pavel@88.87.70.167 "cd /home/pavel/stalzone-craft &&   sed -i '/^TG_BOT_TOKE
 https://api.telegram.org/bot<токен>/getMe`; крайний вариант — `TG_API_BASE` на
 свой прокси Bot API. Дедуп и очередь удаления — `data/tg_bot.json` в томе.
 
+## operations.db — сжатие (VACUUM)
+
+База «Операций» копила место после удаления старых сессий (ретенция
+`OPS_KEEP_DAYS`): к 30.09.2026 из 880 МБ пустыми были 45%. 30.09 сделан разовый
+VACUUM с `auto_vacuum=INCREMENTAL`, дальше `operations.cleanup()` сам отдаёт
+освободившиеся страницы. Повторять вручную нужно только если `PRAGMA
+auto_vacuum` снова вернёт 0 (например, базу пересоздали). Контейнер на время
+останавливается, VACUUM идёт в одноразовом контейнере на том же томе:
+
+```bash
+ssh pavel@88.87.70.167 "cd /home/pavel/stalzone-craft && docker compose stop &&   docker run --rm -v stalzone-craft_craft_data:/app/backend/data stalzone-craft:latest     python -c \"import sqlite3; c=sqlite3.connect('/app/backend/data/operations.db'); c.execute('PRAGMA auto_vacuum=INCREMENTAL'); c.execute('VACUUM'); print(c.execute('PRAGMA auto_vacuum').fetchone(), c.execute('PRAGMA freelist_count').fetchone())\" &&   docker compose up -d"
+```
+
 ## Реклама РСЯ — включение / выключение
 
 Два места, оба включаются своей переменной и независимо:

@@ -211,6 +211,12 @@ def cleanup(before_ts: int) -> int:
         n = _conn.execute("DELETE FROM ops_session WHERE ts < ?", (before_ts,)).rowcount
         _conn.execute("DELETE FROM ops_participant WHERE ts < ?", (before_ts,))
         _conn.commit()
+        # Удалённое без вакуума копилось в файле: к 30.09.2026 из 880 МБ пустыми
+        # были 45%. С auto_vacuum=INCREMENTAL (включён разовым VACUUM, см.
+        # DEPLOY.md) отдаём свободные страницы сразу; fetchall() обязателен —
+        # без него pragma освобождает только первую порцию.
+        if n and _conn.execute("PRAGMA auto_vacuum").fetchone()[0] == 2:
+            _conn.execute("PRAGMA incremental_vacuum").fetchall()
     if n:
         logger.info("operations: cleaned %d sessions older than ts=%d", n, before_ts)
     return n

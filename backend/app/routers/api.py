@@ -1346,8 +1346,31 @@ def _meta_week() -> dict:
             "next": (ws + timedelta(days=7)).isoformat()}
 
 
+# Запросы к operations.db (880 МБ, 250 тыс. сессий) — 0.03-0.56 с каждый, и
+# шли прямо в цикле событий: заход на /operations с фильтром «все этапы»
+# держал весь сайт полсекунды. Данные обновляются раз в OPS_POLL_MIN, поэтому
+# ответы кэшируем на 2 минуты, а пересчёт уносим в поток.
+_OPS_TTL = 120.0
+_ops_cache: dict[tuple, tuple[float, dict]] = {}
+
+
+async def _ops_cached(key: tuple, fn, *args) -> dict:
+    hit = _ops_cache.get(key)
+    if hit and time.time() - hit[0] <= _OPS_TTL:
+        return hit[1]
+    res = await asyncio.to_thread(fn, *args)
+    if len(_ops_cache) > 300:          # страницы ленты и ники — не копим бесконечно
+        _ops_cache.clear()
+    _ops_cache[key] = (time.time(), res)
+    return res
+
+
 @router.get("/operations/overview")
 async def operations_overview():
+    return await _ops_cached(("overview",), _operations_overview)
+
+
+def _operations_overview() -> dict:
     """Модуль на главной: мета снаряжения по классам брони (в ротации).
 
     Берём высокий этап (эндгейм-мета — то, что ищут); если данных мало, откатываемся
@@ -1372,6 +1395,10 @@ async def operations_overview():
 
 @router.get("/operations/meta")
 async def operations_meta(tier: str = "high"):
+    return await _ops_cached(("meta", tier), _operations_meta, tier)
+
+
+def _operations_meta(tier: str) -> dict:
     """Мета этапа для страницы /operations: самые быстрые комбо снаряжения и
     разбивка по классам брони. tier: low|mid|high|all."""
     t = _tier_arg(tier)
@@ -1398,6 +1425,11 @@ async def operations_meta(tier: str = "high"):
 @router.get("/operations/sessions")
 async def operations_sessions(tier: str = "all", map: str | None = None,
                               limit: int = Query(40, ge=1, le=100), offset: int = 0):
+    return await _ops_cached(("sessions", tier, map, limit, offset),
+                             _operations_sessions, tier, map, limit, offset)
+
+
+def _operations_sessions(tier: str, map: str | None, limit: int, offset: int) -> dict:
     """Лента истории забегов: кто, с каким снаряжением, на какой сложности, за сколько."""
     t = _tier_arg(tier)
     rows = ops.recent_sessions(t, map, limit, offset)
@@ -1411,6 +1443,10 @@ async def operations_sessions(tier: str = "all", map: str | None = None,
 
 @router.get("/operations/player/{username}")
 async def operations_player(username: str, limit: int = Query(40, ge=1, le=100)):
+    return await _ops_cached(("player", username, limit), _operations_player, username, limit)
+
+
+def _operations_player(username: str, limit: int) -> dict:
     """Забеги конкретного игрока (по нику из состава сессий)."""
     rows = ops.player_sessions(username, limit)
     return {"username": username, "count": len(rows),
