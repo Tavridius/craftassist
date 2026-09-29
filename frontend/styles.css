@@ -196,6 +196,19 @@ a.brand-wrap:hover .brand { color: var(--green); text-shadow: var(--glow); }
 .topstats .stat span { color: var(--text); }
 .clock { color: var(--bright); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .auth { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+/* «Мы в Telegram» в шапке — голубым, как остальные ссылки на канал */
+.tg-head {
+  display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; text-decoration: none;
+  border: 1px solid #1f3550; color: #5fa8ff; padding: 2px 10px; letter-spacing: 0.1em;
+}
+.tg-head svg { width: 13px; height: 13px; fill: currentColor; flex: none; }
+.tg-head:hover { border-color: #5fa8ff; box-shadow: 0 0 8px rgba(95, 168, 255, 0.35); }
+.tg-head-s { display: none; }
+@media (max-width: 640px) {
+  .tg-head { padding: 2px 7px; }
+  .tg-head-l { display: none; }
+  .tg-head-s { display: inline; }
+}
 .auth-login {
   border: 1px solid var(--green-border); color: var(--green);
   padding: 2px 10px; letter-spacing: 0.1em; text-decoration: none;
