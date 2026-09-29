@@ -1841,6 +1841,20 @@ async def build_dictionary():
     return builds.build_dict()
 
 
+# Расчёты сборок — чистый CPU на 0.4-10 с (автоподбор, приведённое ХП). В цикле
+# событий они замораживали сайт целиком: пока один человек жал «Рассчитать»,
+# у остальных не открывалась даже главная (замер 30.09.2026: лёгкий эндпоинт
+# отвечал 5-9 с во время расчёта ХП). Уносим в поток: из-за GIL расчёт не
+# станет быстрее, но цикл событий получает управление каждые ~5 мс и отвечает
+# остальным. Семафор — чтобы пачка одновременных расчётов не съела весь GIL.
+_BUILD_SLOTS = asyncio.Semaphore(2)
+
+
+async def _heavy(fn, *args):
+    async with _BUILD_SLOTS:
+        return await asyncio.to_thread(fn, *args)
+
+
 @router.post("/build/auto")
 async def build_auto(payload: dict = Body(...)):
     """Автоподбор сборки: {budget, container, stats: [{key, weight 0-100}],
@@ -1852,10 +1866,10 @@ async def build_auto(payload: dict = Body(...)):
         budget = float(payload.get("budget", 0))
     except (TypeError, ValueError):
         raise HTTPException(422, "budget must be a number")
-    res = builds.auto_build(budget, str(payload.get("container", "")),
-                            payload.get("stats") or [],
-                            payload.get("exclude") or [],
-                            bool(payload.get("no_negatives")))
+    res = await _heavy(builds.auto_build, budget, str(payload.get("container", "")),
+                       payload.get("stats") or [],
+                       payload.get("exclude") or [],
+                       bool(payload.get("no_negatives")))
     if res.get("error") in ("container_not_found", "bad_request"):
         raise HTTPException(422, res["error"])
     return res  # включая error=no_priced_variants с подсказкой — фронт покажет
@@ -1864,14 +1878,14 @@ async def build_auto(payload: dict = Body(...)):
 @router.get("/build/random")
 async def build_random():
     """Четыре случайные готовые сборки для верха /sborki (профиль × бюджет)."""
-    return builds.random_builds()
+    return await _heavy(builds.random_builds)   # из кэша мгновенно, без кэша — до 4 расчётов
 
 
 @router.get("/build/daily")
 async def build_daily():
     """Случайная «сборка дня» для главной: броня + контейнер топ-редкости, бюджет
     и 1–3 стата — ролл фиксирован датой (МСК), сборка кэшируется раз в сутки."""
-    return builds.daily_build()
+    return await _heavy(builds.daily_build)     # раз в сутки считает до 8 сборок
 
 
 @router.post("/build/hp")
@@ -1881,8 +1895,8 @@ async def build_hp(payload: dict = Body(...)):
         budget = float(payload.get("budget", 0))
     except (TypeError, ValueError):
         raise HTTPException(422, "budget must be a number")
-    res = builds.auto_hp(budget, str(payload.get("container", "")),
-                         str(payload.get("armor", "")), int(payload.get("armor_ptn", 0)))
+    res = await _heavy(builds.auto_hp, budget, str(payload.get("container", "")),
+                       str(payload.get("armor", "")), int(payload.get("armor_ptn", 0)))
     if res.get("error") in ("container_not_found", "armor_not_found", "bad_request"):
         raise HTTPException(422, res["error"])
     return res

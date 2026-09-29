@@ -228,8 +228,10 @@ def bucket_prices() -> dict:
     src = config.BUILD_PRICE_SOURCE
     out: dict = {}
     if src != "avg7d":
-        for iid, bks in artlots.buckets.items():
-            for key, b in bks.items():
+        # list(): сборки считаются и в потоках (api._heavy), а цикл лотов
+        # дописывает сюда новые предметы — итерация по живому dict упала бы
+        for iid, bks in list(artlots.buckets.items()):
+            for key, b in list(bks.items()):
                 qlt, ptn = key.split(":")
                 k = (iid, int(qlt), market.ptn_bucket(int(ptn)))
                 prev = out.get(k)
@@ -872,6 +874,8 @@ def auto_build(budget: float, container_id: str, stats_req: list[dict],
 
 
 # ---------- приведённое ХП от пулестойкости ----------
+HP_SWEEP = "coarse"   # "full" — старый перебор всех 33 λ (для сверки)
+HP_COARSE = (0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 8.0)
 def _eff_hp(bullet: float, vit_pct: float) -> float:
     """(100 базового ХП + пулестойкость) × живучесть. Формула из игры."""
     return (100.0 + bullet) * (1.0 + vit_pct / 100.0)
@@ -934,22 +938,44 @@ def auto_hp(budget: float, container_id: str, armor_id: str, armor_ptn: int) -> 
     bmax = max((v["_b"] for v in pool), default=0.0) or 1.0
     hmax = max((v["_h"] for v in pool), default=0.0) or 1.0
 
-    # свип λ: value = b_norm + λ·h_norm; каждый λ даёт сборку, оцениваем истинное ХП
+    # свип λ: value = b_norm + λ·h_norm; каждый λ даёт сборку, оцениваем истинное ХП.
+    # Раньше перебирали все 33 λ (0…8 шагом 0.25): 2.4-9.7 с на запрос. Теперь
+    # грубая сетка и дошаг 0.25 вокруг лучшего λ — в 3.6 раза быстрее; на сверке
+    # 75 случаев ХП в 15 ниже полного перебора на 0.1-0.9% (владелец: неважно).
     best, best_hp = None, -1.0
     banned: set = set()
     duals: dict = {}   # тёплый старт двойственных штрафов заражения между λ
-    lambdas = [0.0] + [round(0.25 * i, 2) for i in range(1, 33)]  # 0 … 8
-    for lam in lambdas:
+    tried: dict = {}   # λ -> ХП
+
+    def run(lam: float) -> None:
+        nonlocal best, best_hp
+        if lam in tried:
+            return
         def score(v, lam=lam):
             return v["_b"] / bmax + lam * (v["_h"] / hmax)
         picked = _optimize(pool, cont, budget, score, banned, duals)
         if not picked:
-            continue
+            tried[lam] = -1.0
+            return
         b = base_bullet + sum(v["_b"] for v in picked)
         h = base_vit + sum(v["_h"] for v in picked)
         hp = _eff_hp(b, h)
+        tried[lam] = hp
         if hp > best_hp:
             best_hp, best = hp, picked
+
+    if HP_SWEEP == "full":
+        for lam in [round(0.25 * i, 2) for i in range(33)]:   # 0 … 8
+            run(lam)
+    else:
+        for lam in HP_COARSE:
+            run(lam)
+        if best is not None:   # дошаг 0.25 вокруг лучшего λ сетки
+            top = max(tried, key=tried.get)
+            for d in (-0.5, -0.25, 0.25, 0.5):
+                lam = round(top + d, 2)
+                if 0.0 <= lam <= 8.0:
+                    run(lam)
 
     if not best:
         return {"error": "no_clean_build",
@@ -1175,7 +1201,7 @@ async def random_warm_loop() -> None:
                 for b in RANDOM_BUDGETS:
                     try:
                         _random_cache.pop((p["id"], b), None)
-                        _random_one(p, b, cont)
+                        await asyncio.to_thread(_random_one, p, b, cont)   # не держать цикл событий
                     except Exception:
                         logger.exception("random build %s %s", p["id"], b)
                     await asyncio.sleep(RANDOM_WARM_PAUSE)
