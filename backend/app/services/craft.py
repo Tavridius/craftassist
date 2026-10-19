@@ -13,10 +13,15 @@
 - вариант, на который не хватает навыков/станков, не выбирается как «крафт»
   НИГДЕ в дереве (компонент уходит в закупку с пометкой craft_locked);
 - бонусный крафт: 75% за каждый уровень навыка сверх требуемого рецептом
-  (форум EXBO, тред 144626: каждые полные 100% — гарантированная доп. партия
-  результата, остаток — шанс ещё одной; кап шкалы в игре 500%). В себестоимости
-  учитываем матожидание выхода. Применяется ТОЛЬКО к рецептам, у которых админ
-  подтвердил наличие шкалы в /dev/craft (bonus_ok=1 из craft_tuning).
+  (форум EXBO, тред 144626: каждые полные 100% — гарантированный бонус к выходу,
+  остаток — шанс ещё одного; кап шкалы в игре 500%). Размер одного бонуса у
+  каждого рецепта свой и это НЕ целая партия: Полимеры ×15 на 5 ур. материалов
+  (требуется 3, бонус 150%) в игре дают 19 — бонус +4 (чат, i_SusS, 02.10.2026).
+  Без сверки берём оценку ceil(25% выхода), админ уточняет её в /dev/craft
+  (bonus_amount). В себестоимости — матожидание выхода. Бонус считаем у всех
+  рецептов, кроме отмеченных в /dev/craft «бонуса нет» (bonus_ok=0): раньше
+  он работал только по галке «есть», а её не поставили ни одному рецепту —
+  и бонус не учитывался нигде.
 """
 import math
 
@@ -27,11 +32,16 @@ from app.services.price_store import store
 
 BONUS_PER_LEVEL = 75    # % бонусного крафта за уровень навыка сверх требуемого
 BONUS_CAP = 500         # потолок шкалы бонусного крафта в игре
+BONUS_SHARE = 0.25      # оценка размера бонуса — доля выхода (Полимеры: 15 → +4)
 
 
-def _bonus(recipe: dict, perks: dict):
-    """Матожидание бонусного крафта варианта для прокачки perks (или None)."""
-    if recipe.get("bonus_ok") != 1:
+def _bonus(recipe: dict, perks: dict, ramount: int):
+    """Бонусный крафт варианта для прокачки perks (или None).
+
+    mult — матожидание выхода относительно базового (себестоимость делится на
+    него), amount — сколько штук в игре покажет окно крафта (гарантированная часть).
+    """
+    if recipe.get("bonus_ok") == 0:
         return None
     req = (recipe.get("requirements") or {}).get("perks") or {}
     if not req:
@@ -40,8 +50,15 @@ def _bonus(recipe: dict, perks: dict):
     if diff <= 0:
         return None
     pct = min(BONUS_CAP, BONUS_PER_LEVEL * diff)
-    return {"levels": diff, "pct": pct, "guaranteed": pct // 100,
-            "chance_pct": pct % 100, "mult": 1 + pct / 100}
+    unit = recipe.get("bonus_amount")
+    estimated = not unit
+    if estimated:
+        unit = max(1, math.ceil(ramount * BONUS_SHARE))
+    guaranteed = pct // 100
+    return {"levels": diff, "pct": pct, "guaranteed": guaranteed,
+            "chance_pct": pct % 100, "unit": unit,
+            "amount": ramount + guaranteed * unit, "estimated": estimated,
+            "mult": 1 + pct / 100 * unit / ramount}
 
 
 def unit_buy_price(item_id: str, needed: int = 1):
@@ -126,9 +143,9 @@ def _price(item_id: str, path: tuple, ctx: dict, depth: int, expand: bool,
     for idx, r in enumerate(variants):
         req = r.get("requirements") or {}
         req_ok = hideout.variant_ok(req, perks, feats) if gate else None
-        bonus = _bonus(r, perks) if gate and req_ok else None
-        mult = bonus["mult"] if bonus else 1.0     # матожидание выхода с бонусом
         ramount = _result_amount(r, item_id)
+        bonus = _bonus(r, perks, ramount) if gate and req_ok else None
+        mult = bonus["mult"] if bonus else 1.0     # матожидание выхода с бонусом
         ops = max(1, math.ceil(needed / (ramount * mult)))   # сколько крафт-операций нужно
         ings, total, known = [], 0.0, True
         for ing in r.get("ingredients", []):
@@ -155,6 +172,9 @@ def _price(item_id: str, path: tuple, ctx: dict, depth: int, expand: bool,
              "subcategory": r.get("subcategory"), "bench": r.get("bench"),
              "result_amount": ramount, "energy": r.get("energy"), "fuel_cost": fuel_cost,
              "requirements": req, "req_ok": req_ok, "bonus": bonus,
+             # 0 = в /dev/craft отмечено, что шкалы бонуса у рецепта в игре нет —
+             # фронту, чтобы объяснить, почему при прокачке выше требуемой бонуса нет
+             "bonus_ok": r.get("bonus_ok"),
              "recipe_cost": recipe_cost, "cost_known": known, "ingredients": ings},
         ))
 

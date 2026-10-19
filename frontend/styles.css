@@ -601,6 +601,19 @@ a.auth-user:hover { color: var(--green); border-color: var(--green-border); text
 .tswap:hover { color: var(--green); border-color: var(--green-border); }
 .tswap.on { color: var(--amber); border-color: var(--amber-border); }
 .trow.swapped .tname { color: var(--dim); }
+/* своя цена компонента: клик по ₽/шт — поле ввода (чат, 09.10) */
+.tunit[data-pid] { cursor: pointer; }
+.tunit .tpen { font-size: 10px; color: var(--faint); margin-left: 4px; opacity: 0; }
+.tunit[data-pid]:hover .tpen { opacity: 1; color: var(--green); }
+.tunit.own { color: var(--amber); font-weight: 700; }
+.tunit.own .tpen { opacity: 1; color: var(--amber); }
+.ttag.own { border-color: var(--amber-border); color: var(--amber); background: var(--panel-deep); }
+.tprice-in {
+  width: 100%; max-width: 110px; box-sizing: border-box; text-align: right;
+  font-family: inherit; font-size: 12px; padding: 2px 4px;
+  color: var(--bright); background: var(--panel-deep); border: 1px solid var(--amber-border);
+}
+.ttotal .lbl .tprof { color: var(--amber); text-decoration: underline dotted; }
 .tree-tools { display: flex; align-items: center; gap: 10px; }
 .tree-reset {
   font-family: inherit; font-size: 10px; font-weight: 700; letter-spacing: 0.08em;
@@ -669,6 +682,12 @@ a.auth-user:hover { color: var(--green); border-color: var(--green-border); text
   font-size: 10px; letter-spacing: 0.05em; color: var(--amber); line-height: 1.5;
   border: 1px solid var(--amber-border); padding: 6px 8px; margin-top: 8px; cursor: help;
 }
+.bonus-note.off { color: var(--dim); border-color: var(--border); cursor: default; }
+.bonus-link { margin-top: 4px; }
+.bonus-link a { color: var(--green); text-decoration: none; }
+.bonus-link a:hover { text-decoration: underline; }
+.bonus-warn { font-size: 9px; letter-spacing: 0.04em; color: var(--dim); line-height: 1.5; margin-top: 6px; }
+.bonus-warn a { color: var(--amber); }
 /* сводка требований по всему дереву */
 .treq { display: flex; justify-content: space-between; align-items: baseline; gap: 10px;
   font-size: 11px; padding: 2px 0; }
@@ -1580,8 +1599,21 @@ html.map-drawing .maped-wrap .leaflet-container { cursor: crosshair; }
 /* Цена в готовых списках — крупно справа. Запрос «аукцион сталкрафт цены» должен
    получать цены сразу, без клика по предмету (.pct ужат под проценты, тут шире). */
 .mk-price { width: auto; min-width: 66px; font-size: 11px; color: var(--bright); letter-spacing: 0.02em; }
+/* закреплённые предметы: между поиском и подборками */
+.mk-pins { margin-bottom: 14px; }
+.mk-pins-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+.mk-pins-list .side-row { border-bottom: 1px solid var(--border-dim); border-right: 1px solid var(--border-dim); }
+.mk-pins-hint { font-size: 10px; letter-spacing: 0.06em; color: var(--dimmer); padding: 6px 10px;
+  border: 1px dashed var(--border); }
+.mk-pin {
+  font-family: inherit; font-size: 11px; line-height: 1; padding: 3px 6px; flex: none; cursor: pointer;
+  color: var(--dim); background: var(--panel-deep); border: 1px solid var(--border);
+}
+.mk-pin:hover { color: var(--green); border-color: var(--green-border); }
+.mk-pin.on { color: var(--amber); border-color: var(--amber-border); }
+.mk-pin-lg { font-size: 10px; font-weight: 700; letter-spacing: 0.08em; padding: 4px 10px; white-space: nowrap; }
 .mk-item { border: 1px solid var(--border); background: var(--panel-main); padding: 12px 14px; margin: 10px 0 16px; }
-.mk-head { display: flex; align-items: center; gap: 10px; }
+.mk-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .mk-head img { width: 34px; height: 34px; object-fit: contain; }
 .mk-title { font-size: 15px; font-weight: 800; letter-spacing: 0.05em; flex: 1; }
 .mk-card { font-size: 10px; letter-spacing: 0.1em; color: var(--green); text-decoration: none; white-space: nowrap; }

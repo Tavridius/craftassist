@@ -495,6 +495,13 @@ async function onAuthSubmit(e) {
 document.addEventListener("click", (e) => {
   const t = e.target.closest(".js-open-auth");
   if (t) { e.preventDefault(); openAuthModal(t.dataset.authTab || "signin"); }
+  // «напиши в баги» — раскрыть виджет чата сразу на комнате багов
+  if (e.target.closest(".js-chat-bugs")) {
+    e.preventDefault();
+    chatRoom = "bugs"; chatOpen = true; chatLastId = 0;
+    try { localStorage.setItem("sz_chat_room", "bugs"); localStorage.setItem("sz_chat_open", "1"); } catch (err) {}
+    chatDockRender();
+  }
 });
 
 (function authInit() {
@@ -698,8 +705,46 @@ function tilesBlock(d, chosen) {
 let DETAIL_D = null;
 let TREE_BUY = new Set();
 
+// TREE_PRICE — своя цена за 1 шт вместо подтянутой с аука (чат, KryToyKoT 09.10,
+// aleks2222 26.09): компонент с такой ценой считается купленным по ней, его
+// поддерево не раскрываем. В отличие от замен хранится в localStorage — ресурсы
+// у игрока одни и те же, цена нужна из карточки в карточку.
+const TREE_PRICE_KEY = "sz_tree_prices";
+let TREE_PRICE = loadTreePrices();
+
+function loadTreePrices() {
+  try {
+    const o = JSON.parse(localStorage.getItem(TREE_PRICE_KEY) || "{}");
+    return new Map(Object.entries(o).filter(([, v]) => Number.isFinite(v) && v > 0));
+  } catch { return new Map(); }
+}
+
+function saveTreePrices() {
+  try { localStorage.setItem(TREE_PRICE_KEY, JSON.stringify(Object.fromEntries(TREE_PRICE))); }
+  catch { /* приватный режим — цена живёт до перезагрузки */ }
+}
+
+// раскрываем ли рецепт компонента: не заменён на аук и без своей цены
+const treeOpen = (n) => !!(n && n.recipe && !TREE_BUY.has(n.id) && !TREE_PRICE.has(n.id));
+
+function treeOwnIds(rec, out = new Set(), seen = new Set()) {
+  // компоненты карточки со своей ценой (по всему рецепту, включая свёрнутые)
+  for (const ing of (rec && rec.ingredients) || []) {
+    const n = ing.node;
+    if (!n || seen.has(n.id)) continue;
+    seen.add(n.id);
+    if (TREE_PRICE.has(n.id)) out.add(n.id);
+    if (n.recipe) treeOwnIds(n.recipe, out, seen);
+  }
+  return out;
+}
+
+const treeEdited = (d) =>
+  TREE_BUY.size > 0 || (d && d.tree && treeOwnIds(d.tree.recipe).size > 0);
+
 function calcEffUnit(n) {
   // цена получения 1 шт с учётом замен (зеркало craft.py: min(аук, крафт))
+  if (TREE_PRICE.has(n.id)) return TREE_PRICE.get(n.id);
   if (n.recipe && !TREE_BUY.has(n.id)) {
     const cu = calcRecipeUnit(n.recipe);
     if (cu != null) return cu;
@@ -724,7 +769,7 @@ function calcTreeEnergy(rec) {
   let e = rec.energy || 0;
   for (const ing of rec.ingredients || []) {
     const n = ing.node;
-    if (n && n.recipe && !TREE_BUY.has(n.id)) {
+    if (treeOpen(n)) {
       const mult = n.recipe.bonus ? n.recipe.bonus.mult : 1;
       e += calcTreeEnergy(n.recipe) * (ing.amount / ((n.recipe.result_amount || 1) * mult));
     }
@@ -734,10 +779,22 @@ function calcTreeEnergy(rec) {
 
 function calcAdjusted(d) {
   // d с пересчитанными себестоимостью и вердиктом; без замен — ответ бэка как есть
-  if (!TREE_BUY.size || !d.tree || !d.tree.recipe) return d;
+  if (!treeEdited(d) || !d.tree || !d.tree.recipe) return d;
   const craft = calcRecipeUnit(d.tree.recipe);
   if (craft == null) return d;
   const v = { ...d.verdict, craft_cost: craft };
+  if (v.status === "unknown") {
+    // бэк не досчитал: у части ингредиентов нет цены. Свои цены дыру закрыли —
+    // строим вердикт как craft.py:_verdict (продажа по сделкам, fallback выкуп)
+    const base = d.sell_price != null ? d.sell_price : d.buy_price;
+    if (base == null) {
+      Object.assign(v, { status: "no_market", text: "Готового нет на ауке — не с чем сравнить" });
+    } else {
+      Object.assign(v, { status: "profitable", buy_price: d.buy_price, sell_price: d.sell_price,
+        sell_basis: d.sell_price != null ? "sales" : "buyout", fee_pct: v.fee_pct ?? 5 });
+      v.sell_net = Math.round(base * (1 - v.fee_pct / 100));
+    }
+  }
   if (v.sell_net != null && (v.status === "profitable" || v.status === "unprofitable")) {
     const diff = v.sell_net - craft;
     const pct = craft > 0 ? Math.round((diff / craft) * 100) : 0;
@@ -758,12 +815,13 @@ function flattenTree(recipe, ancestors, rows, stats) {
     const prefix = ancestors.map((more) => (more ? "│ " : "  ")).join("") + (last ? "└─" : "├─");
     rows.push({ ing, prefix, depth: ancestors.length });
     stats.depth = Math.max(stats.depth, ancestors.length + 1);
-    if (ing.node && ing.node.recipe && !TREE_BUY.has(ing.node.id))
+    if (treeOpen(ing.node))
       flattenTree(ing.node.recipe, ancestors.concat(!last), rows, stats);
   });
 }
 
 function srcTag(n) {
+  if (TREE_PRICE.has(n.id)) return `<span class="ttag own">СВОЯ</span>`;
   if (TREE_BUY.has(n.id)) return `<span class="ttag market">АУК</span>`;
   if (n.best_source === "craft") return `<span class="ttag craft">КРАФТ</span>`;
   if (n.best_source === "market") return `<span class="ttag market">АУК</span>`;
@@ -774,17 +832,22 @@ function srcTag(n) {
 function treeBlock(d, chosen) {
   const rows = [], stats = { depth: 0 };
   flattenTree(chosen, [], rows, stats);
-  const live = TREE_BUY.size > 0;   // есть замены — все числа считаем на клиенте
+  const ownN = treeOwnIds(chosen).size;
+  const edits = TREE_BUY.size + ownN;
+  const live = edits > 0;   // есть замены/свои цены — все числа считаем на клиенте
 
   let body = "";
   for (const r of rows) {
     const n = r.ing.node;
-    const swapped = TREE_BUY.has(n.id);
+    const own = TREE_PRICE.get(n.id);
+    const swapped = TREE_BUY.has(n.id) || own != null;
     const unit = live ? calcEffUnit(n) : n.best_cost;
     const line = unit != null ? Math.round(unit * r.ing.amount) : null;
     // подпись выгоды: у крафтимых — на сколько дешевле аука; у заменённых — цена крафта
     let hint = "";
-    if (n.recipe && !swapped) {
+    if (own != null) {
+      hint = `<span class="tsave dim">АУК: ${n.market_price != null ? fmt(n.market_price) + " ₽" : "НЕТ"}</span>`;
+    } else if (n.recipe && !swapped) {
       const cu = live ? calcRecipeUnit(n.recipe) : n.best_cost;
       if (n.market_price != null && cu != null) {
         const pct = Math.round((1 - cu / n.market_price) * 100);
@@ -795,13 +858,13 @@ function treeBlock(d, chosen) {
         hint = `<span class="tsave dim">НА АУКЕ НЕТ</span>`;
       }
       if (n.recipe.bonus)
-        hint += `<span class="tbonus" title="Бонусный крафт +${n.recipe.bonus.pct}% (навык выше требуемого на ${n.recipe.bonus.levels}) — учтён в цене">↑${n.recipe.bonus.pct}%</span>`;
+        hint += `<span class="tbonus" title="Бонусный крафт +${n.recipe.bonus.pct}% (навык выше требуемого на ${n.recipe.bonus.levels}): выход ${n.recipe.bonus.estimated ? "~" : ""}${n.recipe.bonus.amount} шт за крафт — учтён в цене">↑${n.recipe.bonus.pct}%</span>`;
     } else if (swapped && n.craft_cost != null) {
       hint = `<span class="tsave dim">КРАФТ: ${fmt(live ? calcRecipeUnit(n.recipe) ?? n.craft_cost : n.craft_cost)} ₽/ШТ</span>`;
     }
     if (n.craft_locked)
       hint += `<span class="tsave lock" title="Рецепт есть, но прокачки не хватает — считаем закупку${n.locked_cost != null ? `. Крафт стоил бы ~${fmt(n.locked_cost)} ₽/шт` : ""}">🔒 НЕТ ПРОКАЧКИ</span>`;
-    const swapBtn = n.recipe && n.market_price != null
+    const swapBtn = n.recipe && n.market_price != null && own == null
       ? `<button class="tswap ${swapped ? "on" : ""}" data-tid="${n.id}"
            title="${swapped ? "Вернуть крафт компонента" : "Покупать на ауке вместо крафта"}">⇄</button>`
       : "";
@@ -813,19 +876,23 @@ function treeBlock(d, chosen) {
         <span class="x">×${r.ing.amount}</span>
         ${hint}
       </div>
-      <div class="tunit">${fmt(unit)}</div>
+      <div class="tunit ${own != null ? "own" : ""}" data-pid="${n.id}"
+        title="${own != null ? "Своя цена за 1 шт. Клик — изменить, пустое поле — вернуть цену аука" : "Клик — указать свою цену за 1 шт вместо цены аука"}">${fmt(unit)}<span class="tpen">✎</span></div>
       <div class="tsrc">${srcTag(n)}${swapBtn}</div>
       <div class="tline">${line != null ? fmt(line) + " ₽" : "—"}</div>
     </div>`;
   }
 
   let perOne = chosen.result_amount > 1 ? ` · ЗА 1 ШТ ИЗ ${chosen.result_amount}` : "";
-  if (chosen.bonus) perOne += ` · БОНУСНЫЙ КРАФТ +${chosen.bonus.pct}% УЧТЁН`;
+  const bs = bonusState(chosen, d);
+  if (bs && bs.kind === "on") perOne += ` · БОНУСНЫЙ КРАФТ +${chosen.bonus.pct}% УЧТЁН`;
+  else if (bs && bs.kind === "noprof")
+    perOne += ` · <a class="tprof" href="/profile" title="${escapeHtml(bs.tip)}">БЕЗ БОНУСА ЗА НАВЫКИ УБЕЖИЩА — УКАЗАТЬ</a>`;
   return `<div class="section-head">
-      <div class="section-title">▸ ДЕРЕВО КРАФТА${TREE_BUY.size ? " · С ЗАМЕНАМИ" : " · ОПТИМАЛЬНЫЙ ПУТЬ"}</div>
+      <div class="section-title">▸ ДЕРЕВО КРАФТА${live ? " · С ЗАМЕНАМИ" : " · ОПТИМАЛЬНЫЙ ПУТЬ"}</div>
       <div class="tree-tools">
-        <button id="treeReset" class="tree-reset" ${TREE_BUY.size ? "" : "hidden"}
-          title="Вернуть стандартное дерево, рассчитанное калькулятором">⟲ СБРОС ЗАМЕН (${TREE_BUY.size})</button>
+        <button id="treeReset" class="tree-reset" ${live ? "" : "hidden"}
+          title="Вернуть стандартное дерево: убрать замены на аук и свои цены компонентов этой карточки">⟲ СБРОС ЗАМЕН (${edits})</button>
         <div class="section-note">ГЛУБИНА ${stats.depth} · ВАРИАНТОВ ${d.tree.n_variants || 1}</div>
       </div>
     </div>
@@ -890,6 +957,48 @@ function fuelSection(d) {
       ⛽ УЧЁТ ТОПЛИВА: ${on ? "ВКЛ" : "ВЫКЛ"}</button>${rows}`;
 }
 
+// Почему в расчёте есть/нет бонусного крафта убежища (чат, i_SusS 02.10: «с моим
+// уровнем убежки крафт 19 штук, а он считает 15»). Навыки давно в профиле, но без
+// бонуса карточка про них молчала — игрок не видел, что их надо указать.
+function bonusState(chosen, d) {
+  const need = Object.entries((chosen.requirements || {}).perks || {});
+  if (!need.length) return null;               // навык не требуется — бонуса нет у рецепта
+  if (chosen.bonus) return { kind: "on" };
+  const prof = d.hideout_profile;
+  if (!prof) {
+    const authed = ME && ME.authenticated;
+    return { kind: "noprof", tip: authed
+      ? "Навыки убежища не указаны в профиле — бонусный крафт (больше штук за операцию) не учтён"
+      : "Войди через EXBO и укажи навыки убежища — бонусный крафт (больше штук за операцию) будет учтён в себестоимости" };
+  }
+  const over = Math.min(...need.map(([k, lvl]) => (prof.perks[k] || 0) - lvl));
+  if (over < 0) return null;                   // прокачки не хватает — об этом note-warn
+  if (over === 0) return { kind: "atlevel" };
+  return { kind: "noscale" };                  // прокачка выше, но в /dev/craft: шкалы нет
+}
+
+function bonusNoteHtml(chosen, d) {
+  const bs = bonusState(chosen, d);
+  if (!bs) return "";
+  const link = `<a href="/profile">НАВЫКИ В ПРОФИЛЕ ▸</a>`;
+  const bn = chosen.bonus;
+  // EXBO не отдаёт размер бонуса ни в базе, ни в API — пока рецепт не сверен
+  // (bonus_amount в /dev/craft), честно предупреждаем и просим прислать выход из игры
+  const warn = bn && bn.estimated ? `<div class="bonus-warn">[!] БОНУСНЫЙ КРАФТ В РАСЧЁТЕ — ОЦЕНКА:
+      EXBO НЕ ПУБЛИКУЕТ ЕГО РАЗМЕР, ВОЗМОЖНЫ НЕТОЧНОСТИ. В ИГРЕ ДРУГОЙ ВЫХОД — НАПИШИ
+      <a href="#" class="js-chat-bugs">В ЧАТ «БАГИ/ИДЕИ»</a> (НАВЫК И СКОЛЬКО ШТУК ПОКАЗЫВАЕТ ОКНО КРАФТА), ПОПРАВЛЮ.</div>` : "";
+  if (bs.kind === "on") return `<div class="bonus-note"
+      title="Каждый уровень навыка выше требуемого рецептом даёт +75% бонусного крафта. Каждые полные 100% — гарантированный бонус +${bn.unit} шт к выходу, остаток — шанс ещё одного. ${bn.estimated ? "Размер бонуса у этого рецепта ещё не сверен с игрой — это оценка (~25% выхода). " : ""}Матожидание уже учтено в себестоимости.">
+      ⚡ БОНУСНЫЙ КРАФТ +${bn.pct}% · ВЫХОД ${bn.estimated ? "~" : ""}${bn.amount} ШТ${bn.chance_pct ? ` · ШАНС ${bn.chance_pct}% ЕЩЁ +${bn.unit}` : ""}
+      <div class="bonus-link">${link}</div></div>${warn}`;
+  const text = {
+    noprof: "БОНУСНЫЙ КРАФТ НЕ УЧТЁН: НАВЫКИ УБЕЖИЩА НЕ УКАЗАНЫ. ВЫХОД СЧИТАЕМ ПО РЕЦЕПТУ, БЕЗ ДОП. ШТУК.",
+    atlevel: "БОНУСНОГО КРАФТА НЕТ: НАВЫК РОВНО НА УРОВНЕ РЕЦЕПТА. БОНУС ДАЁТ КАЖДЫЙ УРОВЕНЬ СВЕРХ ТРЕБУЕМОГО.",
+    noscale: "БОНУСНОГО КРАФТА НЕТ: У ЭТОГО РЕЦЕПТА В ИГРЕ НЕТ ШКАЛЫ БОНУСА.",
+  }[bs.kind];
+  return `<div class="bonus-note off">${text}<div class="bonus-link">${link}</div></div>`;
+}
+
 function reqsSections(chosen, rc, d) {
   const req = chosen.requirements || {};
   const feats = req.features || [];
@@ -924,10 +1033,7 @@ function reqsSections(chosen, rc, d) {
       <div class="pips">${pips}</div>
       <div class="pips-scale"><span>1</span><span>ТРЕБУЕМЫЙ ИЗ ${PERK_MAX}</span><span>${PERK_MAX}</span></div>`;
   }
-  const bn = chosen.bonus;
-  if (bn) perkHtml += `<div class="bonus-note"
-      title="Каждый уровень навыка выше требуемого рецептом даёт +75% бонусного крафта. Каждые полные 100% — гарантированная дополнительная партия результата, остаток — шанс ещё одной. Матожидание уже учтено в себестоимости.">
-      ⚡ БОНУСНЫЙ КРАФТ +${bn.pct}%${bn.guaranteed ? ` · ГАРАНТ. +${bn.guaranteed}` : ""}${bn.chance_pct ? ` · ШАНС ${bn.chance_pct}% ЕЩЁ +1` : ""}</div>`;
+  if (perkHtml) perkHtml += bonusNoteHtml(chosen, d);
 
   let h = "";
   if (tools) h += `<div class="reqs-sec"><div class="reqs-lbl">СТАНКИ И ИНСТРУМЕНТЫ</div>${tools}</div>`;
@@ -965,7 +1071,7 @@ function treeReqsHtml(d) {
     (rq.features || []).forEach((f) => feats.add(f));
     for (const ing of rec.ingredients || []) {
       const n = ing.node;
-      if (n && n.recipe && !TREE_BUY.has(n.id)) walk(n.recipe);
+      if (treeOpen(n)) walk(n.recipe);
     }
   };
   walk(root);
@@ -1050,8 +1156,51 @@ function wireCalc() {
       if (TREE_BUY.has(id)) TREE_BUY.delete(id); else TREE_BUY.add(id);
       recalcCraft();
     }));
+  c.querySelectorAll(".tunit[data-pid]").forEach((cell) =>
+    cell.addEventListener("click", () => editTreePrice(cell)));
   const rst = c.querySelector("#treeReset");
-  if (rst) rst.addEventListener("click", () => { TREE_BUY.clear(); recalcCraft(); });
+  if (rst) rst.addEventListener("click", () => {
+    TREE_BUY.clear();
+    // свои цены снимаем только у компонентов этой карточки — в других они нужны
+    const own = DETAIL_D && DETAIL_D.tree ? treeOwnIds(DETAIL_D.tree.recipe) : new Set();
+    own.forEach((id) => TREE_PRICE.delete(id));
+    if (own.size) saveTreePrices();
+    recalcCraft();
+  });
+}
+
+function editTreePrice(cell) {
+  if (cell.querySelector("input")) return;
+  const id = cell.dataset.pid;
+  const cur = TREE_PRICE.get(id);
+  cell.innerHTML = `<input class="tprice-in" type="text" inputmode="numeric"
+    value="${cur != null ? cur : ""}" placeholder="₽/шт" aria-label="Своя цена за 1 шт">`;
+  const inp = cell.querySelector("input");
+  inp.focus();
+  inp.select();
+  let done = false;
+  const commit = (save) => {
+    if (done) return;
+    done = true;
+    if (save) {
+      // «1 250», «1250 ₽», «2,5к» — берём число, «к» = тысячи
+      const raw = inp.value.trim().toLowerCase().replace(/\s|₽/g, "").replace(",", ".");
+      const m = /^(\d+(?:\.\d+)?)(к|k)?$/.exec(raw);
+      if (!raw) TREE_PRICE.delete(id);
+      else if (m) {
+        const v = Math.round(parseFloat(m[1]) * (m[2] ? 1000 : 1));
+        if (v > 0) TREE_PRICE.set(id, v); else TREE_PRICE.delete(id);
+      }
+      saveTreePrices();
+    }
+    recalcCraft();
+  };
+  inp.addEventListener("click", (e) => e.stopPropagation());
+  inp.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") commit(true);
+    else if (e.key === "Escape") commit(false);
+  });
+  inp.addEventListener("blur", () => commit(true));
 }
 
 function renderDetail(d) {
@@ -2276,6 +2425,59 @@ chatDockRender();
 const marketState = { itemId: null };
 let mkTimer = null;
 
+// Закреп предметов над подборками — просил KlausHerzen (чат, 16.10.2026), чтобы
+// не искать каждый раз одно и то же. Это удобство одного посетителя, поэтому
+// список id живёт в браузере; цены приходят с /market/overview?pins=.
+const MK_PINS_KEY = "sz_mk_pins";
+const MK_PINS_MAX = 30;      // = MARKET_PINS_MAX на бэке
+let MK_PIN_DATA = new Map();  // id -> строка с ценой (из overview или карточки)
+function mkPins() {
+  try {
+    const a = JSON.parse(localStorage.getItem(MK_PINS_KEY) || "[]");
+    return Array.isArray(a) ? a.filter((x) => typeof x === "string").slice(0, MK_PINS_MAX) : [];
+  } catch (e) { return []; }
+}
+function mkPinToggle(id, brief) {
+  let a = mkPins();
+  if (a.includes(id)) a = a.filter((x) => x !== id);
+  else {
+    a = [id, ...a].slice(0, MK_PINS_MAX);   // новый закреп — первым
+    if (brief) MK_PIN_DATA.set(id, brief);
+  }
+  try { localStorage.setItem(MK_PINS_KEY, JSON.stringify(a)); } catch (e) {}
+  renderMkPins();
+  return a.includes(id);
+}
+
+const mkPinBtn = (id) => {
+  const on = mkPins().includes(id);
+  return `<button class="mk-pin ${on ? "on" : ""}" data-pin="${id}"
+    title="${on ? "Открепить" : "Закрепить над подборками аукциона"}">${on ? "✕" : "📌"}</button>`;
+};
+
+function renderMkPins() {
+  const box = $("mkPins");
+  if (!box) return;   // модал карточки открыт вне /market
+  const pins = mkPins();
+  if (!pins.length) {
+    box.innerHTML = `<div class="mk-pins-hint">📌 ЗАКРЕПИ ПРЕДМЕТЫ, ЗА КОТОРЫМИ СЛЕДИШЬ, — ИХ ЦЕНЫ БУДУТ ЗДЕСЬ.
+      КНОПКА 📌 ЕСТЬ В ПОИСКЕ И В КАРТОЧКЕ ПРЕДМЕТА.</div>`;
+    return;
+  }
+  const rows = pins.map((id) => {
+    const r = MK_PIN_DATA.get(id) || { id, name: id, icon: "", color: "DEFAULT" };
+    const meta = r.sales_per_hour ? `${fmtSales(r.sales_per_hour)} ПРОД/Ч`
+      : r.avg ? `СДЕЛКИ ~${fmtMoneyShort(r.avg)} ₽` : "НЕТ СДЕЛОК";
+    return mkRow(r, meta, r.min_buyout ? `${fmt(r.min_buyout)} ₽` : "НЕТ ЛОТОВ", mkPinBtn(id));
+  });
+  box.innerHTML = `<section>
+    <div class="side-head"><div class="side-title">▸ ЗАКРЕПЛЁННЫЕ · ${pins.length}</div>
+      <div class="side-note">МИН. ВЫКУП</div></div>
+    <div class="side-list mk-pins-list">${rows.join("")}</div>
+  </section>`;
+  wireMkRows(box);
+}
+
 async function openMarket() {
   home.classList.add("hidden");
   detail.classList.add("hidden");
@@ -2284,9 +2486,12 @@ async function openMarket() {
   page.innerHTML = `<div class="spinner">// ЗАГРУЗКА АУКЦИОНА</div>`;
   window.scrollTo(0, 0);
   let ov = null;
+  const pins = mkPins();
   try {
-    ov = await fetch(api("/market/overview")).then((r) => r.json());
+    ov = await fetch(api(`/market/overview${pins.length
+      ? `?pins=${encodeURIComponent(pins.join(","))}` : ""}`)).then((r) => r.json());
   } catch (e) { /* покажем без подборок */ }
+  MK_PIN_DATA = new Map(((ov && ov.pinned) || []).map((r) => [r.id, r]));
   if (location.pathname !== "/market") return;
   marketState.itemId = null;   // карточка теперь в модале — при входе закрыта
   renderMarket(ov);
@@ -2301,14 +2506,14 @@ function fmtMoneyShort(n) {
   return fmt(n);
 }
 
-function mkRow(r, val, price) {
+function mkRow(r, val, price, tail = "") {
   // price — крупно справа: посетитель по запросу «аукцион цены» должен увидеть
   // цены сразу в списке, а не в мелкой строке-мете после клика
   const pct = price ? `<div class="pct mk-price">${price}</div>` : "";
   return `<div class="side-row mk-row" data-id="${r.id}" style="border-left-color:transparent">
     <img loading="lazy" src="${asset(r.icon)}" alt="">
     <div class="info"><div class="nm" style="color:${rank(r.color).color}">${escapeHtml(r.name)}</div>
-      <div class="meta">${val}</div></div>${pct}</div>`;
+      <div class="meta">${val}</div></div>${pct}${tail}</div>`;
 }
 
 function renderMarket(ov) {
@@ -2336,6 +2541,7 @@ function renderMarket(ov) {
       <input id="mkInput" type="search" autocomplete="off" placeholder="НАЙТИ ПРЕДМЕТ НА АУКЦИОНЕ…">
     </div>
     <div id="mkResults"></div>
+    <div id="mkPins" class="mk-pins"></div>
     <div id="mkModal" class="mk-modal hidden" aria-modal="true" role="dialog">
       <div class="mk-modal-box">
         <button class="mk-modal-x" id="mkModalX" title="Закрыть (Esc)">✕</button>
@@ -2357,13 +2563,16 @@ function renderMarket(ov) {
       if (!q) { box.innerHTML = ""; return; }
       try {
         const r = await fetch(api(`/search?q=${encodeURIComponent(q)}&limit=12`)).then((x) => x.json());
-        box.innerHTML = (r.results || []).map((it) =>
-          mkRow(it, "")).join("") || `<div class="empty-sm">НИЧЕГО НЕ НАЙДЕНО.</div>`;
+        box.innerHTML = (r.results || []).map((it) => {
+          MK_SEARCH_BRIEF.set(it.id, it);
+          return mkRow(it, "", "", mkPinBtn(it.id));
+        }).join("") || `<div class="empty-sm">НИЧЕГО НЕ НАЙДЕНО.</div>`;
         wireMkRows(box);
       } catch (e) { /* тихо */ }
     }, 250);
   });
-  wireMkRows(page);
+  renderMkPins();
+  wireMkRows(page.querySelector(".mk-cols"));
   $("mkModalX").addEventListener("click", mkModalClose);
   $("mkModal").addEventListener("click", (e) => {
     if (e.target.id === "mkModal") mkModalClose();   // клик по подложке
@@ -2439,8 +2648,48 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") { mkModalClose(); gModalClose(); }
 });
 
+// строки поиска: имя/иконка для закрепа до того, как overview вернёт цену
+const MK_SEARCH_BRIEF = new Map();
+
+// 📌 в поиске, в закрепе и в карточке — делегированием: кнопки перерисовываются
+document.addEventListener("click", (e) => {
+  const b = e.target.closest(".mk-pin[data-pin]");
+  if (!b) return;
+  const id = b.dataset.pin;
+  const brief = MK_PIN_DATA.get(id) || MK_SEARCH_BRIEF.get(id) || mkCardBrief(id);
+  const on = mkPinToggle(id, brief);
+  document.querySelectorAll(`.mk-pin[data-pin="${CSS.escape(id)}"]`).forEach((x) => {
+    if (!x.closest("#mkPins")) x.outerHTML = x.classList.contains("mk-pin-lg") ? mkPinBtnLg(id) : mkPinBtn(id);
+  });
+  if (on && !(brief && brief.min_buyout != null)) mkPinPrice(id);
+});
+
+async function mkPinPrice(id) {
+  // закрепили из поиска — цены в строке нет, берём её с бэка (тёплый кэш)
+  try {
+    const ov = await fetch(api(`/market/overview?pins=${encodeURIComponent(id)}`)).then((r) => r.json());
+    const r = (ov.pinned || [])[0];
+    if (r) { MK_PIN_DATA.set(id, r); renderMkPins(); }
+  } catch (e) { /* останется без цены до следующего захода */ }
+}
+
+function mkCardBrief(id) {
+  // закреп из карточки: имя/иконка и мин. выкуп из уже загруженных лотов
+  const d = mkItemData;
+  if (!d || !d.item || marketState.itemId !== id) return null;
+  return { id, name: d.item.name || id, icon: d.item.icon || "", color: d.item.color || "DEFAULT",
+           min_buyout: (d.lots && d.lots[0] && d.lots[0].unit) || null };
+}
+
+const mkPinBtnLg = (id) => {
+  const on = mkPins().includes(id);
+  return `<button class="mk-pin mk-pin-lg ${on ? "on" : ""}" data-pin="${id}">${on ? "✕ ОТКРЕПИТЬ" : "📌 ЗАКРЕПИТЬ"}</button>`;
+};
+
 function wireMkRows(root) {
-  root.querySelectorAll(".mk-row").forEach((r) => r.addEventListener("click", () => {
+  if (!root) return;
+  root.querySelectorAll(".mk-row").forEach((r) => r.addEventListener("click", (e) => {
+    if (e.target.closest(".mk-pin")) return;   // 📌 — не открывать карточку
     marketState.itemId = r.dataset.id;
     const res = $("mkResults");
     if (res) res.innerHTML = "";
@@ -2482,6 +2731,7 @@ async function loadMarketItem(id) {
     <div class="mk-head">
       <img src="${asset(it.icon)}" alt="">
       <div class="mk-title" style="color:${rank(it.color).color}">${escapeHtml(it.name || id)}</div>
+      ${mkPinBtnLg(id)}
       <a class="mk-card" href="/item/${id}">КАРТОЧКА ПРЕДМЕТА ▸</a>
     </div>
     ${d.error ? `<div class="note-warn"><span class="mark">[!]</span> АУКЦИОН НЕ ОТВЕТИЛ (${escapeHtml(String(d.error))}) — ПОКАЗЫВАЮ ЧТО ЕСТЬ.</div>` : ""}
@@ -7667,7 +7917,7 @@ function renderDevNewsForm(n) {
 // ---------- ДЕВ · сверка рецептов верстака с игрой (только админ) ----------
 // Чек-лист «бонусный крафт есть/нет» (в базе EXBO этого признака нет) +
 // правка данных рецепта (энергия, выход, уровень навыка, количества входов).
-// Калькулятор применяет бонус ТОЛЬКО к рецептам с галкой «ЕСТЬ».
+// Калькулятор не применяет бонус только к рецептам с галкой «НЕТ».
 let cadmData = null;   // {items, perk_names} — живёт, пока открыт /dev/craft
 
 async function openDevCraft() {
@@ -7700,6 +7950,8 @@ function cadmRowHtml(it) {
       ${perk ? `<span class="cadm-perk">${escapeHtml(perkName(perk[0]))} ур.
         <input type="number" min="1" max="${PERK_MAX}" data-f="perk_level" data-orig="${perk[1]}"
           value="${t.perk_level ?? perk[1]}" title="Требуемый уровень (EXBO: ${perk[1]})"></span>` : ""}
+      <span class="cadm-perk" title="Сколько штук добавляет один бонус (каждые 100% шкалы). Пусто — оценка ${it.bonus_amount_est} (25% выхода)">БОНУС +<input type="number" min="1" max="10000" data-f="bonus_amount"
+        data-orig="" value="${t.bonus_amount ?? ""}" placeholder="~${it.bonus_amount_est}"></span>
       <span class="cadm-perk">⚡<input type="number" min="0" max="1000000" data-f="energy"
         data-orig="${it.energy ?? ""}" value="${t.energy ?? it.energy ?? ""}"
         title="Энергия крафта (EXBO: ${it.energy})"></span>
@@ -7741,7 +7993,9 @@ function renderDevCraft() {
     </div>
     ${devSubnav("craft")}
     <div class="cadm-note">Сверка с игрой. «БОНУС: ЕСТЬ/НЕТ» — есть ли у рецепта шкала бонусного
-      крафта (калькулятор учитывает бонус только при «ЕСТЬ», «?» = не проверено). Числа можно
+      крафта (калькулятор не учитывает бонус только при «НЕТ», «?» = не проверено, считаем).
+      «БОНУС +N» — сколько штук добавляет один бонус: видно в окне крафта при навыке на 2 уровня
+      выше требуемого (выход минус базовый). Пусто — оценка ~25% выхода. Числа можно
       править, если EXBO расходится с игрой — правка применяется к калькулятору сразу; вернуть
       исходное значение = ввести число как в EXBO (подсказка в наведении).</div>
     <div class="cadm-filters">

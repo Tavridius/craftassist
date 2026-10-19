@@ -8,6 +8,7 @@ import base64
 import binascii
 import json
 import logging
+import math
 import re
 import secrets
 import time
@@ -781,11 +782,13 @@ async def admin_craft_recipes(request: Request):
                 continue    # рецепт с несколькими результатами — показываем один раз
             req = r.get("requirements") or {}
             t = tuning.get(r["key"]) or {}
+            amount = next((x.get("amount") or 1 for x in r.get("result", [])
+                           if x.get("item") == rid), 1)
             items.append({
                 "key": r["key"],
-                "result": {**_dev_craft_item(rid),
-                           "amount": next((x.get("amount") or 1 for x in r.get("result", [])
-                                           if x.get("item") == rid), 1)},
+                "result": {**_dev_craft_item(rid), "amount": amount},
+                # оценка размера бонуса, пока админ не ввёл число из игры
+                "bonus_amount_est": max(1, math.ceil(amount * craft.BONUS_SHARE)),
                 "bench": r.get("bench"), "category": r.get("category"),
                 "subcategory": r.get("subcategory"),
                 "energy": r.get("energy"),
@@ -807,7 +810,8 @@ async def admin_craft_recipe_save(request: Request, rkey: str,
     """Сохранить сверку рецепта: флаг бонусного крафта + правки данных.
 
     payload: {bonus: 1|0|null, energy?: число|null, result_amount?: число|null,
-    perk_level?: число|null, ingredients?: {item_id: число≥0}|null}.
+    perk_level?: число|null, bonus_amount?: число|null,
+    ingredients?: {item_id: число≥0}|null}.
     Отсутствие поля/None = правки нет (используются данные EXBO)."""
     _require_admin(request)
     known = {r.get("key") for rs in db.recipe_by_result.values() for r in rs}
@@ -836,6 +840,8 @@ async def admin_craft_recipe_save(request: Request, rkey: str,
         data["result_amount"] = v
     if (v := _num("perk_level", 1, hideout.PERK_MAX, integer=True)) is not None:
         data["perk_level"] = v
+    if (v := _num("bonus_amount", 1, 10 ** 4, integer=True)) is not None:
+        data["bonus_amount"] = v
     if isinstance(payload.get("ingredients"), dict):
         ings = {}
         for iid, amt in payload["ingredients"].items():
@@ -1480,9 +1486,19 @@ def _sane_ask(r: dict) -> bool:
     return not r["avg"] or r["min_buyout"] <= r["avg"] * _ASK_SANITY_FACTOR
 
 
+MARKET_PINS_MAX = 30   # закреп на /market хранится у юзера в браузере, сюда — только id
+
+
 @router.get("/market/overview")
-async def market_overview():
-    """Подборки полного аукциона из тёплого кэша цен (без внешних запросов)."""
+async def market_overview(pins: str = ""):
+    """Подборки полного аукциона из тёплого кэша цен (без внешних запросов).
+
+    pins — id закреплённых предметов через запятую (KlausHerzen, чат 16.10.2026:
+    «закреплять предметы для быстрого просмотра»); их цены идут в pinned.
+    """
+    pin_ids = [p for p in dict.fromkeys(pins.split(",")) if p and db.item(p)][:MARKET_PINS_MAX]
+    if pin_ids:
+        store.request(set(pin_ids))   # приоритетно освежить цены закрепа
     rows = [_item_brief(iid) for iid in store.prices]
     liquid = sorted((r for r in rows if r["sales_per_hour"]),
                     key=lambda r: -r["sales_per_hour"])[:15]
@@ -1494,7 +1510,7 @@ async def market_overview():
     turnover = sorted((r for r in rows if r["turnover"]),
                       key=lambda r: -r["turnover"])[:15]
     return {"liquid": liquid, "expensive": expensive, "turnover": turnover,
-            "tracked": len(rows)}
+            "pinned": [_item_brief(iid) for iid in pin_ids], "tracked": len(rows)}
 
 
 @router.get("/market/item/{item_id}")

@@ -5,10 +5,12 @@
 рецепты в /dev/craft (API /api/admin/craft/recipes):
 
 - bonus: 1 = у рецепта в игре ЕСТЬ шкала бонусного крафта, 0 = нет,
-  NULL = не проверено. Калькулятор учитывает бонус ТОЛЬКО при bonus=1.
+  NULL = не проверено. Калькулятор не учитывает бонус только при bonus=0
+  (у непроверенных считает по оценке, см. services/craft._bonus).
 - data: JSON-переопределения полей рецепта поверх данных EXBO:
-  {"energy": 1200, "result_amount": 20, "perk_level": 2,
+  {"energy": 1200, "result_amount": 20, "perk_level": 2, "bonus_amount": 4,
    "ingredients": {"<item_id>": 15, ...}}  — только указанные поля;
+  bonus_amount — сколько штук добавляет один бонус (каждые 100% шкалы);
   ingredients меняет количества существующих входов (0 = убрать вход).
 
 Ключ рецепта (rkey) = "<item_id результата>:<номер варианта>" — позиция в
@@ -103,8 +105,8 @@ def save(rkey: str, bonus, data: dict | None) -> None:
 def apply(recipe: dict) -> dict:
     """Рецепт с наложенными правками админа (или исходный, если правок нет).
 
-    Добавляет 'bonus_ok' (1/0/None) — только он и означает подтверждённый
-    бонусный крафт. Исходный dict НЕ мутируется: правки возвращают копию.
+    Добавляет 'bonus_ok' (1/0/None; 0 = бонуса в игре нет) и 'bonus_amount'
+    (размер одного бонуса, если сверен). Исходный dict НЕ мутируется: правки возвращают копию.
     """
     with _lock:
         t = _load_cache_locked().get(recipe.get("key") or "")
@@ -122,6 +124,8 @@ def apply(recipe: dict) -> dict:
     out["tuned"] = True
     if data.get("energy") is not None:
         out["energy"] = data["energy"]
+    if data.get("bonus_amount") is not None:
+        out["bonus_amount"] = data["bonus_amount"]
     if data.get("result_amount") is not None:
         rid = (recipe.get("key") or ":").rsplit(":", 1)[0]
         out["result"] = [
