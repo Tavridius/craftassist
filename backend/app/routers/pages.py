@@ -1346,13 +1346,16 @@ async def map_page(request: Request):
         title="Интерактивная карта мира STALZONE (Сталкрафт) — спутниковый вид",
         desc="Интерактивная карта мира STALZONE (ранее Stalcraft — Сталкрафт): глобальный "
              "спутниковый вид Зоны и детальные карты территорий — Южная Зона, Северная "
-             "Зона, Дикий Север, Любеч-3. Зум, перетаскивание, как в КПК игры.",
+             "Зона, Дикий Север, Любеч-3, Лабиринт. Метки тайников, аномалий, логов, "
+             "лагерей и зон заражения с фильтрами.",
         noindex=True)
 
 
 @router.get("/map/{territory_id}", response_class=HTMLResponse)
 async def map_territory_page(request: Request, territory_id: str):
     from app.routers.api import MAP_TERRITORIES
+    if territory_id == "limansk":           # прежний id Любеча-3 (до 28.10.2026)
+        return RedirectResponse("/map/lyubech", status_code=301)
     terr = next((t for t in MAP_TERRITORIES
                  if t["id"] == territory_id and t.get("bbox")), None)
     if not terr:
