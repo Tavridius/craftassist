@@ -49,7 +49,7 @@ from app.db import mapobjects  # noqa: E402
 # синхронно MAP_CATEGORIES в routers/api.py (не импортируем его, чтобы не
 # тянуть fastapi): неизвестная категория — не ошибка, фронт нарисует «poi»
 KNOWN_CATS = {"stash", "loot", "anomaly", "danger", "npc", "quest", "spawn",
-              "transition", "poi"}
+              "transition", "poi", "mob", "event", "camp", "shelter", "bubble"}
 KINDS = {"marker", "area", "line"}
 LAYERS = {"global", "detail"}
 
@@ -108,11 +108,19 @@ def main() -> None:
         mark = "PUB " if o["published"] else "черн"
         print(f"  [{mark}] {o['layer']}/{o['kind']}"
               f"{'/' + o['category'] if o['category'] else ''}  {o['name'] or '(без имени)'}")
+    mapobjects.init()
+    old = [o for o in mapobjects.list_objects(include_drafts=True)
+           if "[wiki-import" in (o.get("description") or "")] if replace_wiki else []
+    if replace_wiki:
+        pub = sum(1 for o in old if o["published"])
+        print(f"\n--replace-wiki: прошлый импорт {len(old)} объектов "
+              f"(опубликовано {pub}) — {'будет удалён' if dry else 'удаляю'}")
     if dry:
         print(f"\n--dry: {len(objs)} объектов НЕ записано")
         return
-    mapobjects.init()
-    ids = [mapobjects.create(o, None) for o in objs]
+    for o in old:
+        mapobjects.delete(o["id"])
+    ids =[mapobjects.create(o, None) for o in objs]
     print(f"\nзаписано {len(ids)} объектов (id {ids[0]}–{ids[-1]})" if ids
           else "\nнечего записывать")
     print("проверить и опубликовать: /dev/map (черновики — пунктиром)")
