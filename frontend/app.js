@@ -6638,6 +6638,8 @@ async function openMap(territoryId) {
   if (location.pathname !== want) return;             // пользователь ушёл, пока грузилось
   const terr = territoryId
     && (mapMeta.territories || []).find((t) => t.id === territoryId && t.bbox);
+  // /map/limansk — прежний id Любеча-3 (до 28.10.2026)
+  if (territoryId === "limansk") { navigate("/map/lyubech", { replace: true }); return; }
   if (territoryId && !terr) { navigate("/map", { replace: true }); return; }
   if (terr) renderTerritory(terr);
   else renderWorldMap();
@@ -6734,13 +6736,103 @@ function renderMapObject(o, ctx) {
   return layer;
 }
 
-// Публичный вьюер: подгрузить опубликованные объекты слоя и отрисовать с тултипами.
-function loadViewerObjects(layer, map, px) {
+// Фильтры вьюера: какие группы скрыты — per-viewer удобство, в localStorage
+// (может не быть — приватный режим; тогда просто всё видно).
+const MAP_HIDE_KEY = "sz_map_hide";
+function mapHidden() {
+  try { return new Set(JSON.parse(localStorage.getItem(MAP_HIDE_KEY) || "[]")); }
+  catch { return new Set(); }
+}
+function saveMapHidden(s) {
+  try { localStorage.setItem(MAP_HIDE_KEY, JSON.stringify([...s])); } catch { /* нет storage */ }
+}
+
+// Ключ фильтра объекта: метки — по категории, области — по имени без уровня
+// («Радиация 2 ур.» → «Радиация»), линии — одной группой.
+function mapFilterKey(o) {
+  if (o.kind === "marker") {
+    const c = catById(o.category);
+    return { key: c.id, label: c.name, icon: c.emoji, color: c.color };
+  }
+  if (o.kind === "area") {
+    const base = (o.name || "Область").replace(/\s*\d+\s*ур\.?$/i, "").trim() || "Область";
+    return { key: "area:" + base, label: base, icon: "▧", color: o.color || "#7ce68e" };
+  }
+  return { key: "line", label: "Маршруты", icon: "╱", color: o.color || "#9ecbff" };
+}
+
+// Публичный вьюер: подгрузить опубликованные объекты слоя, разложить по группам
+// (layerGroup на категорию) и нарисовать фильтры в #mapFilters. boxPx — рамка
+// территории: счётчики считают только то, что в ней видно.
+function loadViewerObjects(layer, map, px, boxPx) {
   const ep = mapEpoch;
   fetch(api(`/map/objects?layer=${layer}`)).then((r) => r.json()).then((d) => {
     if (ep !== mapEpoch || !map._container) return;   // ушли с карты, пока грузилось
-    (d.objects || []).forEach((o) => renderMapObject(o, { map, px }));
+    const inBox = (x, y) => !boxPx
+      || (x >= boxPx[0] && x <= boxPx[2] && y >= boxPx[1] && y <= boxPx[3]);
+    const groups = new Map();
+    // за рамкой территории объект всё равно не увидеть (maxBounds) — не рисуем:
+    // слой detail общий на все территории, это ~2 тыс. DOM-меток
+    (d.objects || []).forEach((o) => {
+      const p = o.kind === "marker" ? o.geometry : o.geometry[0];
+      if (!inBox(p[0], p[1])) return;
+      const f = mapFilterKey(o);
+      if (!groups.has(f.key)) groups.set(f.key, { ...f, layer: L.layerGroup(), n: 0 });
+      const g = groups.get(f.key);
+      renderMapObject(o, { map: g.layer, px });
+      g.n++;
+    });
+    renderMapFilters(map, [...groups.values()]);
   }).catch(() => {});
+}
+
+function renderMapFilters(map, groups) {
+  const box = $("mapFilters");
+  const hidden = mapHidden();
+  // метки — в порядке MAP_CATEGORIES, области — по убыванию количества
+  const order = (g) => {
+    const i = MAP_CATS.findIndex((c) => c.id === g.key);
+    return i >= 0 ? i : 1000 - g.n / 1e5;
+  };
+  groups.sort((a, b) => order(a) - order(b));
+  const apply = () => groups.forEach((g) => {
+    if (hidden.has(g.key)) map.removeLayer(g.layer); else g.layer.addTo(map);
+  });
+  apply();
+  if (!box) return;
+  if (!groups.length) { box.innerHTML = ""; return; }
+  const chip = (g) => `<button class="mf-chip${hidden.has(g.key) ? "" : " on"}"
+      data-k="${escapeHtml(g.key)}" style="--mo:${g.color}">
+      <span class="mf-i">${g.icon}</span>${escapeHtml(g.label)}<span class="mf-n">${g.n}</span></button>`;
+  const marks = groups.filter((g) => !g.key.startsWith("area:") && g.key !== "line");
+  const rest = groups.filter((g) => g.key.startsWith("area:") || g.key === "line");
+  box.innerHTML = `
+    <div class="mf-row">${marks.map(chip).join("")}</div>
+    ${rest.length ? `<div class="mf-row mf-areas">${rest.map(chip).join("")}</div>` : ""}
+    <div class="mf-act"><button data-all="1">ПОКАЗАТЬ ВСЁ</button>
+      <button data-all="0">СКРЫТЬ ВСЁ</button></div>`;
+  const sync = () => {
+    box.querySelectorAll(".mf-chip").forEach((b) =>
+      b.classList.toggle("on", !hidden.has(b.dataset.k)));
+    saveMapHidden(hidden);
+    apply();
+  };
+  box.querySelectorAll(".mf-chip").forEach((b) => b.addEventListener("click", () => {
+    const k = b.dataset.k;
+    if (hidden.has(k)) hidden.delete(k); else hidden.add(k);
+    sync();
+  }));
+  box.querySelectorAll("[data-all]").forEach((b) => b.addEventListener("click", () => {
+    groups.forEach((g) => (b.dataset.all === "1" ? hidden.delete(g.key) : hidden.add(g.key)));
+    sync();
+  }));
+}
+
+// На мелком зуме метки ужимаются, иначе север (1000+ точек) — сплошной ковёр.
+function wireMarkerScale(map, maxZoom) {
+  const upd = () => map.getContainer().classList.toggle("mz-low", map.getZoom() < maxZoom - 2);
+  map.on("zoomend", upd);
+  upd();
 }
 
 // Скрываемая плашка «карта ещё в разработке» над публичной картой (не в редакторе).
@@ -6799,13 +6891,15 @@ function renderTerritory(terr) {
       <div class="section-title">▸ КАРТА · ${escapeHtml(terr.name.toUpperCase())}${terr.closed ? " · ЗАКРЫТО" : ""}</div>
       <div class="section-note"><a href="/map" class="map-back">◂ К ГЛОБАЛЬНОЙ КАРТЕ</a></div>
     </div>
+    <div class="map-filters" id="mapFilters"></div>
     <div class="map-view" id="mapView"></div>
     <div class="map-legend">Детальная карта из КПК STALZONE (облака — как в игре).
-      Дальше — точки локаций и артефактов с привязкой к базе предметов.</div>
+      Клик по фильтру прячет или показывает группу; выбор запоминается.</div>
   </div>`;
   wireMapWip();
   const { map, px } = makeTileMap(d, terr.bbox);
-  loadViewerObjects("detail", map, px);
+  wireMarkerScale(map, d.max_zoom);
+  loadViewerObjects("detail", map, px, terr.bbox);
 }
 
 // ======================================================================

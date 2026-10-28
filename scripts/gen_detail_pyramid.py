@@ -17,6 +17,8 @@ import sys
 
 from PIL import Image
 
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 TS = 256
 MAXZ = 6
 QUALITY = 70

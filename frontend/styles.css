@@ -1146,6 +1146,29 @@ a.prof-save { display: inline-block; text-decoration: none; }
   font-size: 14px; line-height: 1; cursor: pointer;
 }
 .mo-marker.draft { opacity: 0.6; border-style: dashed; }
+.mz-low .mo-marker { width: 14px; height: 14px; font-size: 8px; border-width: 1px; }
+
+/* фильтры публичной карты: чип = группа меток/областей */
+.map-filters { margin-bottom: 8px; }
+.mf-row { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 5px; }
+.mf-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  font: inherit; font-size: 11px; letter-spacing: 0.04em; cursor: pointer;
+  padding: 3px 8px; background: rgba(7, 10, 7, 0.6);
+  color: var(--dim); border: 1px solid var(--border-dim);
+}
+.mf-chip.on { color: var(--text); border-color: var(--mo); box-shadow: inset 3px 0 0 var(--mo); }
+.mf-chip:hover { color: var(--bright); }
+.mf-i { font-size: 12px; line-height: 1; }
+.mf-chip:not(.on) .mf-i { filter: grayscale(1); opacity: 0.5; }
+.mf-n { color: var(--dim); font-size: 10px; }
+.mf-areas .mf-chip { font-size: 10px; }
+.mf-act { display: flex; gap: 12px; }
+.mf-act button {
+  font: inherit; font-size: 10px; letter-spacing: 0.08em; cursor: pointer;
+  background: none; border: none; padding: 0; color: var(--green);
+}
+.mf-act button:hover { text-shadow: var(--glow); }
 .mo-marker.sel { box-shadow: 0 0 0 3px rgba(124, 230, 142, 0.5), 0 1px 4px #000; }
 .mo-vtx {
   width: 12px; height: 12px; background: var(--amber);

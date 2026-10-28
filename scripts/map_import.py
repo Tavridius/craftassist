@@ -25,7 +25,10 @@ JSON: массив объектов с теми же полями:
     docker exec stalzone_craft python /tmp/map_import.py /tmp/points.csv
 Локально (map.db в backend/data): python scripts/map_import.py points.csv
 
-Флаги: --dry — показать без записи; --publish — публиковать все строки сразу.
+Флаги: --dry — показать без записи; --publish — публиковать все строки сразу;
+--replace-wiki — перед записью удалить ВСЕ объекты с тегом [wiki-import …] в
+описании (прошлый импорт stalzone.wiki, в т.ч. опубликованный) — перезаливка
+точек после новой привязки (scripts/wiki_map/wiki_export_v2.py).
 """
 import csv
 import json
@@ -93,6 +96,7 @@ def main() -> None:
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     dry = "--dry" in sys.argv
     publish_all = "--publish" in sys.argv
+    replace_wiki = "--replace-wiki" in sys.argv
     if not args:
         sys.exit(__doc__)
     objs = [to_obj(r, i + 1, publish_all) for i, r in enumerate(load_rows(args[0]))]

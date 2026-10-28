@@ -18,6 +18,8 @@ import sys
 
 from PIL import Image
 
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 TS = 256          # размер тайла Leaflet
 MAXZ = 6          # z6 — нативное разрешение источника
 QUALITY = 72      # webp: спутниковая картинка, ниже — заметно мылит
