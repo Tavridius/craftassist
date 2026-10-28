@@ -1367,7 +1367,7 @@ def _map_seo() -> tuple[str, dict]:
               "блока. Динамические события в игре появляются не всегда и не все сразу.")],
         links=[("/map/south", "Южная Зона"), ("/map/sever", "Северная Зона"),
                ("/map/lyubech", "Любеч-3"), ("/map/labyrinth", "Лабиринт"),
-               ("/quests", "квесты"), ("/guides", "гайды")])
+               ("/guides", "гайды")])
 
 
 @router.get("/map", response_class=HTMLResponse)
@@ -1548,14 +1548,17 @@ async def home2_page(request: Request):
 
 @router.get("/quests", response_class=HTMLResponse)
 async def quests_page(request: Request):
-    seo_html, faq_ld = _quests_seo()
+    # Раздел сырой и с 28.10.2026 только для админов (гейт во фронте, как /home2):
+    # noindex и без серверного SEO-текста, из sitemap убран. Robots.txt не трогаем,
+    # пока страницы не выпадут из индекса, — иначе робот не увидит noindex.
+    # Вернуть в поиск — снова отдать _quests_seo() и noindex=False.
     return render_index(
         request, "/quests",
         title="Квесты STALZONE (Сталкрафт) — схема линеек и прохождение заданий",
         desc="Все квесты STALZONE (ранее Stalcraft — Сталкрафт) на одной схеме: основные "
              "и побочные задания сталкеров, бандитов и группировок (Завет, Заря, Долг, "
              "Наёмники). Прохождение, награды и точки заданий на карте Зоны.",
-        seo_html=seo_html, jsonld=faq_ld)
+        noindex=True)
 
 
 @router.get("/quests/{qid}", response_class=HTMLResponse)
@@ -1565,17 +1568,15 @@ async def quest_page(request: Request, qid: str):
     if not q:
         return render_index(request, f"/quests/{qid}",
                             title=f"Квест не найден — {SITE}", noindex=True)
-    # квесты с прохождением индексируем (тело — в серверный HTML); пустые — noindex,
-    # чтобы не плодить тонкие страницы
-    has_body = bool((q.get("html") or "").strip())
-    seo_html = _seo_article(f"{q['title']} — прохождение", q["html"],
-                            q.get("summary")) if has_body else None
+    # раздел в деве (см. quests_page): noindex без тела. Когда вернём в поиск —
+    # квесты с прохождением снова индексировать (тело в серверный HTML через
+    # _seo_article), пустые оставить noindex, чтобы не плодить тонкие страницы
     return render_index(
         request, f"/quests/{qid}",
         title=f"{q['title']} — прохождение квеста STALZONE (Сталкрафт)",
         desc=q.get("summary") or f"Прохождение квеста «{q['title']}» в STALZONE "
              f"(ранее Stalcraft): что делать, награда и точки на карте.",
-        noindex=not has_body, seo_html=seo_html)
+        noindex=True)
 
 
 @router.get("/patches", response_class=HTMLResponse)
@@ -1644,9 +1645,10 @@ async def sitemap(request: Request):
     """Карта сайта: только осмысленные посадочные (без тысяч карточек — под спрос)."""
     base = _base_url(request)
     from app.routers.api import MAP_TERRITORIES
+    # /quests здесь нет намеренно: раздел в деве и закрыт noindex (см. quests_page)
     paths = ["/", "/craft", "/vygodno-kraftit", "/auction", "/market", "/sborki", "/builds",
              "/barter", "/obmen", "/operations", "/items", "/compare", "/patches",
-             "/guides", "/quests", "/map", "/promo", "/privacy", "/terms"]
+             "/guides", "/map", "/promo", "/privacy", "/terms"]
     # территории карты — только с метками (indexed), остальные под noindex
     paths += [f"/map/{t['id']}" for t in MAP_TERRITORIES if t.get("indexed")]
     urls = "".join(
@@ -1671,16 +1673,6 @@ async def sitemap(request: Request):
             for pid, created in news.all_patch_ids() if created)
     except Exception:
         logger.exception("sitemap: patches skipped")
-    # квесты — вечнозелёный интент «как пройти квест X сталкрафт»
-    from app.db import quests as _quests
-    try:
-        urls += "".join(
-            f"<url><loc>{_html.escape(base + f'/quests/{qid}', quote=True)}</loc>"
-            + (f"<lastmod>{mod}</lastmod>" if mod else "")
-            + "<changefreq>weekly</changefreq></url>"
-            for qid, mod in _quests.all_quest_ids())
-    except Exception:
-        logger.exception("sitemap: quests skipped")
     # предметы — ПОСТЕПЕННО: растущая пачка приоритетных первыми (см. _sitemap_item_ids),
     # +SEO_ITEMS_PER_DAY в день от даты старта. Не вываливаем всю базу разом.
     try:

@@ -230,8 +230,9 @@ async function loadAuth() {
   // DEV-вкладка (редактор карты) — только админам (ADMIN_USER_IDS)
   document.querySelectorAll(".nav-adm").forEach((el) =>
     el.classList.toggle("hidden", !(ME && ME.is_admin)));
-  // прямой заход на /dev* и /home2 мог отрисовать «проверка доступа», пока /me не ответил
-  if (location.pathname.startsWith("/dev") || location.pathname === "/home2") route();
+  // прямой заход на /dev*, /home2 и /quests мог отрисовать «проверка доступа», пока /me не ответил
+  if (location.pathname.startsWith("/dev") || location.pathname === "/home2"
+      || location.pathname.startsWith("/quests")) route();
   // стартовый рендер мог уйти без фильтра, пока /me не ответил — перерисовать
   else if (ME && ME.authenticated && availMode()) {
     lastQuery = null; home.dataset.ts = "";
@@ -4196,8 +4197,17 @@ async function openQuests(selId) {
   detail.classList.add("hidden");
   results.innerHTML = "";
   page.classList.remove("hidden");
-  page.innerHTML = `<div class="spinner">// ЗАГРУЗКА КВЕСТОВ</div>`;
   window.scrollTo(0, 0);
+  // раздел сырой — только админам, гостям заглушка (сервер отдаёт noindex)
+  if (!ME) { page.innerHTML = `<div class="spinner">// ПРОВЕРКА ДОСТУПА</div>`; return; }
+  if (!ME.is_admin) {
+    page.innerHTML = `<div class="stub"><div class="stub-code">[ DEV ]</div>
+      <div class="stub-title">▸ КВЕСТЫ — РАЗДЕЛ В РАЗРАБОТКЕ</div>
+      <a class="stub-back" href="/guides/kvesty-stalzone">▸ ГАЙД ПО КВЕСТАМ</a>
+      <a class="stub-back" href="/">◂ НА ГЛАВНУЮ</a></div>`;
+    return;
+  }
+  page.innerHTML = `<div class="spinner">// ЗАГРУЗКА КВЕСТОВ</div>`;
   let d;
   try {
     d = await fetch(api("/quests")).then((r) => r.json());
