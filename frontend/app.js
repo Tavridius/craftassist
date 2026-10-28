@@ -41,19 +41,29 @@ function ymHit() {
 // replaceState и зовёт doSearch() напрямую, мимо route()/ymHit(). Автоцель
 // «поиск по сайту» ищет параметр в адресе ХИТА, а хита не было — отсюда 3
 // срабатывания на ~5000 визитов (аудит счёл поиск мёртвым, а он просто не
-// измерялся). Ждём паузы в наборе, чтобы не слать хит на каждую букву.
-let ymSearchTimer = null, ymLastSearch = "";
+// измерялся). Хит — один на запрос: после паузы в наборе или сразу, когда
+// человек уходит со страницы поиска (клик по результату, гайду, любой
+// SPA-переход, закрытие вкладки). Пауза в 1,2 с ловила середину слова — в
+// Метрике копились «нез», «неза» на пути к «Незабываемому».
+let ymSearchTimer = null, ymLastSearch = "", ymPendingSearch = "";
 function ymSearchHit(q) {
   clearTimeout(ymSearchTimer);
-  if (!q || q === ymLastSearch) return;
-  ymSearchTimer = setTimeout(() => {
-    ymLastSearch = q;
-    const referer = location.origin + ymLastPath;
-    ymLastPath = "/search";      // следующий переход уйдёт с реферером поиска
-    const url = `/search?q=${encodeURIComponent(q)}`;
-    try { if (window.ym) ym(YM_ID, "hit", url, { referer }); } catch (e) { /* счётчик не загрузился */ }
-  }, 1200);
+  ymPendingSearch = q;
+  if (q) ymSearchTimer = setTimeout(ymSearchFlush, 3000);
 }
+function ymSearchFlush() {
+  clearTimeout(ymSearchTimer);
+  const q = ymPendingSearch;
+  ymPendingSearch = "";
+  if (!q || q === ymLastSearch) return;
+  ymLastSearch = q;
+  const referer = location.origin + ymLastPath;
+  ymLastPath = "/search";      // следующий переход уйдёт с реферером поиска
+  const url = `/search?q=${encodeURIComponent(q)}`;
+  try { if (window.ym) ym(YM_ID, "hit", url, { referer }); } catch (e) { /* счётчик не загрузился */ }
+}
+addEventListener("pagehide", ymSearchFlush);
+document.addEventListener("visibilitychange", () => { if (document.hidden) ymSearchFlush(); });
 
 // A/B-тест дизайна: сервер проставил вариант в <html data-ab="A|B"> (только когда
 // тест включён). Шлём его параметром визита — в Метрике все отчёты (глубина, время,
@@ -69,6 +79,7 @@ function ymSearchHit(q) {
 // ---------- History API-роутинг: реальные пути вместо #hash ----------
 // navigate(path) — переход по SPA (pushState), route() читает location.pathname.
 function navigate(path, { replace = false } = {}) {
+  ymSearchFlush();             // ушли с поиска — запрос считаем итоговым
   const cur = location.pathname + location.search;
   if (path === cur) { route(); return; }
   history[replace ? "replaceState" : "pushState"](null, "", path);
@@ -558,35 +569,66 @@ async function doSearch() {
   home.classList.add("hidden");
   results.innerHTML = `<div class="spinner">// ПОИСК ПО БАЗЕ</div>`;
   try {
-    const r = await fetch(api(`/search?q=${encodeURIComponent(q)}&limit=48${availParam("&")}`));
+    const r = await fetch(api(`/search?q=${encodeURIComponent(q)}&limit=200&grouped=1${availParam("&")}`));
     const data = await r.json();
-    renderResults(data.results || [], data.available_only);
+    if (q !== input.value.trim()) return;   // пока ждали ответ, запрос уже другой
+    renderResults(data);
     ymSearchHit(q);
   } catch (e) {
     results.innerHTML = `<div class="empty">[!] ОШИБКА СЕТИ</div>`;
   }
 }
 
-function renderResults(items, availOnly) {
-  if (!items.length) {
+// Результаты — группами по категории (бэкенд: /api/search?grouped=1), гайды —
+// отдельной группой под предметами. В длинной группе сначала SEARCH_GROUP_CAP,
+// остальное по кнопке: иначе «сумка» прячет 4 рюкзака под 41 сумкой патронов.
+const SEARCH_GROUP_CAP = 12;
+function renderResults(data) {
+  const groups = data.groups || [], guides = data.guides || [], availOnly = data.available_only;
+  if (!groups.length && !guides.length) {
     results.innerHTML = `<div class="empty">${availOnly
       ? `НЕТ ДОСТУПНЫХ ПО ПРОКАЧКЕ РЕЦЕПТОВ. ПРОВЕРЬ <a href="/profile">ПРОФИЛЬ</a> ИЛИ ПЕРЕКЛЮЧИ НА «ВСЕ».`
       : "НИЧЕГО НЕ НАЙДЕНО"}</div>`;
     return;
   }
-  results.innerHTML = `<div class="results-head">РЕЗУЛЬТАТЫ: ${items.length}${availOnly ? " · ТОЛЬКО ДОСТУПНЫЕ" : ""}</div>`;
-  const grid = document.createElement("div");
-  grid.className = "grid";
-  for (const it of items) {
-    const cell = document.createElement("div");
-    cell.className = "cell";
-    cell.style.borderLeftColor = rank(it.color).color;
-    cell.innerHTML = `<img loading="lazy" src="${asset(it.icon)}" alt="">
-                      <div class="nm">${escapeHtml(it.name)}</div>`;
-    cell.addEventListener("click", () => { navigate(`/item/${it.id}`); });
-    grid.appendChild(cell);
+  results.innerHTML = groups.length
+    ? `<div class="results-head">РЕЗУЛЬТАТЫ: ${data.total}${availOnly ? " · ТОЛЬКО ДОСТУПНЫЕ" : ""}</div>`
+    : `<div class="empty">ПРЕДМЕТОВ НЕ НАЙДЕНО</div>`;
+  const titled = groups.length > 1;
+  for (const g of groups) {
+    if (titled)
+      results.insertAdjacentHTML("beforeend",
+        `<div class="results-group">${escapeHtml(catName(g.cat))} · ${g.items.length}</div>`);
+    const grid = document.createElement("div");
+    grid.className = "grid";
+    g.items.forEach((it, n) => {
+      const cell = document.createElement("div");
+      cell.className = "cell";
+      cell.style.borderLeftColor = rank(it.color).color;
+      cell.innerHTML = `<img loading="lazy" src="${asset(it.icon)}" alt="">
+                        <div class="nm">${escapeHtml(it.name)}</div>`;
+      cell.addEventListener("click", () => { navigate(`/item/${it.id}`); });
+      if (titled && n >= SEARCH_GROUP_CAP) cell.hidden = true;
+      grid.appendChild(cell);
+    });
+    results.appendChild(grid);
+    if (titled && g.items.length > SEARCH_GROUP_CAP) {
+      const more = document.createElement("button");
+      more.className = "bt-more results-more";
+      more.textContent = `ПОКАЗАТЬ ЕЩЁ · ${g.items.length - SEARCH_GROUP_CAP}`;
+      more.addEventListener("click", () => {
+        grid.querySelectorAll(".cell[hidden]").forEach((c) => { c.hidden = false; });
+        more.remove();
+      });
+      results.appendChild(more);
+    }
   }
-  results.appendChild(grid);
+  if (guides.length) {
+    results.insertAdjacentHTML("beforeend",
+      `<div class="results-group">ГАЙДЫ · ${guides.length}</div><div class="results-guides">${
+        guides.map((g) => `<a class="results-guide" href="/guides/${encodeURIComponent(g.slug)}">
+          <b>${escapeHtml(g.title)}</b><span>${escapeHtml(g.description || "")}</span></a>`).join("")}</div>`);
+  }
 }
 
 // ---------- карточка предмета ----------
@@ -3032,7 +3074,7 @@ const CAT_RU = {
   weapon: "ОРУЖИЕ", attachment: "ОБВЕСЫ", armor: "БРОНЯ", containers: "КОНТЕЙНЕРЫ",
   backpacks: "РЮКЗАКИ", bullet: "БОЕПРИПАСЫ", misc: "РАЗНОЕ", other: "ПРОЧЕЕ",
   device: "УСТРОЙСТВА", artefact: "АРТЕФАКТЫ", medicine: "МЕДИЦИНА", food: "ЕДА",
-  drink: "НАПИТКИ", grenade: "ГРАНАТЫ",
+  drink: "НАПИТКИ", grenade: "ГРАНАТЫ", weapon_modules: "МОДУЛИ ОРУЖИЯ", supply: "ПРИПАСЫ",
 };
 const catName = (c) => CAT_RU[c] || String(c || "").toUpperCase();
 const CUR_RU = { money: "₽", sleeves: "ГИЛЬЗ" };

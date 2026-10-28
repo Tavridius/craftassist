@@ -1,9 +1,11 @@
 """Индексы игровой БД в памяти: предметы, поиск по имени, рецепты по результату."""
 import json
 import logging
+from bisect import bisect_right
 from pathlib import Path
 
 from app import config
+from app.db import search_text as st
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +106,12 @@ class GameDB:
         self.backpacks: dict[str, dict] = {}      # то же, что контейнеры (рюкзаки со слотами под арты)
         self.armor: dict[str, dict] = {}          # id -> {name, icon, color, class, weight, bullet0, vit0, rel}
         self._armor_lvl: dict[tuple, dict] = {}   # (id, ptn) -> {bullet, vitality} (ленивый кэш заточки)
-        self._search: list[tuple[str, str]] = []  # (id, "имя_ru имя_en" в нижнем регистре)
+        self._search: list[tuple[str, st.Text, st.Text]] = []  # (id, имя_ru, имя_en) для поиска
+        self._vocab: dict[str, set[str]] = {}     # первая буква -> слова названий (для опечаток)
+        self._word_items: dict[str, set[int]] = {}  # слово названия -> индексы в _search
+        # все сжатые имена одной строкой через перевод строки и где в ней начинается каждый
+        # предмет: один str.find по всей базе вместо цикла по 2300 предметам
+        self._blobs: list[tuple[str, list[int]]] = []
         self._data_path: dict[str, str] = {}      # id -> относительный путь к json предмета
         self._desc_cache: dict[str, str | None] = {}
         self._char_cache: dict[tuple, list] = {}  # (id, ptn) -> характеристики (тултип)
@@ -156,7 +163,17 @@ class GameDB:
                 "status": (e.get("status") or {}).get("state", "NONE"),
             }
             self._data_path[item_id] = data_path.lstrip("/")  # 'items/misc/404p.json'
-            self._search.append((item_id, f"{name_ru} {name_en}".lower()))
+            ru, en = st.prepare(name_ru or item_id), st.prepare(name_en)
+            for w in ru.words + en.words:
+                self._vocab.setdefault(w[0], set()).add(w)
+                self._word_items.setdefault(w, set()).add(len(self._search))
+            self._search.append((item_id, ru, en))
+        for k in (1, 2):
+            offs, pos = [], 0
+            for row in self._search:
+                offs.append(pos)
+                pos += len(row[k].compact) + 1
+            self._blobs.append(("\n".join(row[k].compact for row in self._search), offs))
 
     def _load_hideout_recipes(self) -> None:
         doc = self._read("hideout_recipes.json")
@@ -599,16 +616,86 @@ class GameDB:
         return val
 
     def search(self, query: str, limit: int = 30) -> list[dict]:
-        q = query.strip().lower()
-        if not q:
-            return []
-        out = []
-        for item_id, hay in self._search:
-            pos = hay.find(q)
-            if pos != -1:
-                out.append((pos, item_id))
-        out.sort(key=lambda t: (t[0], len(self.items[t[1]]["name"])))  # точнее совпадение выше
-        return [self.items[i] for _, i in out[:limit]]
+        return [self.items[i] for _, i in self.search_ranked(query, limit)]
+
+    def search_ranked(self, query: str, limit: int = 30) -> list[tuple[int, str]]:
+        """Поиск по названиям: [(тир, id)], лучшие сверху (тиры — search_text).
+        Сначала прямое совпадение и сленг. Ничего — запрос в другой раскладке
+        («cjk» = «сол»). Нет ничего с начала слова — с поправкой на опечатки.
+        Внутри тира русское имя важнее английского, дальше — короче и по алфавиту."""
+        best: dict[str, int] = {}     # id -> тир*2 (+1, если совпало только англ. имя)
+        self._match(query, best)
+        if not best:
+            alt = st.other_layout(query)
+            if alt:
+                self._match(alt, best)
+        if not any(v // 2 <= st.SYN for v in best.values()):
+            self._match_fuzzy(query, best)
+        out = sorted(best.items(), key=lambda kv: (kv[1], len(self.items[kv[0]]["name"]),
+                                                   self.items[kv[0]]["name"]))
+        return [(v // 2, i) for i, v in out[:limit]]
+
+    def _hits(self, needle: str) -> set[int]:
+        """Индексы предметов (в _search), где needle есть хоть в одном имени."""
+        out: set[int] = set()
+        for blob, offs in self._blobs:
+            pos = blob.find(needle)
+            while pos != -1:
+                i = bisect_right(offs, pos) - 1
+                out.add(i)
+                pos = blob.find(needle, offs[i + 1]) if i + 1 < len(offs) else -1
+        return out
+
+    def _match(self, query: str, best: dict[str, int]) -> None:
+        q = st.query(query)
+        if not q.compact:
+            return
+        slang = st.slang_targets(q.compact)
+        cand = self._hits(q.compact)
+        if len(q.words) > 1:                       # слова в любом порядке
+            cand |= self._hits(max(q.words, key=len))
+        for x in slang:
+            cand |= self._hits(x.rstrip("*"))
+        for idx in sorted(cand):
+            item_id, ru, en = self._search[idx]
+            t = st.tier(q, ru)
+            v = None if t is None else t * 2
+            if t is None or t > st.EXACT:
+                te = st.tier(q, en)
+                if te is not None and (v is None or te * 2 + 1 < v):
+                    v = te * 2 + 1
+            if slang and (v is None or v > st.SYN * 2) and any(
+                    st.has_word(x, ru) or st.has_word(x, en) for x in slang):
+                v = st.SYN * 2
+            if v is not None and v < best.get(item_id, 99):
+                best[item_id] = v
+
+    def _match_fuzzy(self, query: str, best: dict[str, int]) -> None:
+        """Каждое слово запроса — начало слова названия с точностью до опечаток
+        (сколько прощаем — search_text.fuzzy_k). Идём по словарю слов, не по базе."""
+        qwords = st.words(query)
+        if not qwords or not any(st.fuzzy_k(q) for q in qwords):
+            return
+        cand: set[int] | None = None
+        for q in qwords:
+            k = st.fuzzy_k(q)
+            # у трёхбуквенных — только последняя буква («ухо» → «Уха», не «Уголь»)
+            near = [w for w in self._vocab.get(q[0], ())
+                    if (w.startswith(q) if not k else
+                        (len(q) > 3 or w.startswith(q[:2]))
+                        and st.prefix_distance(q, w, k) <= k)]
+            items = set().union(*(self._word_items[w] for w in near))
+            cand = items if cand is None else cand & items
+            if not cand:
+                return
+        for idx in cand:
+            item_id, ru, _ = self._search[idx]
+            # совпало только английское имя — ниже русского (как в _match)
+            en_only = not all(any(w.startswith(q) or st.prefix_distance(q, w, st.fuzzy_k(q))
+                                  <= st.fuzzy_k(q) for w in ru.words) for q in qwords)
+            v = st.FUZZY * 2 + en_only
+            if v < best.get(item_id, 99):
+                best[item_id] = v
 
     def recipes_for(self, item_id: str) -> list[dict]:
         """Все рецепты верстака, дающие предмет (с правками админа из /dev/craft)."""

@@ -472,6 +472,20 @@ a.auth-user:hover { color: var(--green); border-color: var(--green-border); text
 .cell:hover { background: var(--row-hover); }
 .cell img { width: 44px; height: 44px; object-fit: contain; }
 .cell .nm { font-size: 11px; line-height: 1.3; color: var(--text); }
+.results-group {
+  font-size: 10px; letter-spacing: 0.12em; color: var(--dim);
+  margin: 18px 0 8px; padding-bottom: 4px; border-bottom: 1px dashed var(--border);
+}
+.cell[hidden] { display: none; }   /* хвост длинной группы — до «ПОКАЗАТЬ ЕЩЁ» */
+.results-more { margin-top: 8px; }
+.results-guides { display: flex; flex-direction: column; gap: 6px; }
+.results-guide {
+  display: block; background: var(--panel); border: 1px solid var(--border);
+  padding: 10px 12px; color: var(--text); text-decoration: none;
+}
+.results-guide:hover { background: var(--row-hover); }
+.results-guide b { display: block; font-size: 12px; font-weight: 600; margin-bottom: 3px; }
+.results-guide span { display: block; font-size: 11px; line-height: 1.4; color: var(--dim); }
 
 /* ---------- карточка предмета ---------- */
 .detail { min-width: 0; }

@@ -10,19 +10,23 @@
   загруженные  → DATA_DIR/guide_uploads → /guide-uploads/...
 published=0 — черновик (виден только в админке), 1 — на /guides и в sitemap.
 """
+import html as _html
 import json
 import logging
+import re
 import sqlite3
 import threading
 import time
 from datetime import datetime, timezone
 
 from app import config
+from app.db import search_text as st
 
 logger = logging.getLogger(__name__)
 
 _lock = threading.Lock()
 _conn: sqlite3.Connection | None = None
+_search_idx: list[tuple] | None = None   # кэш для search(); сбрасывают upsert/delete
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS guides (
@@ -180,6 +184,7 @@ def upsert(data: dict) -> dict:
              1 if data.get("published", True) else 0,
              data.get("created_at") or _today(), time.time()))
         _conn.commit()
+    _drop_search_idx()
     return get_guide(slug, include_drafts=True)
 
 
@@ -187,4 +192,61 @@ def delete(slug: str) -> bool:
     with _lock:
         cur = _conn.execute("DELETE FROM guides WHERE slug=?", (slug,))
         _conn.commit()
-        return cur.rowcount > 0
+    _drop_search_idx()
+    return cur.rowcount > 0
+
+
+# ---------- поиск по гайдам (группа «Гайды» под предметами в поиске по сайту) ----------
+_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _drop_search_idx() -> None:
+    global _search_idx
+    _search_idx = None
+
+
+def _build_search_idx() -> list[tuple]:
+    with _lock:
+        rows = _conn.execute("SELECT * FROM guides WHERE published=1 "
+                             "ORDER BY created_at DESC, slug DESC").fetchall()
+    out = []
+    for r in rows:
+        m = _meta(r)
+        body = _html.unescape(_TAG_RE.sub(" ", r["html"] or ""))
+        out.append(({k: m[k] for k in ("slug", "title", "description", "cover")},
+                    (st.prepare(m["title"]), st.prepare(" ".join(m["tags"])),
+                     st.prepare(m["description"]), st.prepare(body))))
+    return out
+
+
+def search(query: str, limit: int = 5) -> list[dict]:
+    """Опубликованные гайды по запросу: сначала совпадение в заголовке, потом в
+    тегах, описании и тексте. В описании и тексте — только с начала слова (иначе
+    «ак» найдётся в каждом «также»), в тексте — от 4 символов. Свежие выше."""
+    global _search_idx
+    if _search_idx is None:
+        _search_idx = _build_search_idx()
+    idx = _search_idx
+    found = _search_in(idx, st.query(query))
+    if not found:
+        alt = st.other_layout(query)
+        if alt:
+            found = _search_in(idx, st.query(alt))
+    found.sort(key=lambda t: t[0])
+    return [meta for _, meta in found[:limit]]
+
+
+def _search_in(idx: list[tuple], q: st.Query) -> list[tuple]:
+    if len(q.compact) < 2:
+        return []
+    # (поле, худший допустимый тир): заголовок, теги, описание, текст
+    fields = ((0, st.INNER if len(q.compact) >= 3 else st.WORDS), (1, st.WORDS), (2, st.WORDS),
+              (3, st.WORD if len(q.compact) >= 4 else -1))
+    found = []
+    for order, (meta, texts) in enumerate(idx):
+        for field, worst in fields:
+            t = st.tier(q, texts[field])
+            if t is not None and t <= worst:
+                found.append(((field, t, order), meta))
+                break
+    return found

@@ -49,19 +49,58 @@ def _profile_of(request: Request) -> dict | None:
     return users.get_profile(user["id"]) if user else None
 
 
+# Порядок групп в поиске при равном качестве совпадения: снаряжение выше, патроны
+# (по «сумка» — 44 сумки патронов) и прочее ниже. Категории — db.category.
+_SEARCH_CAT_ORDER = ["weapon", "armor", "artefact", "containers", "backpacks", "attachment",
+                     "weapon_modules", "medicine", "grenade", "misc", "supply", "device",
+                     "bullet", "other"]
+_NUM_RE = re.compile(r"(\d+)")
+
+
+def _natural(name: str) -> tuple:
+    """Ключ сортировки «по-человечески»: Сумка СБП 9 мм раньше Сумка СБП 10 мм."""
+    return tuple((0, int(p), "") if p.isdigit() else (1, 0, p.lower())
+                 for p in _NUM_RE.split(name) if p)
+
+
+def _search_groups(ranked: list[tuple[int, str]]) -> list[dict]:
+    """Найденное — группами по категории («сумка»: рюкзаки отдельно от сумок патронов).
+    Группы — по лучшему совпадению в них, внутри — по совпадению и по имени."""
+    groups: dict[str, list[tuple[int, str]]] = {}
+    for t, iid in ranked:
+        groups.setdefault(db.category(iid) or "other", []).append((t, iid))
+
+    def order(cat):
+        return (groups[cat][0][0], _SEARCH_CAT_ORDER.index(cat)
+                if cat in _SEARCH_CAT_ORDER else len(_SEARCH_CAT_ORDER))
+    return [{"cat": cat,
+             "items": [db.items[i] for _, i in
+                       sorted(groups[cat], key=lambda r: (r[0], _natural(db.items[r[1]]["name"])))]}
+            for cat in sorted(groups, key=order)]
+
+
 @router.get("/search")
 async def search(request: Request, q: str = Query(..., min_length=1),
-                 limit: int = 30, available: int = 0):
-    if not available:
-        return {"query": q, "results": db.search(q, limit)}
+                 limit: int = Query(30, ge=1, le=300), available: int = 0, grouped: int = 0):
+    """Поиск по базе. grouped=1 (строка поиска на сайте) — вместо плоского списка
+    группы по категориям плюс подходящие гайды."""
+    prof = _profile_of(request) if available else None
     # фильтр «доступные рецепты»: только крафтящееся, на что хватает прокачки.
     # Ищем с запасом — часть результатов отсеется профилем.
-    prof = _profile_of(request)
-    if prof is None:
-        return {"query": q, "results": db.search(q, limit)}
-    results = [it for it in db.search(q, limit * 4)
-               if it["id"] in db.recipe_by_result and hideout.item_available(it["id"], prof)]
-    return {"query": q, "results": results[:limit], "available_only": True}
+    ranked = db.search_ranked(q, limit * 4 if prof is not None else limit)
+    if prof is not None:
+        ranked = [(t, i) for t, i in ranked
+                  if i in db.recipe_by_result and hideout.item_available(i, prof)][:limit]
+    out = {"query": q}
+    if prof is not None:
+        out["available_only"] = True
+    if grouped:
+        out["groups"] = _search_groups(ranked)
+        out["total"] = len(ranked)
+        out["guides"] = guides.search(q)
+    else:
+        out["results"] = [db.items[i] for _, i in ranked]
+    return out
 
 
 @router.get("/item/{item_id}")
