@@ -1641,21 +1641,23 @@ def _bbox_px(x0: int, y0: int, x1: int, y1: int) -> list[int]:
             (x1 - _DETAIL_X0 + 1) * 512, (y1 - _DETAIL_Y0 + 1) * 512]
 
 
+# indexed — территория с метками: в sitemap и без noindex (pages.py). Дикий Север
+# (на dmap под облаками, меток нет) и закрытые — под noindex, там тонкая страница.
 # bbox Юга/Севера/Любеча/Лабиринта — по кадру подложек stalzone.wiki после привязки
 # (wiki_register.py): прежние рамки были шире карты, вид открывался слишком мелким
 MAP_TERRITORIES = [
     {"id": "south", "name": "Южная Зона", "label": [8490, 4700],
-     "bbox": _bbox_px(-12, -1, -5, 9)},
+     "bbox": _bbox_px(-12, -1, -5, 9), "indexed": True},
     {"id": "sever", "name": "Северная Зона", "label": [6000, 3000],
-     "bbox": _bbox_px(-23, -1, -13, 9)},
+     "bbox": _bbox_px(-23, -1, -13, 9), "indexed": True},
     {"id": "wnorth", "name": "Дикий Север", "label": [9900, 3450],
      "bbox": _bbox_px(12, -3, 18, 3)},
     # Любеч-3 до 28.10.2026 был «limansk» с рамкой (-4..0,-2..2) — там облака
     # у Лабиринта, а сам Любеч севернее; /map/limansk фронт редиректит
     {"id": "lyubech", "name": "Любеч-3", "label": [7050, 5250],
-     "bbox": _bbox_px(0, -9, 2, -6)},
+     "bbox": _bbox_px(0, -9, 2, -6), "indexed": True},
     {"id": "labyrinth", "name": "Лабиринт", "label": [7300, 5500],
-     "bbox": _bbox_px(0, 1, 1, 3)},
+     "bbox": _bbox_px(0, 1, 1, 3), "indexed": True},
     {"id": "dmz", "name": "Бораль", "label": [5700, 6200],
      "bbox": _bbox_px(6, -3, 11, 3), "closed": True},
     {"id": "pripyat", "name": "Припять", "label": [8670, 1340], "closed": True},

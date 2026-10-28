@@ -866,9 +866,8 @@ def _quests_seo() -> tuple[str, dict]:
              "Нет, раздел наполняется постепенно: линейки добавляются по мере разбора. Если "
              "нужного задания ещё нет, посмотрите гайды — часть квестов разобрана там подробно."),
         ],
-        # /map тут не место: раздел не готов и закрыт noindex — ссылка из
-        # индексируемого блока и тратила краул-бюджет, и вела в тупик
-        links=[("/guides", "гайды по игре"),
+        links=[("/map", "интерактивная карта"),
+               ("/guides", "гайды по игре"),
                ("/items", "база предметов"),
                ("/market", "цены на награды")])
 
@@ -1334,21 +1333,101 @@ async def search_page(request: Request):
     return render_index(request, "/search", title=f"Поиск по базе — {SITE}", noindex=True)
 
 
-# Карта закрыта от индексации до готовности раздела (06.08.2026). Поиск её уже
-# нашёл — «интерактивная карта сталкрафт» приводит людей на полупустую страницу
-# (38 входов, 46 с — вошли и вышли). Пускать туда трафик, пока меток нет, значит
-# копить плохие поведенческие по всему домену. Снять noindex здесь, в /map/{id},
-# в sitemap и robots.txt — одним движением, когда карта будет наполнена.
+# Карта была закрыта noindex с 06.08.2026, пока меток не было (вход из поиска на
+# пустую страницу — 46 с и выход). 28.10.2026 открыта: ~2,3 тыс. меток и зон по
+# Югу, Северу, Любечу-3 и Лабиринту. Без меток (Дикий Север, закрытые) — noindex.
+@lru_cache(maxsize=1)
+def _map_seo() -> tuple[str, dict]:
+    return _seo_block(
+        h2="Интерактивная карта STALZONE (Сталкрафт) с метками",
+        intro=[
+            "Карта Зоны STALZONE (ранее Stalcraft — Сталкрафт), снятая с КПК игры: "
+            "глобальный вид и детальные карты территорий с зумом до отдельных зданий. "
+            "На детальных картах отмечены тайники и сейфы, аномалии «Застой» и скопления "
+            "«Проторазрядов», логова мутантов, стоянки и заставы группировок, укрытия от "
+            "выброса, а также зоны радиации, био-, термо- и пси-заражения и прикопы.",
+            "Сейчас размечены Южная Зона, Северная Зона, Любеч-3 и Лабиринт. Подложка "
+            "обновляется вместе с картой в клиенте игры."],
+        steps_title="Как пользоваться картой",
+        steps=["Выберите территорию на глобальной карте или в списке ниже.",
+               "Кнопками фильтров над картой спрячьте лишнее — например, оставьте только "
+               "тайники или только зоны заражения. Выбор запоминается.",
+               "Наведите на метку или область, чтобы увидеть название и описание."],
+        faq=[("Где на карте тайники?",
+              "Тайники и сейфы (медицинские, научные, военные, заводские) отмечены на "
+              "Северной Зоне и Любече-3 — фильтр «Тайник» над картой."),
+             ("Показаны ли зоны заражения?",
+              "Да, областями: радиация, био-, термо- и пси-заражение по уровням. Каждый тип "
+              "включается и выключается отдельной кнопкой."),
+             ("Почему часть карты под облаками?",
+              "Так территории выглядят в КПК игры: подложка — та же карта, что в клиенте, "
+              "без дорисовки."),
+             ("Совпадают ли метки с игрой?",
+              "Метки привязаны к карте в масштабе один пиксель — один блок, ошибка — около "
+              "блока. Динамические события в игре появляются не всегда и не все сразу.")],
+        links=[("/map/south", "Южная Зона"), ("/map/sever", "Северная Зона"),
+               ("/map/lyubech", "Любеч-3"), ("/map/labyrinth", "Лабиринт"),
+               ("/quests", "квесты"), ("/guides", "гайды")])
+
+
 @router.get("/map", response_class=HTMLResponse)
 async def map_page(request: Request):
+    seo_html, faq_ld = _map_seo()
     return render_index(
         request, "/map",
-        title="Интерактивная карта мира STALZONE (Сталкрафт) — спутниковый вид",
-        desc="Интерактивная карта мира STALZONE (ранее Stalcraft — Сталкрафт): глобальный "
-             "спутниковый вид Зоны и детальные карты территорий — Южная Зона, Северная "
-             "Зона, Дикий Север, Любеч-3, Лабиринт. Метки тайников, аномалий, логов, "
-             "лагерей и зон заражения с фильтрами.",
-        noindex=True)
+        title="Интерактивная карта STALZONE (Сталкрафт) — тайники, аномалии, логова",
+        desc="Интерактивная карта STALZONE (ранее Stalcraft — Сталкрафт) с КПК игры: Южная "
+             "Зона, Северная Зона, Любеч-3, Лабиринт. Тайники и сейфы, аномалии, логова "
+             "мутантов, лагеря, укрытия от выброса и зоны заражения — с фильтрами.",
+        seo_html=seo_html, jsonld=faq_ld)
+
+
+# категории меток во множественном числе — для текста и description территорий
+_MAP_CAT_PLURAL = {"stash": "тайники и сейфы", "anomaly": "аномалии",
+                   "mob": "логова мутантов", "event": "события", "camp": "лагеря и заставы",
+                   "shelter": "укрытия от выброса", "bubble": "пространственные пузыри",
+                   "transition": "переходы", "spawn": "точки входа"}
+
+
+def _territory_counts(terr: dict) -> list[tuple[str, int]]:
+    """Что отмечено на территории: [(что, сколько)] по убыванию — опубликованные
+    объекты в её рамке; области (заражения, прикопы) — одной строкой в конце."""
+    from app.db import mapobjects
+    x0, y0, x1, y1 = terr["bbox"]
+    cats: dict[str, int] = {}
+    zones = 0
+    for o in mapobjects.list_objects(layer="detail"):
+        g = o["geometry"] or []
+        p = g if o["kind"] == "marker" else (g[0] if g else None)
+        if not p or not (x0 <= p[0] <= x1 and y0 <= p[1] <= y1):
+            continue
+        if o["kind"] == "marker":
+            k = _MAP_CAT_PLURAL.get(o["category"], "другие метки")
+            cats[k] = cats.get(k, 0) + 1
+        elif o["kind"] == "area":
+            zones += 1
+    rows = sorted(cats.items(), key=lambda kv: -kv[1])
+    if zones:
+        rows.append(("зоны заражения и прикопы", zones))
+    return rows
+
+
+def _territory_seo(terr: dict, rows: list[tuple[str, int]]) -> str:
+    """Короткий текст территории для краулеров без JS."""
+    name = _html.escape(terr["name"])
+    items = "".join(f"<li>{_html.escape(k.capitalize())} — {n}</li>" for k, n in rows)
+    links = " · ".join(
+        f'<a href="/map/{t}">{_html.escape(n)}</a>'
+        for t, n in (("south", "Южная Зона"), ("sever", "Северная Зона"),
+                     ("lyubech", "Любеч-3"), ("labyrinth", "Лабиринт"))
+        if t != terr["id"])
+    return ('<div class="seo-inner">'
+            f'<h2>{name} — карта STALZONE (Сталкрафт) с метками</h2>'
+            f'<p>Детальная карта территории «{name}» с КПК игры. Метки и зоны '
+            f'включаются фильтрами над картой.</p>'
+            + (f'<h3>Что отмечено</h3><ul>{items}</ul>' if items else "")
+            + f'<p class="seo-links">Другие территории: {links} · '
+            f'<a href="/map">вся карта</a></p></div>')
 
 
 @router.get("/map/{territory_id}", response_class=HTMLResponse)
@@ -1362,12 +1441,21 @@ async def map_territory_page(request: Request, territory_id: str):
         return render_index(request, f"/map/{territory_id}",
                             title=f"Территория не найдена — {SITE}", noindex=True)
     name = terr["name"]
+    if not terr.get("indexed"):              # без меток — тонкая страница, см. map_page
+        return render_index(
+            request, f"/map/{territory_id}",
+            title=f"{name} — детальная карта STALZONE (Сталкрафт)",
+            desc=f"Детальная карта территории «{name}» STALZONE (ранее Stalcraft — "
+                 f"Сталкрафт) из КПК игры: зум до отдельных зданий, перетаскивание.",
+            noindex=True)
+    rows = _territory_counts(terr)
+    what = ", ".join(k for k, _ in rows[:5]) or "метки и зоны"
     return render_index(
         request, f"/map/{territory_id}",
-        title=f"{name} — детальная карта STALZONE (Сталкрафт)",
-        desc=f"Детальная карта территории «{name}» STALZONE (ранее Stalcraft — Сталкрафт) "
-             f"из КПК игры: зум до отдельных зданий, перетаскивание.",
-        noindex=True)   # вместе с /map — см. комментарий у map_page
+        title=f"{name} — интерактивная карта STALZONE (Сталкрафт) с метками",
+        desc=f"Карта территории «{name}» STALZONE (ранее Stalcraft — Сталкрафт) с КПК "
+             f"игры: {what} — с фильтрами.",
+        seo_html=_territory_seo(terr, rows))
 
 
 @router.get("/guides", response_class=HTMLResponse)
@@ -1555,10 +1643,12 @@ def _sitemap_item_ids() -> tuple:
 async def sitemap(request: Request):
     """Карта сайта: только осмысленные посадочные (без тысяч карточек — под спрос)."""
     base = _base_url(request)
-    # /map здесь нет намеренно: раздел не готов и закрыт noindex (см. map_page)
+    from app.routers.api import MAP_TERRITORIES
     paths = ["/", "/craft", "/vygodno-kraftit", "/auction", "/market", "/sborki", "/builds",
              "/barter", "/obmen", "/operations", "/items", "/compare", "/patches",
-             "/guides", "/quests", "/promo", "/privacy", "/terms"]
+             "/guides", "/quests", "/map", "/promo", "/privacy", "/terms"]
+    # территории карты — только с метками (indexed), остальные под noindex
+    paths += [f"/map/{t['id']}" for t in MAP_TERRITORIES if t.get("indexed")]
     urls = "".join(
         f"<url><loc>{_html.escape(base + p, quote=True)}</loc>"
         f"<changefreq>{'daily' if p in ('/', '/craft', '/vygodno-kraftit', '/auction', '/market', '/sborki', '/barter', '/operations', '/patches', '/promo') else 'weekly'}</changefreq>"

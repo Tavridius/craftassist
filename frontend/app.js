@@ -6835,30 +6835,9 @@ function wireMarkerScale(map, maxZoom) {
   upd();
 }
 
-// Скрываемая плашка «карта ещё в разработке» над публичной картой (не в редакторе).
-// Закрытие запоминается в localStorage — больше не мозолит глаза.
-const MAP_WIP_KEY = "sz_map_wip";
-function mapWipBanner() {
-  if (localStorage.getItem(MAP_WIP_KEY) === "1") return "";
-  return `<div class="map-wip" id="mapWip">
-    <span class="map-wip-i">[!]</span>
-    <span class="map-wip-t">Интерактивная карта ещё в разработке — метки и области
-      появляются постепенно.</span>
-    <button class="map-wip-x" id="mapWipX" title="Скрыть">✕</button>
-  </div>`;
-}
-function wireMapWip() {
-  const x = $("mapWipX");
-  if (x) x.addEventListener("click", () => {
-    localStorage.setItem(MAP_WIP_KEY, "1");
-    const b = $("mapWip"); if (b) b.remove();
-  });
-}
-
 function renderWorldMap() {
   const g = mapMeta.global;
   page.innerHTML = `<div class="mapmod">
-    ${mapWipBanner()}
     <div class="section-head">
       <div class="section-title">▸ КАРТА МИРА · ГЛОБАЛЬНЫЙ ВИД</div>
       <div class="section-note">КЛИК ПО ТЕРРИТОРИИ — ПОДРОБНАЯ КАРТА</div>
@@ -6867,7 +6846,6 @@ function renderWorldMap() {
     <div class="map-legend">Карта из КПК STALZONE. Территории с меткой открываются в
       детальном виде; ✕ — сейчас закрыто в игре.</div>
   </div>`;
-  wireMapWip();
   const { map, px } = makeTileMap(g, layerView(g));
   (mapMeta.territories || []).forEach((t) => {
     const openable = !!t.bbox;
@@ -6886,7 +6864,6 @@ function renderWorldMap() {
 function renderTerritory(terr) {
   const d = mapMeta.detail;
   page.innerHTML = `<div class="mapmod">
-    ${mapWipBanner()}
     <div class="section-head">
       <div class="section-title">▸ КАРТА · ${escapeHtml(terr.name.toUpperCase())}${terr.closed ? " · ЗАКРЫТО" : ""}</div>
       <div class="section-note"><a href="/map" class="map-back">◂ К ГЛОБАЛЬНОЙ КАРТЕ</a></div>
@@ -6894,9 +6871,9 @@ function renderTerritory(terr) {
     <div class="map-filters" id="mapFilters"></div>
     <div class="map-view" id="mapView"></div>
     <div class="map-legend">Детальная карта из КПК STALZONE (облака — как в игре).
-      Клик по фильтру прячет или показывает группу; выбор запоминается.</div>
+      Клик по фильтру прячет или показывает группу; выбор запоминается.
+      Расположение меток — по картам stalzone.wiki.</div>
   </div>`;
-  wireMapWip();
   const { map, px } = makeTileMap(d, terr.bbox);
   wireMarkerScale(map, d.max_zoom);
   loadViewerObjects("detail", map, px, terr.bbox);

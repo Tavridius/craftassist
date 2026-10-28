@@ -1090,20 +1090,6 @@ a.prof-save { display: inline-block; text-decoration: none; }
 /* ---------- интерактивная карта мира (Leaflet) ---------- */
 .mapmod { margin-top: 4px; }
 
-/* скрываемая плашка «карта в разработке» над публичной картой */
-.map-wip {
-  display: flex; align-items: center; gap: 10px;
-  margin-bottom: 10px; padding: 9px 12px;
-  color: #ffb3ac; background: rgba(255, 107, 94, 0.1);
-  border: 1px solid var(--red-border); border-left: 3px solid var(--red);
-}
-.map-wip-i { color: var(--red); font-weight: 800; letter-spacing: 0.05em; }
-.map-wip-t { flex: 1; font-size: 12px; line-height: 1.5; }
-.map-wip-x {
-  flex: 0 0 auto; background: none; border: none; cursor: pointer;
-  color: var(--red); font-size: 14px; padding: 2px 4px; line-height: 1;
-}
-.map-wip-x:hover { color: var(--bright); text-shadow: 0 0 8px var(--red); }
 .map-view {
   width: 100%; height: min(calc(74vh / var(--zoom)), 820px);
   background: #050805; border: 1px solid var(--border);
