@@ -17,11 +17,12 @@
   остаток — шанс ещё одного; кап шкалы в игре 500%). Размер одного бонуса у
   каждого рецепта свой и это НЕ целая партия: Полимеры ×15 на 5 ур. материалов
   (требуется 3, бонус 150%) в игре дают 19 — бонус +4 (чат, i_SusS, 02.10.2026).
-  Без сверки берём оценку ceil(25% выхода), админ уточняет её в /dev/craft
-  (bonus_amount). В себестоимости — матожидание выхода. Бонус считаем у всех
-  рецептов, кроме отмеченных в /dev/craft «бонуса нет» (bonus_ok=0): раньше
-  он работал только по галке «есть», а её не поставили ни одному рецепту —
-  и бонус не учитывался нигде.
+  EXBO не публикует размер бонуса ни в базе, ни в API, в клиенте его тоже нет.
+  Поэтому бонус считаем ТОЛЬКО у рецептов со сверенным размером (bonus_amount в
+  /dev/craft) и не отмеченных «бонуса нет» (bonus_ok=0); в себестоимости —
+  матожидание выхода. Без сверки — базовый выход и пометка в карточке. Оценка
+  ceil(25% выхода) давала ерунду на мелких партиях (Пластиковая бутылка: 4 → 5,
+  чат 28.10), поэтому в расчёт больше не идёт — только подсказкой в /dev/craft.
 """
 import math
 
@@ -32,7 +33,7 @@ from app.services.price_store import store
 
 BONUS_PER_LEVEL = 75    # % бонусного крафта за уровень навыка сверх требуемого
 BONUS_CAP = 500         # потолок шкалы бонусного крафта в игре
-BONUS_SHARE = 0.25      # оценка размера бонуса — доля выхода (Полимеры: 15 → +4)
+BONUS_SHARE = 0.25      # подсказка размера бонуса в /dev/craft (Полимеры: 15 → +4)
 
 
 def _bonus(recipe: dict, perks: dict, ramount: int):
@@ -41,7 +42,8 @@ def _bonus(recipe: dict, perks: dict, ramount: int):
     mult — матожидание выхода относительно базового (себестоимость делится на
     него), amount — сколько штук в игре покажет окно крафта (гарантированная часть).
     """
-    if recipe.get("bonus_ok") == 0:
+    unit = recipe.get("bonus_amount")
+    if recipe.get("bonus_ok") == 0 or not unit:   # бонуса нет или размер не сверен
         return None
     req = (recipe.get("requirements") or {}).get("perks") or {}
     if not req:
@@ -50,14 +52,10 @@ def _bonus(recipe: dict, perks: dict, ramount: int):
     if diff <= 0:
         return None
     pct = min(BONUS_CAP, BONUS_PER_LEVEL * diff)
-    unit = recipe.get("bonus_amount")
-    estimated = not unit
-    if estimated:
-        unit = max(1, math.ceil(ramount * BONUS_SHARE))
     guaranteed = pct // 100
     return {"levels": diff, "pct": pct, "guaranteed": guaranteed,
             "chance_pct": pct % 100, "unit": unit,
-            "amount": ramount + guaranteed * unit, "estimated": estimated,
+            "amount": ramount + guaranteed * unit, "estimated": False,
             "mult": 1 + pct / 100 * unit / ramount}
 
 
@@ -175,6 +173,8 @@ def _price(item_id: str, path: tuple, ctx: dict, depth: int, expand: bool,
              # 0 = в /dev/craft отмечено, что шкалы бонуса у рецепта в игре нет —
              # фронту, чтобы объяснить, почему при прокачке выше требуемой бонуса нет
              "bonus_ok": r.get("bonus_ok"),
+             # размер бонуса сверен в /dev/craft — без этого бонус не считаем
+             "bonus_known": bool(r.get("bonus_amount")),
              "recipe_cost": recipe_cost, "cost_known": known, "ingredients": ings},
         ))
 

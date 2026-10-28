@@ -5,8 +5,8 @@
 рецепты в /dev/craft (API /api/admin/craft/recipes):
 
 - bonus: 1 = у рецепта в игре ЕСТЬ шкала бонусного крафта, 0 = нет,
-  NULL = не проверено. Калькулятор не учитывает бонус только при bonus=0
-  (у непроверенных считает по оценке, см. services/craft._bonus).
+  NULL = не проверено. Калькулятор учитывает бонус только при заданном
+  bonus_amount и bonus≠0 (см. services/craft._bonus).
 - data: JSON-переопределения полей рецепта поверх данных EXBO:
   {"energy": 1200, "result_amount": 20, "perk_level": 2, "bonus_amount": 4,
    "ingredients": {"<item_id>": 15, ...}}  — только указанные поля;

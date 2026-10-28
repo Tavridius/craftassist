@@ -700,8 +700,6 @@ a.auth-user:hover { color: var(--green); border-color: var(--green-border); text
 .bonus-link { margin-top: 4px; }
 .bonus-link a { color: var(--green); text-decoration: none; }
 .bonus-link a:hover { text-decoration: underline; }
-.bonus-warn { font-size: 9px; letter-spacing: 0.04em; color: var(--dim); line-height: 1.5; margin-top: 6px; }
-.bonus-warn a { color: var(--amber); }
 /* сводка требований по всему дереву */
 .treq { display: flex; justify-content: space-between; align-items: baseline; gap: 10px;
   font-size: 11px; padding: 2px 0; }

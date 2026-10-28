@@ -901,7 +901,7 @@ function treeBlock(d, chosen) {
         hint = `<span class="tsave dim">НА АУКЕ НЕТ</span>`;
       }
       if (n.recipe.bonus)
-        hint += `<span class="tbonus" title="Бонусный крафт +${n.recipe.bonus.pct}% (навык выше требуемого на ${n.recipe.bonus.levels}): выход ${n.recipe.bonus.estimated ? "~" : ""}${n.recipe.bonus.amount} шт за крафт — учтён в цене">↑${n.recipe.bonus.pct}%</span>`;
+        hint += `<span class="tbonus" title="Бонусный крафт +${n.recipe.bonus.pct}% (навык выше требуемого на ${n.recipe.bonus.levels}): выход ${n.recipe.bonus.amount} шт за крафт — учтён в цене">↑${n.recipe.bonus.pct}%</span>`;
     } else if (swapped && n.craft_cost != null) {
       hint = `<span class="tsave dim">КРАФТ: ${fmt(live ? calcRecipeUnit(n.recipe) ?? n.craft_cost : n.craft_cost)} ₽/ШТ</span>`;
     }
@@ -1003,10 +1003,14 @@ function fuelSection(d) {
 // Почему в расчёте есть/нет бонусного крафта убежища (чат, i_SusS 02.10: «с моим
 // уровнем убежки крафт 19 штук, а он считает 15»). Навыки давно в профиле, но без
 // бонуса карточка про них молчала — игрок не видел, что их надо указать.
+// С 28.10 бонус считаем только у рецептов со сверенным размером (bonus_known):
+// EXBO его не публикует, оценка 25% выхода врала на мелких партиях (бутылка 4 → 5).
 function bonusState(chosen, d) {
   const need = Object.entries((chosen.requirements || {}).perks || {});
   if (!need.length) return null;               // навык не требуется — бонуса нет у рецепта
   if (chosen.bonus) return { kind: "on" };
+  if (chosen.bonus_ok === 0) return { kind: "noscale" };
+  if (!chosen.bonus_known) return { kind: "unknown" };
   const prof = d.hideout_profile;
   if (!prof) {
     const authed = ME && ME.authenticated;
@@ -1017,7 +1021,7 @@ function bonusState(chosen, d) {
   const over = Math.min(...need.map(([k, lvl]) => (prof.perks[k] || 0) - lvl));
   if (over < 0) return null;                   // прокачки не хватает — об этом note-warn
   if (over === 0) return { kind: "atlevel" };
-  return { kind: "noscale" };                  // прокачка выше, но в /dev/craft: шкалы нет
+  return null;                                 // прокачка выше и размер сверен — бонус уже on
 }
 
 function bonusNoteHtml(chosen, d) {
@@ -1025,15 +1029,17 @@ function bonusNoteHtml(chosen, d) {
   if (!bs) return "";
   const link = `<a href="/profile">НАВЫКИ В ПРОФИЛЕ ▸</a>`;
   const bn = chosen.bonus;
-  // EXBO не отдаёт размер бонуса ни в базе, ни в API — пока рецепт не сверен
-  // (bonus_amount в /dev/craft), честно предупреждаем и просим прислать выход из игры
-  const warn = bn && bn.estimated ? `<div class="bonus-warn">[!] БОНУСНЫЙ КРАФТ В РАСЧЁТЕ — ОЦЕНКА:
-      EXBO НЕ ПУБЛИКУЕТ ЕГО РАЗМЕР, ВОЗМОЖНЫ НЕТОЧНОСТИ. В ИГРЕ ДРУГОЙ ВЫХОД — НАПИШИ
-      <a href="#" class="js-chat-bugs">В ЧАТ «БАГИ/ИДЕИ»</a> (НАВЫК И СКОЛЬКО ШТУК ПОКАЗЫВАЕТ ОКНО КРАФТА), ПОПРАВЛЮ.</div>` : "";
   if (bs.kind === "on") return `<div class="bonus-note"
-      title="Каждый уровень навыка выше требуемого рецептом даёт +75% бонусного крафта. Каждые полные 100% — гарантированный бонус +${bn.unit} шт к выходу, остаток — шанс ещё одного. ${bn.estimated ? "Размер бонуса у этого рецепта ещё не сверен с игрой — это оценка (~25% выхода). " : ""}Матожидание уже учтено в себестоимости.">
-      ⚡ БОНУСНЫЙ КРАФТ +${bn.pct}% · ВЫХОД ${bn.estimated ? "~" : ""}${bn.amount} ШТ${bn.chance_pct ? ` · ШАНС ${bn.chance_pct}% ЕЩЁ +${bn.unit}` : ""}
-      <div class="bonus-link">${link}</div></div>${warn}`;
+      title="Каждый уровень навыка выше требуемого рецептом даёт +75% бонусного крафта. Каждые полные 100% — гарантированный бонус +${bn.unit} шт к выходу, остаток — шанс ещё одного. Матожидание уже учтено в себестоимости.">
+      ⚡ БОНУСНЫЙ КРАФТ +${bn.pct}% · ВЫХОД ${bn.amount} ШТ${bn.chance_pct ? ` · ШАНС ${bn.chance_pct}% ЕЩЁ +${bn.unit}` : ""}
+      <div class="bonus-link">${link}</div></div>`;
+  // EXBO не отдаёт размер бонуса ни в базе, ни в API — без сверки не считаем и
+  // просим прислать выход из игры: число вносится в /dev/craft, и бонус включается
+  if (bs.kind === "unknown") return `<div class="bonus-note off">БОНУСНЫЙ КРАФТ НЕ УЧТЁН:
+      EXBO НЕ ПУБЛИКУЕТ, СКОЛЬКО ШТУК ОН ДОБАВЛЯЕТ У ЭТОГО РЕЦЕПТА. СЧИТАЕМ ПО БАЗОВОМУ ВЫХОДУ —
+      С ПРОКАЧКОЙ ВЫШЕ ТРЕБУЕМОЙ В ИГРЕ ВЫЙДЕТ БОЛЬШЕ И ДЕШЕВЛЕ.
+      <div class="bonus-link">ЗНАЕШЬ ВЫХОД? <a href="#" class="js-chat-bugs">НАПИШИ В «БАГИ/ИДЕИ»</a> —
+      НАВЫК И СКОЛЬКО ШТУК ПОКАЗЫВАЕТ ОКНО КРАФТА</div></div>`;
   const text = {
     noprof: "БОНУСНЫЙ КРАФТ НЕ УЧТЁН: НАВЫКИ УБЕЖИЩА НЕ УКАЗАНЫ. ВЫХОД СЧИТАЕМ ПО РЕЦЕПТУ, БЕЗ ДОП. ШТУК.",
     atlevel: "БОНУСНОГО КРАФТА НЕТ: НАВЫК РОВНО НА УРОВНЕ РЕЦЕПТА. БОНУС ДАЁТ КАЖДЫЙ УРОВЕНЬ СВЕРХ ТРЕБУЕМОГО.",
