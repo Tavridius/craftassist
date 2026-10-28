@@ -1980,6 +1980,12 @@ async def build_random():
     return await _heavy(builds.random_builds)   # из кэша мгновенно, без кэша — до 4 расчётов
 
 
+@router.get("/build/default")
+async def build_default():
+    """Сборка-пример для первого входа на /builds (средний бюджет, из кэша прогрева)."""
+    return await _heavy(builds.default_build)
+
+
 @router.get("/build/daily")
 async def build_daily():
     """Случайная «сборка дня» для главной: броня + контейнер топ-редкости, бюджет

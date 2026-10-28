@@ -1202,6 +1202,34 @@ def random_builds() -> dict:
     return {"container": cont, "cards": cards, "price_note": _price_note()}
 
 
+# Пример для первого входа на /builds. Запрос «калькулятор сборок» приводил на
+# пустую сетку слотов с «+ Артефакт»: отказы 22% на ПК и 31% на телефоне, 1454
+# из 1820 визитов там же и кончались (Метрика 28.09–27.10.2026). Теперь первый
+# экран — посчитанная сборка: самый ходовой профиль под средний бюджет, из того
+# же прогретого кэша, что и случайные сборки /sborki (ответ мгновенный).
+DEFAULT_PICKS = (("bullet_hp", 1_000_000), ("bullet_hp", 500_000),
+                 ("bullet", 1_000_000), ("bullet_hp", 3_000_000))
+
+
+def default_build() -> dict:
+    """Сборка-пример для первого входа на /builds: первый собравшийся вариант
+    из DEFAULT_PICKS. Формат карточки — как у random_builds."""
+    cont = _ready_container()
+    if not cont:
+        return {"card": None, "error": "no_containers"}
+    profiles = {p["id"]: p for p in RANDOM_PROFILES}
+    for pid, budget in DEFAULT_PICKS:
+        p = profiles[pid]
+        build = _random_one(p, budget, cont)
+        if build:
+            return {"container": cont, "price_note": _price_note(),
+                    "card": {"id": p["id"], "title": p["title"], "note": p["note"],
+                             "budget": budget,
+                             "stats_req": [{"key": k, "weight": w} for k, w in p["stats"]],
+                             "build": build}}
+    return {"container": cont, "card": None}
+
+
 async def random_warm_loop() -> None:
     """Прогрев кэша случайных сборок: все профили × бюджеты раз в RANDOM_TTL,
     с паузой между расчётами, чтобы не держать цикл событий подряд."""
