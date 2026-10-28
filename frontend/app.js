@@ -6969,17 +6969,28 @@ function renderMapFilters(map, groups) {
       <span class="mf-i">${g.icon}</span>${escapeHtml(g.label)}<span class="mf-n">${g.n}</span></button>`;
   const marks = groups.filter((g) => !g.key.startsWith("area:") && g.key !== "line");
   const rest = groups.filter((g) => g.key.startsWith("area:") || g.key === "line");
+  // на телефоне чипы съедают треть экрана — там они свёрнуты под кнопку .mf-toggle
   box.innerHTML = `
-    <div class="mf-row">${marks.map(chip).join("")}</div>
-    ${rest.length ? `<div class="mf-row mf-areas">${rest.map(chip).join("")}</div>` : ""}
-    <div class="mf-act"><button data-all="1">ПОКАЗАТЬ ВСЁ</button>
-      <button data-all="0">СКРЫТЬ ВСЁ</button></div>`;
+    <button class="mf-toggle" type="button">ФИЛЬТРЫ<span class="mf-tn"></span></button>
+    <div class="mf-body">
+      <div class="mf-row">${marks.map(chip).join("")}</div>
+      ${rest.length ? `<div class="mf-row mf-areas">${rest.map(chip).join("")}</div>` : ""}
+      <div class="mf-act"><button data-all="1">ПОКАЗАТЬ ВСЁ</button>
+        <button data-all="0">СКРЫТЬ ВСЁ</button></div>
+    </div>`;
+  const toggleNote = () => {
+    const n = groups.filter((g) => hidden.has(g.key)).length;
+    box.querySelector(".mf-tn").textContent = n ? ` · СКРЫТО ${n} из ${groups.length}` : "";
+  };
   const sync = () => {
     box.querySelectorAll(".mf-chip").forEach((b) =>
       b.classList.toggle("on", !hidden.has(b.dataset.k)));
     saveMapHidden(hidden);
+    toggleNote();
     apply();
   };
+  toggleNote();
+  box.querySelector(".mf-toggle").addEventListener("click", () => box.classList.toggle("open"));
   box.querySelectorAll(".mf-chip").forEach((b) => b.addEventListener("click", () => {
     const k = b.dataset.k;
     if (hidden.has(k)) hidden.delete(k); else hidden.add(k);

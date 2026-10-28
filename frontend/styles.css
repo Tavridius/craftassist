@@ -1185,6 +1185,14 @@ a.prof-save { display: inline-block; text-decoration: none; }
   background: none; border: none; padding: 0; color: var(--green);
 }
 .mf-act button:hover { text-shadow: var(--glow); }
+.mf-toggle {
+  display: none; font: inherit; font-size: 11px; letter-spacing: 0.08em; cursor: pointer;
+  padding: 6px 10px; background: rgba(7, 10, 7, 0.6);
+  color: var(--green); border: 1px solid var(--green-border);
+}
+.mf-toggle::before { content: "▾ "; }
+.map-filters.open .mf-toggle::before { content: "▴ "; }
+.mf-tn { color: var(--amber); }
 .mo-marker.sel { box-shadow: 0 0 0 3px rgba(124, 230, 142, 0.5), 0 1px 4px #000; }
 .mo-vtx {
   width: 12px; height: 12px; background: var(--amber);
@@ -2864,7 +2872,11 @@ body:has(.cmp-tray:not(.hidden)) .auth-notice { bottom: 76px; }
   .verdict .v-main { font-size: 22px; }
   .tiles, .tiles.five { grid-template-columns: repeat(2, 1fr); }
   .reqs { position: static; }
-  .map-view { height: 68vh; }
+  /* карта целиком в первом экране: свайп по ней двигает карту, а не страницу,
+     поэтому низ за экраном было не докрутить */
+  .map-view { height: 68vh; height: max(calc(100dvh - 190px), 300px); }
+  .mf-toggle { display: inline-block; margin-bottom: 6px; }
+  .map-filters:not(.open) .mf-body { display: none; }
   .promo-card { flex-direction: column; }
   .promo-img { width: 100%; max-height: 200px; }
 }
