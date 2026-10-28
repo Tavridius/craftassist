@@ -6851,8 +6851,10 @@ function objTooltipHtml(o) {
   const c = o.kind === "marker" ? catById(o.category) : null;
   const title = escapeHtml(o.name || (c ? c.name : "Без названия"));
   const badge = c ? `<div class="mo-tip-cat">${c.emoji} ${escapeHtml(c.name)}</div>` : "";
-  const desc = o.description
-    ? `<div class="mo-tip-desc">${escapeHtml(o.description)}</div>` : "";
+  // [wiki-import …] — служебный тег map_import.py (по нему --replace-wiki находит
+  // прошлый импорт): в базе живёт, посетителю не показываем
+  const text = (o.description || "").replace(/\s*\[wiki-import[^\]]*\]\s*/g, " ").trim();
+  const desc = text ? `<div class="mo-tip-desc">${escapeHtml(text)}</div>` : "";
   return `<div class="mo-tip"><div class="mo-tip-h">${title}</div>${badge}${desc}</div>`;
 }
 
