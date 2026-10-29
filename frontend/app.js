@@ -3975,6 +3975,7 @@ const guideTags = (tags) => (tags && tags.length)
   : "";
 
 async function openGuides() {
+  hideSeoBlock();   // серверный список гайдов — для краулера, у людей есть карточки
   home.classList.add("hidden");
   detail.classList.add("hidden");
   results.innerHTML = "";

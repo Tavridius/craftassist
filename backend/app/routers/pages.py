@@ -1458,6 +1458,26 @@ async def map_territory_page(request: Request, territory_id: str):
         seo_html=_territory_seo(terr, rows))
 
 
+def _guides_seo() -> str:
+    """Каталог гайдов в серверном HTML.
+
+    Список на /guides рисует клиент, и без JS робот видел только заголовок:
+    гайды находились лишь через sitemap и случайные ссылки. Свежий ивентовый
+    гайд важно отдать в индекс за сутки, пока на событие есть спрос, — поэтому
+    отдаём ссылки прямо в разметке. Без lru_cache: гайды правят из админки.
+    """
+    items = "".join(
+        f'<li><a href="/guides/{_html.escape(g["slug"], quote=True)}">'
+        f'{_html.escape(g["title"])}</a>'
+        + (f' — {_html.escape(g["description"])}' if g.get("description") else "")
+        + '</li>'
+        for g in guides.list_guides())
+    return ('<div class="seo-inner">'
+            '<h2>Гайды по STALZONE (Сталкрафт)</h2>'
+            f'<ul>{items}</ul>'
+            '</div>')
+
+
 @router.get("/guides", response_class=HTMLResponse)
 async def guides_page(request: Request):
     return render_index(
@@ -1465,7 +1485,8 @@ async def guides_page(request: Request):
         title="Гайды по STALZONE (Сталкрафт) — задания, крафт, экономика и снаряжение",
         desc="Разборы и гайды по STALZONE (ранее Stalcraft — Сталкрафт): загадочные "
              "предметы и задания, крафт, экономика, снаряжение и события. Простым языком, "
-             "с картинками и ссылками на карточки предметов.")
+             "с картинками и ссылками на карточки предметов.",
+        seo_html=_guides_seo())
 
 
 @router.get("/guides/{slug}", response_class=HTMLResponse)
