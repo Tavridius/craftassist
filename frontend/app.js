@@ -3705,6 +3705,10 @@ async function openPatches() {
     return;
   }
   if (location.pathname !== "/patches") return;
+  // серверный список свежих патчей — для краулера; у людей свой, ниже. FAQ
+  // в том же блоке остаётся видимым
+  const crawl = document.querySelector("#seoProse .seo-crawl");
+  if (crawl) crawl.hidden = true;
   page.innerHTML = `<div class="btmod">
     <div class="section-head">
       <div class="section-title">▸ ПАТЧИ · ОБНОВЛЕНИЯ ИГРЫ</div>

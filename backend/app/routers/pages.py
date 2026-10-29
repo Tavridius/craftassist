@@ -1600,9 +1600,38 @@ async def quest_page(request: Request, qid: str):
         noindex=True)
 
 
+def _patches_list_seo(limit: int = 30) -> str:
+    """Свежие патчи ссылками — в серверный HTML /patches.
+
+    Список рисует клиент, и робот видел только FAQ: патчи находились через
+    sitemap. Отдаём последние `limit` — свежие важнее, архив целиком и так в
+    sitemap. Обёртка .seo-crawl: клиент прячет её на /patches (у людей свой
+    список), а FAQ рядом остаётся видимым. Не кэшируем — патчи приходят сами.
+    """
+    from app.db import news
+    rows, _ = news.list_patches(0, limit)
+    if not rows:
+        return ""
+    items = "".join(
+        f'<li><a href="/patches/{int(p["id"])}">{_html.escape(p["title"])}</a>'
+        f' — {_html.escape(_ru_date(p["created_at"]))}</li>'
+        for p in rows)
+    return ('<div class="seo-inner seo-crawl">'
+            '<h2>Последние патчноуты STALZONE (Сталкрафт)</h2>'
+            f'<ul>{items}</ul>'
+            '</div>')
+
+
+def _ru_date(iso: str) -> str:
+    """'2026-10-28T07:21:11+00:00' → '28.10.2026'."""
+    d = (iso or "")[:10].split("-")
+    return ".".join(reversed(d)) if len(d) == 3 else iso or ""
+
+
 @router.get("/patches", response_class=HTMLResponse)
 async def patches_page(request: Request):
     seo_html, faq_ld = _patches_seo()
+    seo_html = _patches_list_seo() + seo_html
     return render_index(
         request, "/patches",
         title="Патчноуты STALZONE (Сталкрафт) — все обновления игры",
