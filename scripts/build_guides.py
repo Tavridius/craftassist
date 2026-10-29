@@ -83,6 +83,12 @@ def snap(extra=""):
 
 def write(slug, meta, html):
     os.makedirs(OUT, exist_ok=True)
+    # при пересборке дата создания остаётся прежней, меняется только updated_at
+    try:
+        with open(os.path.join(OUT, f"{slug}.json"), encoding="utf-8") as f:
+            meta["created_at"] = json.load(f).get("created_at") or meta["created_at"]
+    except (OSError, ValueError, KeyError):
+        pass
     with open(os.path.join(OUT, f"{slug}.json"), "w", encoding="utf-8") as f:
         json.dump(meta, f, ensure_ascii=False, indent=2)
         f.write("\n")

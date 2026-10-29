@@ -321,6 +321,14 @@ class GameDB:
         for block in doc.get("infoBlocks", []):
             for el in (block.get("elements") or []):
                 yield el
+            # с патча 28.10.2026 боевые статы оружия лежат не плоским списком,
+            # а в блоке grouped: compact — краткая карточка (те же строки, что
+            # раньше), detailed — расширенная; расширенную не берём, иначе
+            # строки задвоятся (Урон, Вес…)
+            if block.get("type") == "grouped":
+                for sub in (block.get("compact") or []):
+                    for el in (sub.get("elements") or []):
+                        yield el
 
     def _parse_storage(self, iid: str, doc: dict, kind: str) -> dict | None:
         """Хранилище под арты (контейнер/рюкзак): слоты (size), эффективность,
