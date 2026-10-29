@@ -1535,6 +1535,60 @@ function startEmTick() {
   emTick = setInterval(upd, 1000);
 }
 
+// ---------- «Празднество»: окно рейтинга (4–18.11.2026) ----------
+// В отличие от шторма расписание жёсткое и объявлено заранее: режим с
+// прогрессией открыт каждый день 10:00–00:00 МСК, поэтому считаем прямо в
+// браузере, без сервера. Спрос тот же, что был у Электрошторма, — «когда».
+const FEST_RATED_FROM = Date.UTC(2026, 10, 4, 7);     // 4.11 10:00 МСК
+const FEST_RATED_TO = Date.UTC(2026, 10, 17, 21);     // 18.11 00:00 МСК
+const FEST_BONUS = [                                  // +30% рублей и Хризменников
+  [Date.UTC(2026, 10, 7, 2), Date.UTC(2026, 10, 9, 2)],
+  [Date.UTC(2026, 10, 14, 2), Date.UTC(2026, 10, 16, 2)],
+];
+const MSK_MS = 3 * 3600e3;
+let festTick = null;
+
+const fmtFestLeft = (ms) => {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600);
+  if (d) return `${d} Д ${h} Ч`;
+  const p = (n) => String(n).padStart(2, "0");
+  return `${p(h)}:${p(Math.floor((s % 3600) / 60))}:${p(s % 60)}`;
+};
+
+function festBody(now) {
+  const t = `<div class="st-t">🔔 ПРАЗДНЕСТВО · РЕЖИМ С ПРОГРЕССИЕЙ</div>`;
+  if (now >= FEST_RATED_TO)
+    return `<div class="st-box">${t}<div class="st-big">РЕЙТИНГ ЗАВЕРШЁН</div>
+      <div class="st-sub">НАГРАДЫ ВЕРХНИХ ЛИГ ВЫДАЮТ 18 НОЯБРЯ</div></div>`;
+  const bonus = FEST_BONUS.some(([a, b]) => now >= a && now < b)
+    ? `<div class="st-sub st-on">СЕЙЧАС +30% РУБЛЕЙ И ХРИЗМЕННИКОВ</div>` : "";
+  if (now < FEST_RATED_FROM)
+    return `<div class="st-box">${t}
+      <div class="st-big">ОТКРОЕТСЯ ЧЕРЕЗ ${fmtFestLeft(FEST_RATED_FROM - now)}</div>
+      <div class="st-sub">4 НОЯБРЯ, 10:00 МСК · ПОСЛЕ ТЕХРАБОТ, СТАРТ МОЖЕТ СДВИНУТЬСЯ</div>${bonus}</div>`;
+  // «сегодняшние» 10:00 и полночь по Москве, переведённые обратно в UTC
+  const msk = new Date(now + MSK_MS);
+  const day = Date.UTC(msk.getUTCFullYear(), msk.getUTCMonth(), msk.getUTCDate()) - MSK_MS;
+  const open = msk.getUTCHours() >= 10;
+  const head = open
+    ? `<div class="st-t st-on">🔔 ПРАЗДНЕСТВО · РЕЙТИНГ ОТКРЫТ</div>
+       <div class="st-big">ДО ЗАКРЫТИЯ ${fmtFestLeft(day + 86400e3 - now)}</div>`
+    : `${t}<div class="st-big">ОТКРОЕТСЯ ЧЕРЕЗ ${fmtFestLeft(day + 10 * 3600e3 - now)}</div>`;
+  return `<div class="st-box">${head}
+    <div class="st-sub">КАЖДЫЙ ДЕНЬ 10:00–00:00 МСК · ДО 18 НОЯБРЯ</div>${bonus}</div>`;
+}
+
+function startFestTick(box) {
+  if (festTick) clearInterval(festTick);
+  const upd = () => {
+    if (!box.isConnected) { clearInterval(festTick); festTick = null; return; }
+    box.innerHTML = festBody(Date.now());
+  };
+  upd();
+  festTick = setInterval(upd, 1000);
+}
+
 function dashCraftRow(e, pctBadge) {
   // бейдж — дельта ₽ за цикл (ВЫГОДНЫЕ) или % маржи (ПРОФИТНЫЕ), вторая метрика в тултипе
   const badge = e.diff != null
@@ -3996,6 +4050,9 @@ async function openGuide(slug) {
       startEmTick();
     }).catch(() => {});
   }
+  // окно рейтинга «Празднества» — та же схема, плейсхолдер <div id="festBox">
+  const fest = page.querySelector("#festBox");
+  if (fest) startFestTick(fest);
   adInsert(page);
   renderComments(`guide:${slug}`);
 }

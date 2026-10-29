@@ -2233,6 +2233,7 @@ body:has(.cmp-tray:not(.hidden)) .auth-notice { bottom: 76px; }
 .st-big .st-left { font-variant-numeric: tabular-nums; }
 .st-sub { font-size: 10px; color: var(--dimmer); letter-spacing: 0.06em; }
 .st-sub a { color: var(--green); }
+.st-sub.st-on { color: var(--green); margin-top: 2px; }   /* бонусные выходные «Празднества» */
 /* кнопок отметки две (старт и конец шторма), а блок стоит и в узкой рейке —
    даём им перенос, иначе вторая вылезает за рамку */
 .st-mark { margin: 8px 6px 0 0; font: inherit; font-size: 10px; letter-spacing: 0.06em;
