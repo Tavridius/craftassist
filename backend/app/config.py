@@ -265,6 +265,8 @@ NEWS_IMG_DIR = DATA_DIR / "news_img"                 # зеркало карти
 TG_BOT_TOKEN = os.getenv("TG_BOT_TOKEN", "").strip()
 TG_CHANNEL = os.getenv("TG_CHANNEL", "@stalzone_helper")        # @username или числовой id
 TG_API_BASE = os.getenv("TG_API_BASE", "https://api.telegram.org").rstrip("/")
+# SOCKS5 host:port, через который идти к TG_API_BASE (ByeDPI, контейнер tgdpi). Пусто — напрямую.
+TG_SOCKS = os.getenv("TG_SOCKS", "").strip()
 TG_NOTIFY_PATCHES = os.getenv("TG_NOTIFY_PATCHES", "1") not in ("0", "false", "False")
 TG_NOTIFY_EMISSIONS = os.getenv("TG_NOTIFY_EMISSIONS", "1") not in ("0", "false", "False")
 # выброс — тихое сообщение, которое бот сам удаляет: при 10-20 выбросах в сутки

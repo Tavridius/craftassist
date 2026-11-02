@@ -46,6 +46,9 @@ services:
       - TG_BOT_TOKEN=${TG_BOT_TOKEN:-}
       - TG_CHANNEL=${TG_CHANNEL:-@stalzone_helper}
       - TG_API_BASE=${TG_API_BASE:-https://api.telegram.org}
+      # SOCKS5 host:port до TG_API_BASE — контейнер tgdpi (ByeDPI) ниже.
+      # Пусто в .env (TG_SOCKS=) — напрямую.
+      - TG_SOCKS=${TG_SOCKS-tgdpi:1080}
       - TG_NOTIFY_PATCHES=${TG_NOTIFY_PATCHES:-1}
       - TG_NOTIFY_EMISSIONS=${TG_NOTIFY_EMISSIONS:-1}
       - TG_EMISSION_TTL_MIN=${TG_EMISSION_TTL_MIN:-20}
@@ -84,12 +87,26 @@ services:
       - craft_data:/app/backend/data
     networks:
       - rpgnet
+      - tg
+
+  # ByeDPI: бот ходит через него к Cloudflare-воркеру в обход замедления ТСПУ.
+  # Фейковый пакет с TTL 5 + разрез ClientHello на SNI (стратегия santehno, 29.10.2026).
+  tgdpi:
+    build: ./deploy/tgdpi
+    image: stalzone-tgdpi:latest
+    container_name: stalzone_tgdpi
+    restart: unless-stopped
+    command: ["-i", "0.0.0.0", "-p", "1080", "-f-1", "-t5", "-s1+s"]
+    networks:
+      - tg
 
 networks:
   # существующая сеть, где живёт rpg_nginx — чтобы он ходил к нам по имени контейнера
   rpgnet:
     external: true
     name: backend_rpg_network
+  # своя сеть для прокси — в общей rpgnet открытый SOCKS не нужен
+  tg: {}
 
 volumes:
   craft_data:

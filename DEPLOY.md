@@ -106,6 +106,34 @@ ssh pavel@88.87.70.167 "cd /home/pavel/stalzone-craft &&   sed -i '/^TG_BOT_TOKE
 https://api.telegram.org/bot<токен>/getMe`; крайний вариант — `TG_API_BASE` на
 свой прокси Bot API. Дедуп и очередь удаления — `data/tg_bot.json` в томе.
 
+**19.10.2026 Telegram с сервера закрыт целиком**: таймаут на все IPv4/IPv6
+api.telegram.org, telegram.org, web.telegram.org и kws*.web.telegram.org, то есть
+обходы через WebSocket-эндпоинты (tg-ws-proxy) тоже не помогут. Cloudflare и
+*.workers.dev открываются, поэтому Bot API идёт через воркер
+`scripts/tg_api_worker.js`:
+
+1. dash.cloudflare.com → Workers & Pages → Create → Worker, вставить код из
+   `scripts/tg_api_worker.js`, Deploy. Адрес вида `https://<имя>.<аккаунт>.workers.dev`.
+2. Проверить с сервера (токен не светится в истории, берётся из `.env`):
+   `ssh pavel@88.87.70.167 'cd /home/pavel/stalzone-craft && . ./.env && curl -s -m 15 https://<воркер>/bot$TG_BOT_TOKEN/getMe'`
+3. Прописать и пересоздать контейнер:
+   `ssh pavel@88.87.70.167 "cd /home/pavel/stalzone-craft && sed -i '/^TG_API_BASE=/d' .env && echo 'TG_API_BASE=https://<воркер>' >> .env && docker compose up -d"`
+4. `/api/health` → `tg_bot`: `errors` не растёт, `sent` растёт на первом выбросе.
+
+Воркер: `https://tg-api.rgtrator220.workers.dev` (общий с santehno).
+
+**02.11.2026 + ByeDPI.** Через воркер напрямую запросы с сервера то проходят,
+то висят до таймаута: ТСПУ режет путь сервер → Cloudflare (30.10–31.10 упали 9
+отправок выбросов подряд, `sendMessage failed` без текста — это таймаут).
+Поэтому бот ходит к воркеру через SOCKS-прокси ByeDPI — контейнер
+`stalzone_tgdpi` (`deploy/tgdpi`, поднимается тем же `docker compose up -d
+--build`), адрес в `TG_SOCKS` (по умолчанию `tgdpi:1080`, `TG_SOCKS=` в `.env` —
+напрямую). Сборка и стратегия взяты у santehno, где так же работает бот.
+Если ТСПУ поменяет правила и ошибки вернутся — подобрать новую стратегию
+(`command` у `tgdpi` в docker-compose.yml), см. README santehno, раздел
+«Telegram и ТСПУ». Проверка с сервера через прокси:
+`docker exec stalzone_craft python -c "import httpx;from app import config as c;print(httpx.get(c.TG_API_BASE+'/bot'+c.TG_BOT_TOKEN+'/getMe',proxy='socks5://'+c.TG_SOCKS,timeout=20).status_code)"`
+
 ## operations.db — сжатие (VACUUM)
 
 База «Операций» копила место после удаления старых сессий (ретенция

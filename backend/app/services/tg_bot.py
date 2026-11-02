@@ -64,8 +64,9 @@ class TgBot:
 
     async def _call(self, method: str, payload: dict) -> dict | None:
         url = f"{config.TG_API_BASE}/bot{config.TG_BOT_TOKEN}/{method}"
+        proxy = f"socks5://{config.TG_SOCKS}" if config.TG_SOCKS else None
         try:
-            async with httpx.AsyncClient(trust_env=False, timeout=20.0) as client:
+            async with httpx.AsyncClient(trust_env=False, timeout=20.0, proxy=proxy) as client:
                 r = await client.post(url, json=payload)
             d = r.json()
             if not d.get("ok"):
@@ -75,7 +76,8 @@ class TgBot:
             return d.get("result")
         except Exception as e:                     # noqa: BLE001 — бот не должен ронять вотчеры
             self.errors += 1
-            logger.warning("tg_bot: %s failed: %s", method, e)
+            # у таймаутов httpx пустой str(e) — без имени класса в логе было «failed: »
+            logger.warning("tg_bot: %s failed: %s %s", method, type(e).__name__, e)
             return None
 
     async def send(self, text: str, silent: bool = False, preview: bool = True) -> int | None:
