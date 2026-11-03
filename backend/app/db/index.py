@@ -344,18 +344,22 @@ class GameDB:
             "stalker.tooltip.backpack.stat_name.effectiveness": "efficiency",
             "stalker.tooltip.backpack.info.size": "slots",
         }
+        # новый формат БД (с 30.09.2026) отдаёт float32-шум: защита 60.000004
+        def num(v):
+            return round(v, 4) if isinstance(v, float) else v
+
         self_stats = []
         for el in self._elements(doc):
             key = ((el.get("name") or el.get("key") or {}).get("key")) or ""
             if el.get("type") == "numeric" and key in keymap:
-                fields[keymap[key]] = el.get("value")
+                fields[keymap[key]] = num(el.get("value"))
             elif el.get("type") == "key-value" and key == "core.tooltip.info.rank":
                 fields["rank"] = _tr(el.get("value"))
             elif (el.get("type") == "numeric"
                   and key.startswith("stalker.artefact_properties.factor.")):
                 color = ((el.get("formatted") or {}).get("nameColor") or "").upper()
                 self_stats.append({"key": key, "name": _tr(el.get("name")) or key,
-                                   "val": el.get("value"), "harmful": color.startswith("C1")})
+                                   "val": num(el.get("value")), "harmful": color.startswith("C1")})
         if not fields["slots"]:
             return None
         it = self.items.get(iid, {})

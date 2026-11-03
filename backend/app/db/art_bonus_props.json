@@ -4,7 +4,8 @@
   "fetched": "2026-07-20",
   "mechanics": "На +5 разблокируется случайное свойство из пула, на +10 — из оставшихся, на +15 — последнее. К +15 активен ВЕСЬ пул (у обычных артов 3) — на +15 детерминированно. Рубик 9n7z — пул из 24, к +15 активны только 3 случайных из 24.",
   "notes": "j306 Всполох: на вики пула не было — базы выведены из 3 тултипов krabishka (20.07.2026, M 1.6338/1.1666/0.9398 на +15/+15/+8): электрозащита 12.2 (тройное совпадение до сотых), скорость 0.35, регенерация 0.5; min записан как 0.85×max по образцу вики. Диапазон [min;max] вики — окно Q0 для отображения; для расчёта важен конец с большим модулем.",
-  "formula": "Величина допа ФИКСИРОВАНА (не роллится): значение = конец диапазона с большим модулем (для отрицательных — min) × M × (1 + 0.02×ptn). Верифицировано 20.07.2026 по 9 тултипам krabishka (Ягодка, Спираль, Браслет, Креветка, Иней ×3) — 20/20 совпадений <1%, см. ROADMAP."
+  "formula": "Величина допа ФИКСИРОВАНА (не роллится): значение = конец диапазона с большим модулем (для отрицательных — min) × M × (1 + 0.02×ptn). Верифицировано 20.07.2026 по 9 тултипам krabishka (Ягодка, Спираль, Браслет, Креветка, Иней ×3) — 20/20 совпадений <1%, см. ROADMAP.",
+  "contamination_scale": "Заражения (*_accumulation) умножены на 20 под патч 30.09.2026 («Все заражения умножены на 20», в игровой БД ровно ×20); вики снималась 20.07 в старом масштабе."
  },
  "misses": [],
  "props": {
@@ -31,9 +32,9 @@
     "key": "stalker.artefact_properties.factor.bleeding_accumulation",
     "name_ru": "Кровотечение",
     "name_en": "Bleeding",
-    "min": -0.3,
-    "max": -0.25,
-    "fmt_ru": "[-0.3; -0.25]",
+    "min": -6.0,
+    "max": -5.0,
+    "fmt_ru": "[-6; -5]",
     "color": "53C353"
    }
   ],
@@ -42,9 +43,9 @@
     "key": "stalker.artefact_properties.factor.radiation_accumulation",
     "name_ru": "Радиация",
     "name_en": "Radiation",
-    "min": -0.88,
-    "max": -0.748,
-    "fmt_ru": "[-0.88; -0.748]",
+    "min": -17.6,
+    "max": -14.96,
+    "fmt_ru": "[-17.6; -14.96]",
     "color": "53C353"
    },
    {
@@ -100,9 +101,9 @@
     "key": "stalker.artefact_properties.factor.bleeding_accumulation",
     "name_ru": "Кровотечение",
     "name_en": "Bleeding",
-    "min": -0.8,
-    "max": -0.68,
-    "fmt_ru": "[-0.8; -0.68]",
+    "min": -16.0,
+    "max": -13.6,
+    "fmt_ru": "[-16; -13.6]",
     "color": "53C353"
    },
    {
@@ -225,9 +226,9 @@
     "key": "stalker.artefact_properties.factor.biological_accumulation",
     "name_ru": "Биологическое заражение",
     "name_en": "Biological infection",
-    "min": -0.88,
-    "max": -0.748,
-    "fmt_ru": "[-0.88; -0.748]",
+    "min": -17.6,
+    "max": -14.96,
+    "fmt_ru": "[-17.6; -14.96]",
     "color": "C15252"
    },
    {
@@ -361,9 +362,9 @@
     "key": "stalker.artefact_properties.factor.radiation_accumulation",
     "name_ru": "Радиация",
     "name_en": "Radiation",
-    "min": -0.88,
-    "max": -0.748,
-    "fmt_ru": "[-0.88; -0.748]",
+    "min": -17.6,
+    "max": -14.96,
+    "fmt_ru": "[-17.6; -14.96]",
     "color": "53C353"
    },
    {
@@ -379,9 +380,9 @@
     "key": "stalker.artefact_properties.factor.bleeding_accumulation",
     "name_ru": "Кровотечение",
     "name_en": "Bleeding",
-    "min": -0.4,
-    "max": -0.32,
-    "fmt_ru": "[-0.4; -0.32]",
+    "min": -8.0,
+    "max": -6.4,
+    "fmt_ru": "[-8; -6.4]",
     "color": "53C353"
    }
   ],
@@ -419,9 +420,9 @@
     "key": "stalker.artefact_properties.factor.bleeding_accumulation",
     "name_ru": "Кровотечение",
     "name_en": "Bleeding",
-    "min": -0.3,
-    "max": -0.255,
-    "fmt_ru": "[-0.3; -0.255]",
+    "min": -6.0,
+    "max": -5.1,
+    "fmt_ru": "[-6; -5.1]",
     "color": "53C353"
    },
    {
@@ -785,9 +786,9 @@
     "key": "stalker.artefact_properties.factor.psycho_accumulation",
     "name_ru": "Пси-излучение",
     "name_en": "Psy-emissions",
-    "min": -0.88,
-    "max": -0.748,
-    "fmt_ru": "[-0.88; -0.748]",
+    "min": -17.6,
+    "max": -14.96,
+    "fmt_ru": "[-17.6; -14.96]",
     "color": "C15252"
    }
   ],
@@ -825,9 +826,9 @@
     "key": "stalker.artefact_properties.factor.bleeding_accumulation",
     "name_ru": "Кровотечение",
     "name_en": "Bleeding",
-    "min": -0.698,
-    "max": -0.575,
-    "fmt_ru": "[-0.698; -0.575]",
+    "min": -13.96,
+    "max": -11.5,
+    "fmt_ru": "[-13.96; -11.5]",
     "color": "53C353"
    },
    {
@@ -1017,9 +1018,9 @@
     "key": "stalker.artefact_properties.factor.bleeding_accumulation",
     "name_ru": "Кровотечение",
     "name_en": "Bleeding",
-    "min": -0.8,
-    "max": -0.68,
-    "fmt_ru": "[-0.8; -0.68]",
+    "min": -16.0,
+    "max": -13.6,
+    "fmt_ru": "[-16; -13.6]",
     "color": "53C353"
    }
   ],
@@ -1173,9 +1174,9 @@
     "key": "stalker.artefact_properties.factor.bleeding_accumulation",
     "name_ru": "Кровотечение",
     "name_en": "Bleeding",
-    "min": -0.2,
-    "max": -0.17,
-    "fmt_ru": "[-0.2; -0.17]",
+    "min": -4.0,
+    "max": -3.4,
+    "fmt_ru": "[-4; -3.4]",
     "color": "53C353"
    },
    {
@@ -1269,9 +1270,9 @@
     "key": "stalker.artefact_properties.factor.bleeding_accumulation",
     "name_ru": "Кровотечение",
     "name_en": "Bleeding",
-    "min": -0.3,
-    "max": -0.24,
-    "fmt_ru": "[-0.3; -0.24]",
+    "min": -6.0,
+    "max": -4.8,
+    "fmt_ru": "[-6; -4.8]",
     "color": "53C353"
    },
    {
@@ -1376,9 +1377,9 @@
     "key": "stalker.artefact_properties.factor.psycho_accumulation",
     "name_ru": "Пси-излучение",
     "name_en": "Psy-emissions",
-    "min": -0.88,
-    "max": -0.748,
-    "fmt_ru": "[-0.88; -0.748]",
+    "min": -17.6,
+    "max": -14.96,
+    "fmt_ru": "[-17.6; -14.96]",
     "color": "C15252"
    },
    {
@@ -1434,9 +1435,9 @@
     "key": "stalker.artefact_properties.factor.psycho_accumulation",
     "name_ru": "Пси-излучение",
     "name_en": "Psy-emissions",
-    "min": -1.28,
-    "max": -1.088,
-    "fmt_ru": "[-1.28; -1.088]",
+    "min": -25.6,
+    "max": -21.76,
+    "fmt_ru": "[-25.6; -21.76]",
     "color": "C15252"
    },
    {
@@ -1579,9 +1580,9 @@
     "key": "stalker.artefact_properties.factor.biological_accumulation",
     "name_ru": "Биологическое заражение",
     "name_en": "Biological infection",
-    "min": -0.88,
-    "max": -0.748,
-    "fmt_ru": "[-0.88; -0.748]",
+    "min": -17.6,
+    "max": -14.96,
+    "fmt_ru": "[-17.6; -14.96]",
     "color": "C15252"
    },
    {
@@ -1791,9 +1792,9 @@
     "key": "stalker.artefact_properties.factor.bleeding_accumulation",
     "name_ru": "Кровотечение",
     "name_en": "Bleeding",
-    "min": -1,
-    "max": -0.82,
-    "fmt_ru": "[-1; -0.82]",
+    "min": -20,
+    "max": -16.4,
+    "fmt_ru": "[-20; -16.4]",
     "color": "53C353"
    },
    {
@@ -1948,45 +1949,45 @@
     "key": "stalker.artefact_properties.factor.radiation_accumulation",
     "name_ru": "Радиация",
     "name_en": "Radiation",
-    "min": -1.28,
-    "max": -1.088,
-    "fmt_ru": "[-1.28; -1.088]",
+    "min": -25.6,
+    "max": -21.76,
+    "fmt_ru": "[-25.6; -21.76]",
     "color": "53C353"
    },
    {
     "key": "stalker.artefact_properties.factor.thermal_accumulation",
     "name_ru": "Температура",
     "name_en": "Temperature",
-    "min": -1.28,
-    "max": -1.088,
-    "fmt_ru": "[-1.28; -1.088]",
+    "min": -25.6,
+    "max": -21.76,
+    "fmt_ru": "[-25.6; -21.76]",
     "color": "53C353"
    },
    {
     "key": "stalker.artefact_properties.factor.biological_accumulation",
     "name_ru": "Биологическое заражение",
     "name_en": "Biological infection",
-    "min": -1.28,
-    "max": -1.088,
-    "fmt_ru": "[-1.28; -1.088]",
+    "min": -25.6,
+    "max": -21.76,
+    "fmt_ru": "[-25.6; -21.76]",
     "color": "C15252"
    },
    {
     "key": "stalker.artefact_properties.factor.psycho_accumulation",
     "name_ru": "Пси-излучение",
     "name_en": "Psy-emissions",
-    "min": -1.28,
-    "max": -1.088,
-    "fmt_ru": "[-1.28; -1.088]",
+    "min": -25.6,
+    "max": -21.76,
+    "fmt_ru": "[-25.6; -21.76]",
     "color": "C15252"
    },
    {
     "key": "stalker.artefact_properties.factor.bleeding_accumulation",
     "name_ru": "Кровотечение",
     "name_en": "Bleeding",
-    "min": -1,
-    "max": -0.85,
-    "fmt_ru": "[-1; -0.85]",
+    "min": -20,
+    "max": -17.0,
+    "fmt_ru": "[-20; -17]",
     "color": "53C353"
    },
    {
@@ -2076,9 +2077,9 @@
     "key": "stalker.artefact_properties.factor.bleeding_accumulation",
     "name_ru": "Кровотечение",
     "name_en": "Bleeding",
-    "min": -1,
-    "max": -0.85,
-    "fmt_ru": "[-1; -0.85]",
+    "min": -20,
+    "max": -17.0,
+    "fmt_ru": "[-20; -17]",
     "color": "53C353"
    }
   ],
@@ -2163,9 +2164,9 @@
     "key": "stalker.artefact_properties.factor.psycho_accumulation",
     "name_ru": "Пси-излучение",
     "name_en": "Psy-emissions",
-    "min": -1.28,
-    "max": -1.06,
-    "fmt_ru": "[-1.28; -1.06]",
+    "min": -25.6,
+    "max": -21.2,
+    "fmt_ru": "[-25.6; -21.2]",
     "color": "C15252"
    }
   ],
@@ -2569,9 +2570,9 @@
     "key": "stalker.artefact_properties.factor.bleeding_accumulation",
     "name_ru": "Кровотечение",
     "name_en": "Bleeding",
-    "min": -0.9,
-    "max": -0.765,
-    "fmt_ru": "[-0.9; -0.765]",
+    "min": -18.0,
+    "max": -15.3,
+    "fmt_ru": "[-18; -15.3]",
     "color": "53C353"
    }
   ],
@@ -2783,9 +2784,9 @@
     "key": "stalker.artefact_properties.factor.bleeding_accumulation",
     "name_ru": "Кровотечение",
     "name_en": "Bleeding",
-    "min": -1,
-    "max": -0.85,
-    "fmt_ru": "[-1; -0.85]",
+    "min": -20,
+    "max": -17.0,
+    "fmt_ru": "[-20; -17]",
     "color": "53C353"
    },
    {
@@ -2821,9 +2822,9 @@
     "key": "stalker.artefact_properties.factor.combustion_accumulation",
     "name_ru": "Горение",
     "name_en": "Burning",
-    "min": -0.2,
-    "max": -0.17,
-    "fmt_ru": "[-0.2; -0.17]",
+    "min": -4.0,
+    "max": -3.4,
+    "fmt_ru": "[-4; -3.4]",
     "color": "53C353"
    },
    {
@@ -2841,9 +2842,9 @@
     "key": "stalker.artefact_properties.factor.combustion_accumulation",
     "name_ru": "Горение",
     "name_en": "Burning",
-    "min": -0.1,
-    "max": -0.08,
-    "fmt_ru": "[-0.1; -0.08]",
+    "min": -2.0,
+    "max": -1.6,
+    "fmt_ru": "[-2; -1.6]",
     "color": "53C353"
    },
    {
@@ -2859,9 +2860,9 @@
     "key": "stalker.artefact_properties.factor.thermal_accumulation",
     "name_ru": "Температура",
     "name_en": "Temperature",
-    "min": -0.88,
-    "max": -0.748,
-    "fmt_ru": "[-0.88; -0.748]",
+    "min": -17.6,
+    "max": -14.96,
+    "fmt_ru": "[-17.6; -14.96]",
     "color": "53C353"
    }
   ],
@@ -2975,9 +2976,9 @@
     "key": "stalker.artefact_properties.factor.combustion_accumulation",
     "name_ru": "Горение",
     "name_en": "Burning",
-    "min": -0.1,
-    "max": -0.082,
-    "fmt_ru": "[-0.1; -0.082]",
+    "min": -2.0,
+    "max": -1.64,
+    "fmt_ru": "[-2; -1.64]",
     "color": "53C353"
    }
   ],
@@ -3053,9 +3054,9 @@
     "key": "stalker.artefact_properties.factor.combustion_accumulation",
     "name_ru": "Горение",
     "name_en": "Burning",
-    "min": -0.3,
-    "max": -0.24,
-    "fmt_ru": "[-0.3; -0.24]",
+    "min": -6.0,
+    "max": -4.8,
+    "fmt_ru": "[-6; -4.8]",
     "color": "53C353"
    },
    {
@@ -3102,9 +3103,9 @@
     "key": "stalker.artefact_properties.factor.combustion_accumulation",
     "name_ru": "Горение",
     "name_en": "Burning",
-    "min": -0.1,
-    "max": -0.085,
-    "fmt_ru": "[-0.1; -0.085]",
+    "min": -2.0,
+    "max": -1.7,
+    "fmt_ru": "[-2; -1.7]",
     "color": "53C353"
    },
    {
@@ -3131,9 +3132,9 @@
     "key": "stalker.artefact_properties.factor.thermal_accumulation",
     "name_ru": "Температура",
     "name_en": "Temperature",
-    "min": -0.88,
-    "max": -0.35,
-    "fmt_ru": "[-0.88; -0.35]",
+    "min": -17.6,
+    "max": -7.0,
+    "fmt_ru": "[-17.6; -7]",
     "color": "53C353"
    },
    {
