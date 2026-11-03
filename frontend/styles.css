@@ -940,7 +940,7 @@ a.btab { display: inline-block; text-decoration: none; }
 .sb-cta span { color: var(--dim); }
 .sb-cta:hover { border-color: var(--green); }
 
-/* строка над слотами ручной сборки: пример/своя, цена и главные статы */
+/* строка над слотами ручной сборки: «ваша сборка», цена и «Очистить» */
 .bsum {
   display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin-bottom: 12px;
   padding: 8px 12px; border: 1px solid var(--border); background: var(--panel-deep);
@@ -951,7 +951,6 @@ a.btab { display: inline-block; text-decoration: none; }
 .bsum-nums { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; }
 .bsum-cost { color: var(--green); font-size: 14px; letter-spacing: 0.04em; }
 .bsum-cost .warn { font-size: 10px; }
-.bsum-st b { color: var(--green); font-weight: 400; }
 @media (max-width: 640px) {
   .bsum { padding: 8px 10px; }
   .bsum-what { flex-basis: 100%; }

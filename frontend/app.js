@@ -5494,18 +5494,15 @@ async function ensureBuildDict() {
   const first = STORAGES()[0];
   buildState.container = first ? first.id : null;
   buildState.slots = first ? Array(first.slots).fill(null) : [];
-  buildSeed = { sig: buildSig(), card: null };
   return true;
 }
 
-// Чья сборка на экране. Пока посетитель ничего не менял, это заготовка: пустая
-// сетка или пример первого входа (card). Первое же изменение делает сборку его —
-// с этого момента она живёт в браузере (MINE_KEY) и примером не затирается.
-// Пустая сетка остаётся только после «Очистить»: на ней по запросу «калькулятор
-// сборок» уходили 22% на ПК и 31% на телефоне (Метрика 28.09–27.10.2026).
-let buildSeed = null;          // {sig, card|null}; null — сборка посетителя
-let defaultLoading = false;
-const buildSig = () => JSON.stringify([buildState.container, buildState.slots]);
+// Первый экран — пустой калькулятор. С 28.10 по 01.11.2026 вместо него стоял
+// посчитанный пример «пулестой + живучесть»: отказы на входе /builds выросли
+// 24.7% → 34.8%, по запросам про «калькулятор артефактов» — до 75–100%. Тем, кто
+// пришёл не считать, а смотреть, служит кнопка «Готовые сборки» над слотами.
+// Собранное посетителем живёт в браузере (MINE_KEY) и возвращается при входе.
+const buildEmpty = () => !buildState.slots.some(Boolean);
 
 async function openBuilds() {
   home.classList.add("hidden");
@@ -5515,7 +5512,6 @@ async function openBuilds() {
   if (!(await ensureBuildDict())) return;
   restoreBuildDraft();
   restoreMyBuild();
-  if (buildSeed && !buildSeed.card) loadDefaultBuild();
   renderBuilds();
 }
 
@@ -5530,47 +5526,18 @@ function saveMyBuild() {
   } catch (e) { /* приватный режим — живёт до перезагрузки */ }
 }
 function restoreMyBuild() {
-  if (!buildSeed || buildSig() !== buildSeed.sig) return;   // в памяти уже своя
+  if (!buildEmpty()) return;   // в памяти уже своя
   let d = null;
   try { d = JSON.parse(localStorage.getItem(MINE_KEY) || "null"); } catch (e) { return; }
   const c = d && STORAGES().find((x) => x.id === d.container);
   if (!c) return;
   buildState.container = c.id;
   buildState.slots = Array(c.slots).fill(null).map((_, i) => keepSlot((d.slots || [])[i]));
-  buildSeed = null;
   buildState.slots.forEach((x) => x && loadArtPrices(x.id));
-}
-
-// пример первого входа: состав готовой сборки «пулестой + живучесть» под средний
-// бюджет (/api/build/default, кэш прогрева). Показываем, когда подтянулись цены
-// артов, — иначе первый кадр «+4 БЕЗ ЦЕНЫ». Заодно заполняем автоподбор той же
-// сборкой: вкладка открывается с посчитанным результатом, а не с пустой формой.
-async function loadDefaultBuild() {
-  if (defaultLoading) return;
-  defaultLoading = true;
-  let d = null;
-  try { d = await fetch(api("/build/default")).then((r) => r.json()); } catch (e) { /* без примера */ }
-  const p = d && d.card;
-  const cont = p && STORAGES().find((c) => c.id === (d.container || {}).id);
-  if (cont) await Promise.all(p.build.slots.map((s) => loadArtPrices(s.item)));
-  defaultLoading = false;
-  // пока грузилось, посетитель мог начать свою сборку — её не трогаем
-  if (cont && buildSeed && !buildSeed.card && buildSig() === buildSeed.sig) {
-    fillBuildSlots(cont, p.build.slots);
-    buildSeed = { sig: buildSig(), card: p };
-    if (!autoState.result) {
-      autoState.budget = p.budget;
-      autoState.stats = p.stats_req.map((s) => ({ key: s.key, weight: s.weight }));
-      autoState.result = { container: d.container, builds: [p.build],
-                           warnings: d.price_note ? [d.price_note] : [] };
-    }
-  }
-  if (location.pathname === "/builds") renderBuilds();
 }
 
 function clearBuild() {
   buildState.slots = buildState.slots.map(() => null);
-  buildSeed = null;
   pickerSlot = -1;
   ymGoal("build_clear");
   renderBuilds();
@@ -5595,7 +5562,6 @@ function restoreBuildDraft() {
   if (!c || buildState.slots.some(Boolean)) return;   // своя сборка на экране важнее
   buildState.container = c.id;
   buildState.slots = Array(c.slots).fill(null).map((_, i) => keepSlot(d.slots[i]));
-  buildSeed = null;
   buildTab = "manual";
   buildState.slots.forEach((x) => x && loadArtPrices(x.id));
 }
@@ -5849,7 +5815,6 @@ function openInCalculator(contId, slots, goal) {
   const cont = STORAGES().find((c) => c.id === contId);
   if (!cont) return;
   fillBuildSlots(cont, slots);
-  buildSeed = null;   // выбрал сам — теперь это его сборка
   buildTab = "manual";
   pickerSlot = -1;
   ymGoal(goal);
@@ -5863,10 +5828,9 @@ function randomAuto(i) {
   const p = (RANDOM_BUILDS.cards || [])[+i];
   if (!p) return;
   const cont = RANDOM_BUILDS.container || {};
-  if (cont.id && buildSeed) {   // своя сборка в ручном режиме важнее хранилища карточки
+  if (cont.id && buildEmpty()) {   // своя сборка в ручном режиме важнее хранилища карточки
     buildState.container = cont.id;
     buildState.slots = Array(cont.slots || 0).fill(null);
-    buildSeed = { sig: buildSig(), card: null };
   }
   autoState.budget = p.budget;
   autoState.stats = p.stats_req.map((s) => ({ key: s.key, weight: s.weight }));
@@ -6216,8 +6180,7 @@ const autoPublishSrc = (b, cont) => ({
 function renderBuilds() {
   const cont = buildContainer();
   if (!cont) { page.innerHTML = `<div class="empty">НЕТ ДАННЫХ ХРАНИЛИЩ</div>`; return; }
-  if (buildSeed && buildSig() !== buildSeed.sig) buildSeed = null;   // поменял — теперь его
-  if (!buildSeed) saveMyBuild();
+  saveMyBuild();
 
   // Развилка интента. По Метрике «калькулятор артефактов сталкрафт» и соседние
   // фразы дают отказы 44–60% при глубине 1.0: человек ищет ЦЕНУ артефакта, а страница
@@ -6253,20 +6216,13 @@ function renderBuilds() {
   wireBuilds(cont);
 }
 
-// строка над слотами: что за сборка, сколько стоит и главные статы — на телефоне
-// итоги уезжают под сетку слотов, а цифры нужны на первом экране
+// строка над слотами: стоимость сборки — на телефоне итоги уезжают под сетку
+// слотов, а цена нужна на первом экране
 function buildSumBar(t) {
-  const card = buildSeed && buildSeed.card;
-  const stats = card ? card.stats_req.map((s) => t.stats[s.key]).filter(Boolean) : [];
-  const what = card
-    ? `<b>ПРИМЕР: ${escapeHtml(card.title)}</b> · БЮДЖЕТ ${fmt(card.budget)} ₽ —
-       меняйте арты, качество и заточку, итог пересчитается`
-    : `<b>ВАША СБОРКА</b> · сохраняется в этом браузере`;
   return `<div class="bsum">
-    <div class="bsum-what">${what}</div>
+    <div class="bsum-what"><b>ВАША СБОРКА</b> · сохраняется в этом браузере</div>
     <div class="bsum-nums">
       <span class="bsum-cost">${fmt(t.cost)} ₽${t.unpriced ? ` <span class="warn">+ ${t.unpriced} БЕЗ ЦЕНЫ</span>` : ""}</span>
-      ${stats.map((s) => `<span class="bsum-st">${escapeHtml(s.name)} <b>${fmtStat(s.total)}</b></span>`).join("")}
     </div>
     <button class="cb-btn" id="bClear" title="Убрать все артефакты">ОЧИСТИТЬ</button>
   </div>`;
@@ -6275,8 +6231,6 @@ function buildSumBar(t) {
 function renderManual(cont) {
   const t = manualTotals(cont);
   const filled = buildState.slots.some(Boolean);
-  if (!filled && defaultLoading)
-    return `<div class="ready-load">// СЧИТАЮ ПРИМЕР СБОРКИ НА ЖИВЫХ ЦЕНАХ…</div>`;
   return `${filled ? buildSumBar(t) : ""}
     <div class="bgrid">${buildState.slots.map((s, i) => manualSlotCard(s, i)).join("")}</div>
     ${totalsBlock(t, cont, null)}
