@@ -5,8 +5,11 @@
 маркеров (wiki_solve*) со смещением. Здесь — ключ <slug>.affine из
 wiki_transforms.json: px вики на maxZoom (веб-меркатор) → нативные px dmap.
 Карты без надёжной привязки пропускаем:
-  wild-north — на нашем dmap район под облаками КПК, сопоставлять не с чем;
   graveyard  — «Могильник» на вики нарисован от руки, не план в блоках.
+Дикий Север (wild-north) на нашем dmap под облаками КПК; его привязка — к
+подложке вики, вклеенной в dmap (wiki_underlay.py), поэтому выгружается
+отдельным прогоном, чтобы не трогать остальной импорт:
+    python wiki_export_v2.py wild-north   -> wiki_points_import_wild-north.json
 
 Выход: wiki_points_import_v2.json для map_import.py (детальный слой,
 черновики; в описании — тег [wiki-import <slug>], по нему map_import
@@ -68,10 +71,10 @@ def to_px(c, n):
             (1 - math.log(math.tan(lat) + 1 / math.cos(lat)) / math.pi) / 2 * n)
 
 
-def main():
+def main(maps=MAPS):
     tr = json.load(open(os.path.join(base, "wiki_transforms.json"), encoding="utf-8"))
     rows, per, unknown = [], {}, {}
-    for slug in MAPS:
+    for slug in maps:
         A = tr[slug]["affine"]
         d = json.load(open(os.path.join(base, f"wiki_{slug}.json"), encoding="utf-8"))
         n = 2 ** d["settings"]["maxZoom"] * 256
@@ -113,7 +116,8 @@ def main():
                                  "color": color, "geometry": [list(p) for p in pts],
                                  "description": (desc + "\n" if desc else "") + tag})
                     per[(slug, "area")] = per.get((slug, "area"), 0) + 1
-    out = os.path.join(base, "wiki_points_import_v2.json")
+    name = "v2" if tuple(maps) == MAPS else "-".join(maps)
+    out = os.path.join(base, f"wiki_points_import_{name}.json")
     with open(out, "w", encoding="utf-8") as f:
         json.dump(rows, f, ensure_ascii=False, indent=1)
     print(f"итого {len(rows)} -> {out}")
@@ -124,4 +128,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main(tuple(sys.argv[1:]) or MAPS)

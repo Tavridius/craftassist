@@ -1680,8 +1680,10 @@ def _bbox_px(x0: int, y0: int, x1: int, y1: int) -> list[int]:
             (x1 - _DETAIL_X0 + 1) * 512, (y1 - _DETAIL_Y0 + 1) * 512]
 
 
-# indexed — территория с метками: в sitemap и без noindex (pages.py). Дикий Север
-# (на dmap под облаками, меток нет) и закрытые — под noindex, там тонкая страница.
+# indexed — территория с метками: в sitemap и без noindex (pages.py); закрытые —
+# под noindex, там тонкая страница. Дикий Север в КПК под облаками: с 05.11.2026
+# подложка и метки — со stalzone.wiki (wiki_map/wiki_underlay.py), до своей
+# подложки из кэша клиента. underlay — источник подложки для подписи на странице.
 # bbox Юга/Севера/Любеча/Лабиринта — по кадру подложек stalzone.wiki после привязки
 # (wiki_register.py): прежние рамки были шире карты, вид открывался слишком мелким
 MAP_TERRITORIES = [
@@ -1690,7 +1692,9 @@ MAP_TERRITORIES = [
     {"id": "sever", "name": "Северная Зона", "label": [6000, 3000],
      "bbox": _bbox_px(-23, -1, -13, 9), "indexed": True},
     {"id": "wnorth", "name": "Дикий Север", "label": [9900, 3450],
-     "bbox": _bbox_px(12, -3, 18, 3)},
+     # рамка — кадр подложки вики в пустом поле dmap справа от карты КПК
+     # (wiki_transforms.json, wild-north.affine), а не регионы (12..18, -3..3)
+     "bbox": [54272, 17920, 60616, 20964], "indexed": True, "underlay": "stalzone.wiki"},
     # Любеч-3 до 28.10.2026 был «limansk» с рамкой (-4..0,-2..2) — там облака
     # у Лабиринта, а сам Любеч севернее; /map/limansk фронт редиректит
     {"id": "lyubech", "name": "Любеч-3", "label": [7050, 5250],

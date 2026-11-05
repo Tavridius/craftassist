@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Склейка подложки карты stalzone.wiki в одну картинку — для регистрации с dmap.
 
-Тайлы: cdn3.stalzone.wiki/map/tiles/<path>/{z}-{x}-{y}.jpg, 256px, обычная XYZ-
+Тайлы: <settings.tiles>/{z}-{x}-{y}.jpg (с 11.2026 — cdn.stalcraft.wiki; старый
+cdn3.stalzone.wiki с нашей сети не отвечает), 256px, обычная XYZ-
 сетка веб-меркатора. settings.width/height в выгрузке (wiki_extract.py) — размер
 картинки на zoom maxZoom-1. Качаем последовательно, с паузой, кэшируем на диск.
 
@@ -20,14 +21,29 @@ from PIL import Image
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 base = os.path.dirname(os.path.abspath(__file__))
-CDN = "https://cdn3.stalzone.wiki/map/tiles/"
 _o = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
+def _get(url: str, tries: int = 8) -> bytes:
+    """Тайл или b"" (404 — тайла нет). Сеть до CDN вики рвёт TLS через раз —
+    сетевые ошибки повторяем с паузой."""
+    for i in range(tries):
+        try:
+            with _o.open(url, timeout=30) as r:
+                return r.read()
+        except urllib.error.HTTPError:
+            return b""
+        except (urllib.error.URLError, TimeoutError, ConnectionError):
+            if i == tries - 1:
+                raise
+            time.sleep(1 + i)
+    return b""
 
 
 def stitch(slug: str, z: int | None, out: str) -> str:
     d = json.load(open(os.path.join(base, f"wiki_{slug}.json"), encoding="utf-8"))
     st = d["settings"]
-    path = st["tiles"].split("/map/tiles/", 1)[1]
+    tiles = st["tiles"].rstrip("/")
     z = st["maxZoom"] if z is None else z
     k = 2 ** (z - (st["maxZoom"] - 1))
     nx, ny = math.ceil(st["width"] * k / 256), math.ceil(st["height"] * k / 256)
@@ -50,11 +66,7 @@ def stitch(slug: str, z: int | None, out: str) -> str:
         for y in range(ny):
             f = os.path.join(cache, f"{x}-{y}.jpg")
             if not os.path.exists(f):
-                try:
-                    with _o.open(f"{CDN}{path}/{z}-{x}-{y}.jpg", timeout=30) as r:
-                        data = r.read()
-                except urllib.error.HTTPError:
-                    data = b""
+                data = _get(f"{tiles}/{z}-{x}-{y}.jpg")
                 with open(f, "wb") as fh:
                     fh.write(data)
                 time.sleep(0.15)

@@ -7060,7 +7060,10 @@ function renderTerritory(terr) {
     </div>
     <div class="map-filters" id="mapFilters"></div>
     <div class="map-view" id="mapView"></div>
-    <div class="map-legend">Детальная карта из КПК STALZONE (облака — как в игре).
+    <div class="map-legend">${terr.underlay
+      ? `В КПК STALZONE эта территория закрыта облаками — подложка пока по карте
+         ${escapeHtml(terr.underlay)}.`
+      : "Детальная карта из КПК STALZONE (облака — как в игре)."}
       Клик по фильтру прячет или показывает группу; выбор запоминается.
       Расположение меток — по картам stalzone.wiki.</div>
   </div>`;
