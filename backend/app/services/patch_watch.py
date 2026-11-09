@@ -11,6 +11,7 @@ lastPostedAt) инжестим — HTML прогоняется через сан
 import asyncio
 import logging
 import re
+from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urljoin
@@ -127,6 +128,19 @@ def _plain(html: str, limit: int = 220) -> str:
     return txt[:limit].rstrip() + ("…" if len(txt) > limit else "")
 
 
+NOTIFY_MAX_AGE_H = 48
+
+
+def _is_fresh(created_at: str) -> bool:
+    """Тема моложе NOTIFY_MAX_AGE_H часов. Непарсящаяся дата — считаем свежей,
+    чтобы не потерять анонс из-за формата."""
+    try:
+        ts = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return True
+    return datetime.now(timezone.utc) - ts < timedelta(hours=NOTIFY_MAX_AGE_H)
+
+
 class PatchWatch:
     def __init__(self) -> None:
         self.last_poll: float | None = None
@@ -183,14 +197,32 @@ class PatchWatch:
                 out.append(url)
         return out
 
+    async def _first_post_fallback(self, client: httpx.AsyncClient, pid: int) -> dict | None:
+        """Пост №1 темы отдельным запросом. Нужен, когда у темы на форуме пустой
+        firstPostId: так бывает после того, как модераторы выносят комментарии в
+        отдельную тему (патчноут 04.11.2026, d/197510). Сам пост при этом жив,
+        но include=firstPost его не отдаёт."""
+        doc = await self._get_json(
+            client, f"{config.FORUM_API}/api/posts?filter%5Bdiscussion%5D={pid}"
+                    f"&sort=number&page%5Blimit%5D=1")
+        for p in (doc or {}).get("data", []):
+            at = p.get("attributes") or {}
+            if at.get("number") == 1 and at.get("contentType") == "comment":
+                return p
+        return None
+
     async def _ingest(self, client: httpx.AsyncClient, disc: dict,
                       posts: dict[str, dict]) -> dict | None:
         pid = int(disc["id"])
         a = disc["attributes"]
         first_id = (((disc.get("relationships") or {}).get("firstPost") or {})
                     .get("data") or {}).get("id")
-        post = posts.get(str(first_id))
+        post = posts.get(str(first_id)) if first_id else None
         if not post:
+            logger.warning("patch_watch: %s без firstPost в списке, берём пост №1 отдельно", pid)
+            post = await self._first_post_fallback(client, pid)
+        if not post:
+            logger.warning("patch_watch: %s — первый пост не найден, пропускаем", pid)
             return None
         html = (post.get("attributes") or {}).get("contentHtml") or ""
         clean, img_urls = sanitize(html)
@@ -223,7 +255,9 @@ class PatchWatch:
                 if known and known.get("last_posted") == a.get("lastPostedAt"):
                     continue
                 got = await self._ingest(client, disc, posts)
-                if notify and got and not known:
+                # в канал — только свежие: тема, подхваченная задним числом
+                # (как 04.11 после фикса firstPost), устарела для анонса
+                if notify and got and not known and _is_fresh(got["created_at"]):
                     await tgbot.patch(pid, got["title"], got["anons"], got["created_at"])
             except Exception:
                 logger.exception("patch_watch: ingest %s failed", disc.get("id"))
