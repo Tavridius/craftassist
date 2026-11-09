@@ -3333,6 +3333,15 @@ a.ops-gear:hover .nm { text-decoration: underline; }
   font-size: 10px; letter-spacing: 0.12em; color: var(--green); text-decoration: none;
 }
 .h2-more:hover { text-shadow: var(--glow); }
+/* строка ссылки модуля с подписью слева (промокоды → Telegram) */
+.h2-foot {
+  display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap;
+  gap: 4px 14px; margin-top: 10px; padding-top: 8px;
+}
+.h2-mod .h2-foot .h2-more,
+.h2-hud .h2-mod.promo-strip .h2-foot .h2-more { margin: 0 0 0 auto; padding: 0; }
+.h2-hud .h2-mod.promo-strip .h2-foot { margin-top: 6px; padding-top: 4px; }
+.h2-tg { font-size: 10px; letter-spacing: 0.12em; text-decoration: none; }
 .h2-trace { display: none; }
 .h2 .dash-charts { grid-template-columns: 1fr 1fr; }
 .h2 .empty-sm { padding: 10px 2px; }
