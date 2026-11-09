@@ -29,7 +29,7 @@ from app.services import (auction, barter, builds, compare, craft, exchange,
 from app.services.estorm import estorm
 from app.services import fuel as fuel_svc
 from app.services.artefact_lots import artlots
-from app.services.tg_bot import tgbot
+from app.services.tg_bot import spawn as tg_spawn, tgbot
 from app.services.artefact_watch import MSK
 from app.services.emission_watch import ewatch
 from app.services.ingredient_watch import watch
@@ -645,6 +645,8 @@ async def admin_promo_save(request: Request, payload: dict = Body(...)):
     saved = promos.save(pid, _clean_promo(payload))
     if not saved:
         raise HTTPException(404, "promo not found")
+    # новый код — пост в канал с закрепом; правка — правка поста (services/tg_bot)
+    tg_spawn(tgbot.promo_saved(saved, created=pid is None))
     return saved
 
 
@@ -654,7 +656,26 @@ async def admin_promo_delete(request: Request, pid: int):
     _require_admin(request)
     if not promos.delete(pid):
         raise HTTPException(404, "promo not found")
+    tg_spawn(tgbot.promo_deleted(pid))
     return {"ok": True}
+
+
+@router.post("/admin/tg/promo-digest")
+async def admin_promo_digest(request: Request):
+    """Разовый анонс в канал: «промокоды теперь приходят сюда» + все действующие
+    коды, кроме реферального. Повторно не отправляется."""
+    _require_admin(request)
+    if not tgbot.enabled:
+        raise HTTPException(409, "бот выключен: на сервере не задан TG_BOT_TOKEN")
+    if tgbot.digest_sent:
+        raise HTTPException(409, "анонс уже отправлен")
+    items = [p for p in promos.list_promos() if not p["is_ref"]]
+    if not items:
+        raise HTTPException(422, "нет действующих промокодов")
+    mid = await tgbot.promo_digest(items)
+    if not mid:
+        raise HTTPException(502, "Telegram не принял сообщение, см. логи")
+    return {"ok": True, "message_id": mid, "promos": len(items)}
 
 
 # ---------- поиск прямо из модулей главной ----------

@@ -269,6 +269,8 @@ TG_API_BASE = os.getenv("TG_API_BASE", "https://api.telegram.org").rstrip("/")
 TG_SOCKS = os.getenv("TG_SOCKS", "").strip()
 TG_NOTIFY_PATCHES = os.getenv("TG_NOTIFY_PATCHES", "1") not in ("0", "false", "False")
 TG_NOTIFY_EMISSIONS = os.getenv("TG_NOTIFY_EMISSIONS", "1") not in ("0", "false", "False")
+# новый промокод из /dev/promo — пост в канал с закрепом (реферальный не постится)
+TG_NOTIFY_PROMOS = os.getenv("TG_NOTIFY_PROMOS", "1") not in ("0", "false", "False")
 # выброс — тихое сообщение, которое бот сам удаляет: при 10-20 выбросах в сутки
 # канал иначе превратился бы в ленту тревог поверх постов
 TG_EMISSION_TTL_MIN = int(os.getenv("TG_EMISSION_TTL_MIN", "20"))

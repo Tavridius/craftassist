@@ -7926,6 +7926,9 @@ async function renderDevPromosList() {
   let d;
   try { d = await fetch(api("/promos")).then((r) => r.json()); }
   catch (e) { page.innerHTML = `<div class="empty">[!] ОШИБКА СЕТИ</div>`; return; }
+  // статус бота — для разовой кнопки анонса в канал
+  const bot = await fetch(api("/admin/tg-posts")).then((r) => r.json()).then((j) => j.bot || {})
+    .catch(() => ({}));
   if (location.pathname !== "/dev/promo") return;
   const items = d.items || [];
   const rows = items.map((p) => `
@@ -7945,13 +7948,30 @@ async function renderDevPromosList() {
     <div class="section-head">
       <div class="section-title">▸ ДЕВ · ПРОМОКОДЫ</div>
       <div class="section-note">Модуль на главной + страница /promo. Истёкшие удаляются автоматически
-        (по дате МСК). «Реферальный» — всегда один и закреплён сверху.</div>
+        (по дате МСК). «Реферальный» — всегда один и закреплён сверху.
+        ${bot.enabled ? `Новый код (кроме реферального) сразу уходит постом в Telegram-канал и висит
+        в закрепе; правка кода правит пост, истёк или удалён — пост снимается.`
+          : "Telegram-бот выключен: коды в канал не уходят."}</div>
     </div>
     ${devSubnav("promo")}
     <button class="gadm-new" id="padmNew">＋ НОВЫЙ ПРОМОКОД</button>
+    ${bot.enabled && !bot.promo_digest_sent ? `<button class="gadm-btn" id="padmDigest">
+      📢 РАЗОВЫЙ АНОНС В TELEGRAM: «ПРОМОКОДЫ ТЕПЕРЬ В КАНАЛЕ» + ВСЕ ДЕЙСТВУЮЩИЕ КОДЫ</button>
+      <span id="padmDigestMsg" class="gform-msg"></span>` : ""}
     <div class="gadm-list">${rows || `<div class="empty-sm">ПРОМОКОДОВ ПОКА НЕТ.</div>`}</div>
   </div>`;
   $("padmNew").addEventListener("click", () => renderDevPromoForm(null));
+  if ($("padmDigest")) $("padmDigest").addEventListener("click", async () => {
+    if (!confirm("Отправить в канал анонс со всеми действующими кодами (без реферального)? Только один раз.")) return;
+    const msg = $("padmDigestMsg");
+    $("padmDigest").disabled = true; msg.textContent = "отправка…";
+    try {
+      const r = await fetch(api("/admin/tg/promo-digest"), { method: "POST" });
+      const j = await r.json();
+      if (!r.ok) { msg.textContent = j.detail || "ошибка"; $("padmDigest").disabled = false; return; }
+      msg.textContent = `отправлено, кодов в посте: ${j.promos}`;
+    } catch (e) { msg.textContent = "ошибка сети"; $("padmDigest").disabled = false; }
+  });
   page.querySelectorAll("[data-edit]").forEach((b) =>
     b.addEventListener("click", () =>
       renderDevPromoForm(items.find((p) => p.id === +b.dataset.edit) || null)));
