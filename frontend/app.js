@@ -1832,13 +1832,14 @@ async function openHome2() {
 // ПЛАТЫ он обрезан clip-path, а дорожка к шине (h2-trace) торчит наружу и
 // обрезкой была бы срезана — поэтому она снаружи рамки.
 // foot — html слева в строке ссылки «ОТКРЫТЬ ▸» (та же строка, высоту модуля не растит)
-const h2Mod = (mark, title, note, body, link, linkText, cls = "", foot = "") => {
+const h2Mod = (mark, title, note, body, link, linkText, cls = "", foot = "", head = "") => {
   const more = link ? `<a class="h2-more" href="${link}">${linkText || "ОТКРЫТЬ"} ▸</a>` : "";
   return `<section class="h2-mod${cls ? " " + cls : ""}">
     <div class="h2-frame">
-      <header class="h2-mh">
+      <header class="h2-mh${head ? " h2-mh-x" : ""}">
         ${mark ? `<span class="h2-mark">${mark}</span>` : ""}
         <span class="h2-mt">${title}</span>
+        ${head}
         ${note ? `<span class="h2-mn">${note}</span>` : ""}
       </header>
       <div class="h2-mb">${body}</div>
@@ -1848,8 +1849,9 @@ const h2Mod = (mark, title, note, body, link, linkText, cls = "", foot = "") => 
   </section>`;
 };
 
-// новые промокоды бот сразу постит в канал (services/tg_bot) — зовём туда из модуля кодов
-const promoTgFoot = () => tgLink("promo_home", "✈ НОВЫЕ КОДЫ — СРАЗУ В TELEGRAM", "h2-tg");
+// новые промокоды бот сразу постит в канал (services/tg_bot) — зовём туда из модуля кодов;
+// ссылка стоит в шапке модуля рядом с заголовком, а не в подвале: там её не видели
+const promoTgHead = () => tgLink("promo_home", "✈ НОВЫЕ КОДЫ — СРАЗУ В TELEGRAM", "h2-tg");
 
 // прибор: одно крупное число + подпись; клик уводит в раздел
 const h2Gauge = (label, value, unit, sub, nav) =>
@@ -2076,7 +2078,7 @@ function home2Hud(d) {
              NB: комментарий внутри шаблонной строки — бэктики здесь ставить
              нельзя, они рвут литерал. -->
         ${h2Mod("", "ПРОМОКОДЫ", "КЛИК — КОПИРУЕТ", promoDashBody(d.promos),
-                "/promo", "ВСЕ КОДЫ", "wide promo-strip", promoTgFoot())}
+                "/promo", "ВСЕ КОДЫ", "wide promo-strip", "", promoTgHead())}
         <!-- порядок центра — по Метрике за 25.07–06.08: /market 674 человека,
              /craft 1393 просмотра, /auction 1091, гайд про конверт 493. Значит
              первым экраном идут «что выгодно скрафтить» и «что разбирают на
@@ -2133,7 +2135,7 @@ function home2Board(d) {
         <div class="h2-bus-line" aria-hidden="true"></div>
         ${h2Mod("U0", "НОВОСТИ САЙТА", "ЧТО ПОМЕНЯЛОСЬ", h2NewsBody(d.feed), "", "", "news")}
         ${h2Mod("U1", "ПРОМОКОДЫ", "КЛИК — КОПИРУЕТ", promoDashBody(d.promos), "/promo", "ВСЕ КОДЫ",
-                "", promoTgFoot())}
+                "", "", promoTgHead())}
         ${h2Mod("U2", "ПАТЧИ ИГРЫ", "ФОРУМ EXBO", h2Patches(d.patches), "/patches", "ВСЕ ПАТЧИ")}
       </div>
       <div class="h2-wing right">${right}</div>

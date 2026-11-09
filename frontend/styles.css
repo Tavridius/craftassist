@@ -3342,6 +3342,10 @@ a.ops-gear:hover .nm { text-decoration: underline; }
 .h2-hud .h2-mod.promo-strip .h2-foot .h2-more { margin: 0 0 0 auto; padding: 0; }
 .h2-hud .h2-mod.promo-strip .h2-foot { margin-top: 6px; padding-top: 4px; }
 .h2-tg { font-size: 10px; letter-spacing: 0.12em; text-decoration: none; }
+/* шапка с ссылкой рядом с заголовком (промокоды → Telegram): в узкой колонке
+   подпись справа уезжает на вторую строку, а не вылезает за рамку */
+.h2-mh-x { flex-wrap: wrap; row-gap: 3px; }
+.h2-mh .h2-tg { font-size: 9px; white-space: nowrap; }
 .h2-trace { display: none; }
 .h2 .dash-charts { grid-template-columns: 1fr 1fr; }
 .h2 .empty-sm { padding: 10px 2px; }
