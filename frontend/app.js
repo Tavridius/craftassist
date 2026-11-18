@@ -1898,7 +1898,7 @@ function h2Bar(d) {
             d.daily && d.daily.budget ? `БЮДЖЕТ ${fmtBudgetShort(d.daily.budget)} ₽` : "—",
             "/builds"),
     h2Gauge("ЛИДЕР РОСТА", lead ? `+${lead.pct}` : "—", lead ? "%" : "",
-            lead ? escapeHtml(lead.name) : "БИРЖА КОПИТ ЗАМЕРЫ", "/auction"),
+            lead ? escapeHtml(lead.name) : "НЕТ ДАННЫХ О РОСТЕ", "/auction"),
     h2Gauge("ПРОМОКОДОВ", promoN || "—", "", promoN ? "АКТИВНЫ СЕЙЧАС" : "СЕЙЧАС НЕТ", "/promo"),
   ].join("");
   return `<div class="h2-bar${em.alarm ? " alarm" : ""}">${cells}
@@ -2015,7 +2015,7 @@ function h2Crafts(top) {
 
 function h2Trends(art) {
   if (!art || !((art.up || []).length || (art.down || []).length))
-    return `<div class="empty-sm">БИРЖА НАКАПЛИВАЕТ ЗАМЕРЫ — СКОРО ПОЯВЯТСЯ ТРЕНДЫ.</div>`;
+    return `<div class="empty-sm">НЕТ ДАННЫХ О РОСТЕ ИЛИ ПАДЕНИИ ЦЕН ЗА СУТКИ.</div>`;
   const grp = (t, list) => (list && list.length)
     ? `<div class="dash-grp">${t}</div>` + list.slice(0, 5).map(dashArtRow).join("") : "";
   return grp("РАСТУТ", art.up) + grp("ПАДАЮТ", art.down);
@@ -5186,7 +5186,7 @@ const ptnBucket = (p) => Math.min(p - (p % 5), 15);
 // подпись диапазона корзины: +0…+4, +5…+9, +10…+14, +15
 const ptnRange = (p) => (p >= 15 ? "+15" : `+${p}…+${p + 4}`);
 
-let artFilters = { window: "7d", qlt: -1, ptn: -1 };
+let artFilters = { window: "7d", qlt: -1, ptn: -1, minSalesPerDay: null };
 let artCardSel = null;  // предвыбор корзины при переходе из рейтинга {qlt, ptn}
 
 async function openAuction() {
@@ -5196,7 +5196,8 @@ async function openAuction() {
   page.classList.remove("hidden");
   page.innerHTML = `<div class="spinner">// ЗАГРУЗКА БИРЖИ АРТЕФАКТОВ</div>`;
   try {
-    const q = `window=${artFilters.window}&qlt=${artFilters.qlt}&ptn=${artFilters.ptn}`;
+    const q = new URLSearchParams({ window: artFilters.window, qlt: artFilters.qlt, ptn: artFilters.ptn });
+    if (artFilters.minSalesPerDay !== null) q.set("min_sales_per_day", artFilters.minSalesPerDay);
     const d = await fetch(api(`/artmarket/top?${q}`)).then((r) => r.json());
     renderAuction(d);
   } catch (e) {
@@ -5221,6 +5222,8 @@ function renderAuction(d) {
     `<option value="${v}" ${artFilters.qlt === v ? "selected" : ""}>${v < 0 ? "КАЧЕСТВО: ВСЕ" : qltLabel(v)}</option>`).join("");
   const optP = [-1, ...PTN_LEVELS].map((v) =>
     `<option value="${v}" ${artFilters.ptn === v ? "selected" : ""}>${v < 0 ? "ЗАТОЧКА: ВСЕ" : "+" + v}</option>`).join("");
+  const optSales = [0, 5, 10].map((v) =>
+    `<option value="${v}" ${d.min_sales_per_day === v ? "selected" : ""}>${v ? `ОТ ${v} ПРОДАЖ В СУТКИ` : "БЕЗ СУТОЧНОГО ПОРОГА"}</option>`).join("");
 
   let h = `<div class="section-head">
       <div class="section-title">▸ БИРЖА АРТЕФАКТОВ · ДИНАМИКА СРЕДНЕЙ ЦЕНЫ ПРОДАЖ</div>
@@ -5231,22 +5234,22 @@ function renderAuction(d) {
       <button class="awin ${d.window === "24h" ? "on" : ""}" data-w="24h">СУТКИ</button>
       <select id="aQlt">${optQ}</select>
       <select id="aPtn">${optP}</select>
-      <span class="art-note">КОРЗИН В РЕЙТИНГЕ: ${d.buckets_ranked} · ПОРОГ ${d.min_sales} ПРОДАЖ/ОКНО</span>
+      <select id="aSales" aria-label="Минимум продаж в среднем за сутки">${optSales}</select>
+      <span class="art-note">КОРЗИН В РЕЙТИНГЕ: ${d.buckets_ranked} · МИНИМУМ ${d.min_sales} ПРОДАЖ
+        ЗА ${d.window === "24h" ? "СУТКИ" : "НЕДЕЛЮ"} И ${d.prev_min_sales} ЗА ПРЕДЫДУЩУЮ НЕДЕЛЮ</span>
     </div>`;
 
-  if (!d.up.length && !d.down.length) {
+  if (!d.first_slot) {
     h += `<div class="stub">
       <div class="stub-code">[ НАКОПЛЕНИЕ ДАННЫХ ]</div>
       <div class="stub-title">▸ ДАННЫЕ КОПЯТСЯ</div>
-      <div class="stub-desc">${d.buckets_tracked
-        ? `Корзины уже отслеживаются (${d.buckets_tracked}), но для рейтинга нужно два полных
-           окна (${d.window === "24h" ? "сутки + неделя до них" : "неделя + неделя до неё"}).
-           Первый замер: ${d.first_slot ? fmtSlot(d.first_slot) : "—"}.`
-        : `Замеры идут ${(d.hours || []).map((x) => String(x).padStart(2, "0") + ":00").join(" · ")} МСК.
-           Первые данные появятся после ближайшего замера.`}
+      <div class="stub-desc">Замеры идут ${(d.hours || []).map((x) => String(x).padStart(2, "0") + ":00").join(" · ")} МСК.
+           Первые данные появятся после ближайшего замера.
       ${API_IS_DEMO ? "<br><br>ДЕМО-РЕЖИМ: биржа артефактов не работает — демо-API не отдаёт качество/заточку продаж." : ""}</div>
       <div class="stub-status">СТАТУС: СБОР ДАННЫХ</div>
     </div>`;
+  } else if (!d.buckets_ranked) {
+    h += `<div class="empty-sm">ПОД ЭТИ ФИЛЬТРЫ НЕТ КОРЗИН С ДОСТАТОЧНЫМ ЧИСЛОМ ПРОДАЖ В ОБОИХ ПЕРИОДАХ.</div>`;
   } else {
     h += `<div class="art-cols">
       <section>
@@ -5275,6 +5278,7 @@ function renderAuction(d) {
   }));
   $("aQlt").addEventListener("change", (e) => { artFilters.qlt = +e.target.value; openAuction(); });
   $("aPtn").addEventListener("change", (e) => { artFilters.ptn = +e.target.value; openAuction(); });
+  $("aSales").addEventListener("change", (e) => { artFilters.minSalesPerDay = +e.target.value; openAuction(); });
   page.querySelectorAll(".side-row").forEach((r) => r.addEventListener("click", () => {
     artCardSel = { qlt: +r.dataset.qlt, ptn: +r.dataset.ptn };
     navigate(`/artefact/${r.dataset.id}`);

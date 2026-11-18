@@ -274,20 +274,22 @@ def _slot_ago(**delta) -> str:
 
 
 @router.get("/artmarket/top")
-async def artmarket_top(window: str = "7d", qlt: int = -1, ptn: int = -1):
+async def artmarket_top(window: str = "7d", qlt: int = -1, ptn: int = -1,
+                        min_sales_per_day: int = Query(5, ge=0)):
     """Топ роста/падения средней цены по корзинам артефактов.
 
     window=7d: неделя против предыдущей недели; 24h: сутки против недели до них.
     qlt/ptn = -1 — любые. Заточка — корзинами +0/+5/+10/+15 (market.ptn_bucket).
-    Корзины с < ART_MIN_SALES продаж в любом окне не участвуют.
+    Среднее число продаж в сутки проверяется в каждом периоде отдельно.
+    При min_sales_per_day=0 действует только базовый порог ART_MIN_SALES.
     """
     if ptn >= 0:
         ptn = market.ptn_bucket(ptn)
-    if window == "24h":
-        cur_since, prev_since = _slot_ago(days=1), _slot_ago(days=8)
-    else:
-        window = "7d"
-        cur_since, prev_since = _slot_ago(days=7), _slot_ago(days=14)
+    window = "24h" if window == "24h" else "7d"
+    cur_days = 1 if window == "24h" else 7
+    cur_since, prev_since = _slot_ago(days=cur_days), _slot_ago(days=cur_days + 7)
+    cur_min = max(config.ART_MIN_SALES, min_sales_per_day * cur_days)
+    prev_min = max(config.ART_MIN_SALES, min_sales_per_day * 7)
     cur = {(r["item"], r["qlt"], r["ptn"]): r for r in market.window_avgs(cur_since)}
     prev = {(r["item"], r["qlt"], r["ptn"]): r
             for r in market.window_avgs(prev_since, cur_since)}
@@ -295,7 +297,7 @@ async def artmarket_top(window: str = "7d", qlt: int = -1, ptn: int = -1):
     rows = []
     for key, c in cur.items():
         p = prev.get(key)
-        if not p or c["n"] < config.ART_MIN_SALES or p["n"] < config.ART_MIN_SALES:
+        if not p or c["n"] < cur_min or p["n"] < prev_min:
             continue
         if (qlt >= 0 and key[1] != qlt) or (ptn >= 0 and key[2] != ptn):
             continue
@@ -308,7 +310,8 @@ async def artmarket_top(window: str = "7d", qlt: int = -1, ptn: int = -1):
         })
     rows.sort(key=lambda r: r["pct"], reverse=True)
     m = market.stats()
-    return {"window": window, "min_sales": config.ART_MIN_SALES,
+    return {"window": window, "min_sales_per_day": min_sales_per_day,
+            "min_sales": cur_min, "prev_min_sales": prev_min,
             "up": [r for r in rows if r["pct"] > 0][:20],
             "down": sorted((r for r in rows if r["pct"] < 0), key=lambda r: r["pct"])[:20],
             "buckets_ranked": len(rows), "buckets_tracked": len(cur),
