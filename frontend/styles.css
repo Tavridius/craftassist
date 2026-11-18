@@ -1126,6 +1126,17 @@ a.prof-save { display: inline-block; text-decoration: none; }
 .map-legend { font-size: 11px; line-height: 1.6; color: var(--dim); margin-top: 10px; }
 .map-back { color: var(--green); text-decoration: none; letter-spacing: 0.08em; }
 .map-back:hover { text-shadow: var(--glow); }
+.map-layer-link { margin: 0 0 12px; }
+.bubble-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.bubble-tools select, .bubble-tools button, .bubble-tools input {
+  max-width: 100%; min-height: 36px; padding: 6px 10px; font: inherit;
+  color: var(--text); background: var(--bg); border: 1px solid var(--green-border);
+}
+.bubble-tools button { color: var(--green); cursor: pointer; }
+.bubble-tools [role=status] { color: var(--dim); font-size: 12px; }
+.mapmod .leaflet-popup-content-wrapper, .mapmod .leaflet-popup-tip {
+  background: #101a17; color: var(--bright);
+}
 
 /* тёмная тема под терминал для Leaflet.
    !important — leaflet.css грузится лениво ПОСЛЕ styles.css и иначе

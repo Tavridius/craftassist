@@ -1771,6 +1771,29 @@ async def map_meta():
     return MAP_META
 
 
+def lyubech_bubbles() -> list[dict]:
+    """Опубликованные пузыри Любеча, по порядку с севера на юг."""
+    x0, y0, x1, y1 = next(t["bbox"] for t in MAP_TERRITORIES if t["id"] == "lyubech")
+    points = []
+    for obj in mapobjects.list_objects(layer="detail", category="bubble"):
+        if obj["kind"] != "marker":
+            continue
+        x, y = obj["geometry"]
+        if not (x0 <= x <= x1 and y0 <= y <= y1):
+            continue
+        note = re.sub(r"\s*\[wiki-import[^\]]*\]", "", obj["description"]).strip()
+        note = re.sub(r"^Temporary\b", "Временный", note, flags=re.I)
+        # Координаты переживают повторный импорт карты, при котором меняются ID строк.
+        key = ",".join(str(int(n) if int(n) == n else n) for n in (x, y))
+        points.append({"key": key, "geometry": [x, y], "note": note})
+    return sorted(points, key=lambda p: (p["geometry"][1], p["geometry"][0]))
+
+
+@router.get("/map/lyubech/bubbles")
+async def map_lyubech_bubbles():
+    return {"points": lyubech_bubbles()}
+
+
 def _require_admin(request: Request) -> dict:
     """Пользователь-админ (ADMIN_USER_IDS) или 403 — гейт DEV-инструментов."""
     user = current_user(request)

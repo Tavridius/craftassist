@@ -1371,6 +1371,7 @@ def _map_seo() -> tuple[str, dict]:
               "блока. Динамические события в игре появляются не всегда и не все сразу.")],
         links=[("/map/south", "Южная Зона"), ("/map/sever", "Северная Зона"),
                ("/map/wnorth", "Дикий Север"), ("/map/lyubech", "Любеч-3"),
+               ("/map/lyubech/bubbles", "Карта пузырей Любеча-3"),
                ("/map/labyrinth", "Лабиринт"), ("/guides", "гайды")])
 
 
@@ -1435,8 +1436,28 @@ def _territory_seo(terr: dict, rows: list[tuple[str, int]]) -> str:
                f'по карте {_html.escape(terr["underlay"])}.</p>'
                if terr.get("underlay") else "")
             + (f'<h3>Что отмечено</h3><ul>{items}</ul>' if items else "")
+            + ('<p><a href="/map/lyubech/bubbles">Карта пространственных пузырей Любеча-3</a></p>'
+               if terr["id"] == "lyubech" else "")
             + f'<p class="seo-links">Другие территории: {links} · '
             f'<a href="/map">вся карта</a></p></div>')
+
+
+@router.get("/map/lyubech/bubbles", response_class=HTMLResponse)
+async def map_bubbles_page(request: Request):
+    from app.routers.api import lyubech_bubbles
+    path = "/map/lyubech/bubbles"
+    points = lyubech_bubbles()
+    rows = "".join(
+        f'<li><a href="{path}?point={p["key"]}">Пузырь {i}</a> '
+        f'{_html.escape(p["note"])}</li>' for i, p in enumerate(points, 1))
+    title = "Карта пузырей Любеча-3 в STALZONE (Сталкрафт)"
+    return render_index(
+        request, path, title=title,
+        desc="Пространственные пузыри Любеча-3 на карте Сталкрафта. Выберите постоянный "
+             "пузырь или посмотрите время для временного и отправьте напарнику ссылку на точку.",
+        seo_html=(f'<div class="seo-inner"><h2>{title}</h2>'
+                  f'<details><summary>Все пузыри на карте ({len(points)})</summary>'
+                  f'<ol>{rows}</ol></details><p><a href="/map/lyubech">Полная карта Любеча-3</a></p></div>'))
 
 
 @router.get("/map/{territory_id}", response_class=HTMLResponse)
@@ -1710,6 +1731,7 @@ async def sitemap(request: Request):
              "/guides", "/map", "/promo", "/privacy", "/terms"]
     # территории карты — только с метками (indexed), остальные под noindex
     paths += [f"/map/{t['id']}" for t in MAP_TERRITORIES if t.get("indexed")]
+    paths.append("/map/lyubech/bubbles")
     urls = "".join(
         f"<url><loc>{_html.escape(base + p, quote=True)}</loc>"
         f"<changefreq>{'daily' if p in ('/', '/craft', '/vygodno-kraftit', '/auction', '/market', '/sborki', '/barter', '/operations', '/patches', '/promo') else 'weekly'}</changefreq>"

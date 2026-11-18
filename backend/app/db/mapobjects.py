@@ -68,7 +68,8 @@ def _row(r: sqlite3.Row) -> dict:
     }
 
 
-def list_objects(layer: str | None = None, include_drafts: bool = False) -> list[dict]:
+def list_objects(layer: str | None = None, include_drafts: bool = False,
+                 category: str | None = None) -> list[dict]:
     """Объекты слоя (или всех). include_drafts=True — с черновиками (для админа)."""
     q = "SELECT * FROM map_objects"
     cond: list[str] = []
@@ -76,6 +77,9 @@ def list_objects(layer: str | None = None, include_drafts: bool = False) -> list
     if layer:
         cond.append("layer=?")
         args.append(layer)
+    if category is not None:
+        cond.append("category=?")
+        args.append(category)
     if not include_drafts:
         cond.append("published=1")
     if cond:

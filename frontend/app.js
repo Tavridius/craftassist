@@ -6798,17 +6798,18 @@ function ensureLeaflet() {
 }
 
 let mapMeta = null;                                   // кэш /api/map/meta
+const bubblesPath = "/map/lyubech/bubbles";
 
-async function openMap(territoryId) {
+async function openMap(territoryId, bubblesOnly = false) {
   if (mapCleanup) { mapCleanup(); mapCleanup = null; }
-  mapEpoch++;
+  const epoch = ++mapEpoch;
   home.classList.add("hidden");
   detail.classList.add("hidden");
   results.innerHTML = "";
   page.classList.remove("hidden");
   page.innerHTML = `<div class="mapmod"><div class="spinner">// ЗАГРУЗКА КАРТЫ</div></div>`;
   window.scrollTo(0, 0);
-  const want = territoryId ? `/map/${territoryId}` : "/map";
+  const want = bubblesOnly ? bubblesPath : (territoryId ? `/map/${territoryId}` : "/map");
   try {
     if (!mapMeta) {
       [mapMeta] = await Promise.all([
@@ -6819,18 +6820,19 @@ async function openMap(territoryId) {
       await ensureLeaflet();
     }
   } catch (e) {
-    if (location.pathname === want)
+    if (epoch === mapEpoch && location.pathname === want)
       page.innerHTML = `<div class="mapmod"><div class="empty">[!] КАРТА НЕДОСТУПНА</div></div>`;
     return;
   }
   MAP_CATS = mapMeta.categories || [];
-  if (location.pathname !== want) return;             // пользователь ушёл, пока грузилось
+  if (epoch !== mapEpoch || location.pathname !== want) return;
   const terr = territoryId
     && (mapMeta.territories || []).find((t) => t.id === territoryId && t.bbox);
   // /map/limansk — прежний id Любеча-3 (до 28.10.2026)
   if (territoryId === "limansk") { navigate("/map/lyubech", { replace: true }); return; }
   if (territoryId && !terr) { navigate("/map", { replace: true }); return; }
-  if (terr) renderTerritory(terr);
+  if (bubblesOnly) renderBubbleMap(terr);
+  else if (terr) renderTerritory(terr);
   else renderWorldMap();
 }
 
@@ -6955,7 +6957,7 @@ function mapFilterKey(o) {
 // Публичный вьюер: подгрузить опубликованные объекты слоя, разложить по группам
 // (layerGroup на категорию) и нарисовать фильтры в #mapFilters. boxPx — рамка
 // территории: счётчики считают только то, что в ней видно.
-function loadViewerObjects(layer, map, px, boxPx) {
+function loadViewerObjects(layer, map, px, boxPx, territoryId) {
   const ep = mapEpoch;
   fetch(api(`/map/objects?layer=${layer}`)).then((r) => r.json()).then((d) => {
     if (ep !== mapEpoch || !map._container) return;   // ушли с карты, пока грузилось
@@ -6970,7 +6972,10 @@ function loadViewerObjects(layer, map, px, boxPx) {
       const f = mapFilterKey(o);
       if (!groups.has(f.key)) groups.set(f.key, { ...f, layer: L.layerGroup(), n: 0 });
       const g = groups.get(f.key);
-      renderMapObject(o, { map: g.layer, px });
+      const marker = renderMapObject(o, { map: g.layer, px });
+      if (territoryId === "lyubech" && o.kind === "marker" && o.category === "bubble") {
+        marker.on("click", () => navigate(`${bubblesPath}?point=${o.geometry.join(",")}`));
+      }
       g.n++;
     });
     renderMapFilters(map, [...groups.values()]);
@@ -7070,6 +7075,7 @@ function renderTerritory(terr) {
       <div class="section-title">▸ КАРТА · ${escapeHtml(terr.name.toUpperCase())}${terr.closed ? " · ЗАКРЫТО" : ""}</div>
       <div class="section-note"><a href="/map" class="map-back">◂ К ГЛОБАЛЬНОЙ КАРТЕ</a></div>
     </div>
+    ${terr.id === "lyubech" ? `<p class="map-layer-link"><a class="map-back" href="${bubblesPath}">Карта пространственных пузырей</a></p>` : ""}
     <div class="map-filters" id="mapFilters"></div>
     <div class="map-view" id="mapView"></div>
     <div class="map-legend">${terr.underlay
@@ -7081,7 +7087,87 @@ function renderTerritory(terr) {
   </div>`;
   const { map, px } = makeTileMap(d, terr.bbox);
   wireMarkerScale(map, d.max_zoom);
-  loadViewerObjects("detail", map, px, terr.bbox);
+  loadViewerObjects("detail", map, px, terr.bbox, terr.id);
+}
+
+async function renderBubbleMap(terr) {
+  const epoch = mapEpoch;
+  page.innerHTML = `<div class="mapmod">
+    <div class="section-head"><div class="section-title">▸ ПУЗЫРИ ЛЮБЕЧА-3</div>
+      <a class="map-back" href="/map/lyubech">◂ Полная карта Любеча-3</a></div>
+    <div class="bubble-tools">
+      <select id="bubbleSelect" aria-label="Выбрать пространственный пузырь" disabled><option>Загрузка меток…</option></select>
+      <button id="bubbleShare" type="button" disabled>Скопировать ссылку</button>
+      <span id="bubbleStatus" role="status"></span>
+    </div>
+    <div class="map-view" id="mapView"></div>
+    <div class="map-legend">Зелёным отмечены постоянные пузыри. Метки по карте stalzone.wiki.</div>
+  </div>`;
+  const { map, px, bounds } = makeTileMap(mapMeta.detail, terr.bbox);
+  const select = $("bubbleSelect"), share = $("bubbleShare"), status = $("bubbleStatus");
+  try {
+    const response = await fetch(api("/map/lyubech/bubbles"));
+    if (!response.ok) throw new Error(response.status);
+    const { points } = await response.json();
+    if (epoch !== mapEpoch || !select.isConnected) return;
+    const markers = new Map();
+    const pointBounds = L.latLngBounds(points.map((p) => px(...p.geometry)));
+    const popup = L.popup({ closeButton: false, closeOnClick: false, offset: [0, -10] });
+    select.replaceChildren(new Option(`Все пузыри (${points.length})`, ""));
+    const choose = (key) => {
+      const marker = markers.get(key);
+      select.value = marker ? key : "";
+      const url = new URL(location.href);
+      if (marker) {
+        url.searchParams.set("point", key);
+        map.setView(marker.getLatLng(), map.getMaxZoom(), { animate: false });
+        const caption = document.createElement("strong");
+        caption.textContent = marker.options.title;
+        popup.setLatLng(marker.getLatLng()).setContent(caption).openOn(map);
+      } else {
+        url.searchParams.delete("point");
+        map.closePopup();
+        map.fitBounds(pointBounds.isValid() ? pointBounds : bounds, { padding: [28, 28], animate: false });
+      }
+      history.replaceState(history.state, "", url);
+      status.textContent = key && !marker ? "Этой точки уже нет на карте." : "";
+    };
+    points.forEach((p, i) => {
+      const label = `Пузырь ${i + 1}${p.note ? " · " + p.note : ""}`;
+      select.add(new Option(label, p.key));
+      const marker = L.marker(px(...p.geometry), {
+        icon: markerDivIcon({ category: "bubble", published: true,
+          color: p.note === "Постоянный" ? "#7ce68e" : null }), title: label, alt: label,
+      }).addTo(map);
+      marker.on("click", () => choose(p.key));
+      markers.set(p.key, marker);
+    });
+    select.disabled = share.disabled = !points.length;
+    select.onchange = () => choose(select.value);
+    choose(new URLSearchParams(location.search).get("point") || "");
+    share.onclick = async () => {
+      const url = new URL(bubblesPath, location.origin);
+      if (select.value) url.searchParams.set("point", select.value);
+      url.searchParams.set("utm_source", "player_share");
+      url.searchParams.set("utm_medium", "referral");
+      url.searchParams.set("utm_campaign", "lyubech_bubbles");
+      if (await copyText(url.href)) {
+        status.textContent = "Ссылка скопирована";
+        ymGoal("map_share", { layer: "lyubech_bubbles" });
+      } else {
+        const input = document.createElement("input");
+        input.readOnly = true;
+        input.value = url.href;
+        input.setAttribute("aria-label", "Ссылка для копирования");
+        status.replaceChildren(input);
+        input.select();
+      }
+    };
+  } catch {
+    if (!select.isConnected) return;
+    select.replaceChildren(new Option("Метки недоступны", ""));
+    status.textContent = "Не удалось загрузить пузыри. Обновите страницу.";
+  }
 }
 
 // ======================================================================
@@ -10198,6 +10284,10 @@ function route() {
     strip.classList.add("hidden"); page.classList.add("hidden");
     detail.classList.add("hidden"); results.innerHTML = "";
     setNav("home2"); openHome2(); return;
+  }
+  if (path === bubblesPath) {
+    strip.classList.add("hidden");
+    setNav("map"); openMap("lyubech", true); return;
   }
   if ((mm = path.match(/^\/map(?:\/([a-z0-9_-]+))?$/))) {
     strip.classList.add("hidden");
