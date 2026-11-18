@@ -1783,6 +1783,10 @@ def lyubech_bubbles() -> list[dict]:
             continue
         note = re.sub(r"\s*\[wiki-import[^\]]*\]", "", obj["description"]).strip()
         note = re.sub(r"^Temporary\b", "Временный", note, flags=re.I)
+        hours = re.fullmatch(r"Временный:\s*(\d{2}:\d{2})\s*-\s*(\d{2}:\d{2})", note)
+        if hours:
+            start, end = hours.groups()
+            note = f"Временный, с {start} до {end} по игровому времени"
         # Координаты переживают повторный импорт карты, при котором меняются ID строк.
         key = ",".join(str(int(n) if int(n) == n else n) for n in (x, y))
         points.append({"key": key, "geometry": [x, y], "note": note})
