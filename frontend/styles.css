@@ -836,6 +836,9 @@ a.auth-user:hover { color: var(--green); border-color: var(--green-border); text
    /builds открывался пустой сеткой слотов, и посетитель из поиска уходил
    (отказы с поиска 43%). Теперь посчитанные сборки живут на /sborki. */
 .ready { margin-bottom: 18px; }
+.cb-shortcuts { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+.cb-shortcuts .cb-btn { display: inline-flex; align-items: center; min-height: 36px; }
+#cbHeading { scroll-margin-top: 72px; }
 .ready-load { margin-bottom: 18px; font-size: 11px; letter-spacing: 0.1em; color: var(--dimmer); }
 .ready-head { margin-bottom: 10px; display: flex; align-items: flex-end; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
 .ready-title {

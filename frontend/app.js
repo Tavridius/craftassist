@@ -5771,7 +5771,7 @@ function randomCard(p, i) {
   const rest = Object.keys(t.stats).filter((k) => !shown.has(k))
     .map((k) => t.stats[k]).sort((a, b) => Math.abs(b.total) - Math.abs(a.total));
   while (pick.length < 3 && rest.length) pick.push(rest.shift());
-  return `<article class="ready-card">
+  return `<article class="ready-card" data-catalog-card="${escapeHtml(p.id)}:${p.budget}">
     <div class="rc-title">${escapeHtml(p.title)}</div>
     <div class="rc-budget">БЮДЖЕТ ${fmt(p.budget)} ₽</div>
     <div class="rc-note">${escapeHtml(p.note)}</div>
@@ -5827,13 +5827,40 @@ function fillBuildSlots(cont, slots) {
 }
 
 // перенос сборки в ручной конструктор: состав слотов как есть
-function openInCalculator(contId, slots, goal) {
+function reportCatalog(action, card) {
+  try { window.ym?.(YM_ID, "params", { sborki: { [action]: String(card) } }); } catch (e) { /* метрика недоступна */ }
+}
+
+// Состав и цена видны прямо в каталоге. Показ карточки и выбор калькулятора
+// считаем отдельно; повторная отрисовка фильтров не создаёт новый показ.
+let catalogObserver;
+const catalogSeen = new Set();
+function observeCatalogCards() {
+  catalogObserver?.disconnect();
+  if (location.pathname !== "/sborki" || !window.IntersectionObserver) return;
+  catalogObserver = new IntersectionObserver((entries, observer) => {
+    for (const entry of entries) {
+      const card = entry.target.dataset.catalogCard;
+      if (location.pathname !== "/sborki" || !entry.target.isConnected ||
+          entry.intersectionRatio < 0.5 || catalogSeen.has(card)) continue;
+      catalogSeen.add(card);
+      reportCatalog("visible", card);
+      observer.unobserve(entry.target);
+    }
+  }, { threshold: 0.5 });
+  page.querySelectorAll("[data-catalog-card]").forEach((el) => {
+    if (!catalogSeen.has(el.dataset.catalogCard)) catalogObserver.observe(el);
+  });
+}
+
+function openInCalculator(contId, slots, goal, card) {
   const cont = STORAGES().find((c) => c.id === contId);
   if (!cont) return;
   fillBuildSlots(cont, slots);
   buildTab = "manual";
   pickerSlot = -1;
   ymGoal(goal);
+  reportCatalog("calculator", card);
   slots.forEach((s) => loadArtPrices(s.item));   // цены подтянутся и перерисуют
   navigate("/builds");
 }
@@ -5856,13 +5883,15 @@ function randomAuto(i) {
                        warnings: RANDOM_BUILDS.price_note ? [RANDOM_BUILDS.price_note] : [] };
   buildTab = "auto";
   ymGoal("build_ready_auto");
+  reportCatalog("budget", `${p.id}:${p.budget}`);
   navigate("/builds");
 }
 
 function wireRandomStrip() {
+  observeCatalogCards();
   page.querySelectorAll("[data-ropen]").forEach((b) => b.addEventListener("click", () => {
     const p = (RANDOM_BUILDS.cards || [])[+b.dataset.ropen];
-    if (p) openInCalculator((RANDOM_BUILDS.container || {}).id, p.build.slots, "build_ready_open");
+    if (p) openInCalculator((RANDOM_BUILDS.container || {}).id, p.build.slots, "build_ready_open", `${p.id}:${p.budget}`);
   }));
   page.querySelectorAll("[data-rauto]").forEach((b) =>
     b.addEventListener("click", () => randomAuto(b.dataset.rauto)));
@@ -5927,7 +5956,7 @@ function cbCard(b) {
     .sort((a, c) => Math.abs(c.total) - Math.abs(a.total)).slice(0, 1);
   const date = new Date(b.ts * 1000).toLocaleDateString("ru-RU");
   const c = b.container;
-  return `<article class="ready-card cb-card" data-id="${b.id}">
+  return `<article class="ready-card cb-card" data-id="${b.id}" data-catalog-card="player:${b.id}">
     <div class="cb-top">
       <div class="rc-title">${escapeHtml(b.title)}</div>
       <button class="cb-like ${b.liked ? "on" : ""}" data-like="${b.id}" title="Полезная сборка">♥ ${b.likes}</button>
@@ -5967,9 +5996,10 @@ function renderCbList() {
 }
 
 function wireCbList(host) {
+  observeCatalogCards();
   host.querySelectorAll("[data-cbopen]").forEach((el) => el.addEventListener("click", () => {
     const b = cbState.items.find((x) => x.id === +el.dataset.cbopen);
-    if (b) openInCalculator(b.container.id, b.slots, "build_community_open");
+    if (b) openInCalculator(b.container.id, b.slots, "build_community_open", `player:${b.id}`);
   }));
   host.querySelectorAll("[data-like]").forEach((el) => el.addEventListener("click", async () => {
     if (!(ME && ME.authenticated)) { loginPrompt("ОЦЕНИВАТЬ СБОРКИ МОГУТ ТОЛЬКО ВОШЕДШИЕ."); return; }
@@ -5994,8 +6024,11 @@ function wireCbList(host) {
   host.querySelectorAll("[data-cbreset]").forEach((el) => el.addEventListener("click", cbReset));
 }
 
-function cbReset() {
+function cbReset(preset) {
   Object.assign(cbState, { min: 0, max: 0, stats: [], container: "", q: "", sort: "new", mine: false });
+  if (preset === "speed") cbState.stats = ["stalker.artefact_properties.factor.speed_modifier"];
+  if (preset === "cheap") cbState.sort = "cheap";
+  clearTimeout(cbTimer);
   renderCbFilters();
   loadCommunity();
 }
@@ -6092,11 +6125,16 @@ async function openSborki() {
       <div class="section-note">ЦЕНЫ ПО АУКЦИОНУ RU · ЛИМИТЫ ЗАРАЖЕНИЯ ПОСЛЕ РЕБАЛАНСА</div>
     </div>
     ${buildTabsHtml("ready")}
+    <div class="cb-shortcuts" role="group" aria-label="Быстрый выбор сборки">
+      <button class="cb-btn" data-cbpreset="speed">Сборки на скорость</button>
+      <button class="cb-btn" data-cbpreset="cheap">Самые дешёвые сборки</button>
+      <a class="cb-btn" href="/guides/pervoe-snaryazhenie">Первое снаряжение для новичка</a>
+    </div>
     <div id="rStrip">${randomStrip()}</div>
     <section class="cb">
       <div class="ready-head">
         <div>
-          <h2 class="ready-title">СБОРКИ ИГРОКОВ <span id="cbCount"></span></h2>
+          <h2 class="ready-title" id="cbHeading" tabindex="-1">СБОРКИ ИГРОКОВ <span id="cbCount"></span></h2>
           <div class="ready-sub">Опубликованы из калькулятора · цены пересчитываются по живому аукциону ·
             обсудить сборку — ${tgLink("sborki", "в нашем Telegram")}</div>
         </div>
@@ -6106,6 +6144,11 @@ async function openSborki() {
       <div id="cbList"></div>
     </section>`;
   wireBuildTabs();
+  page.querySelectorAll("[data-cbpreset]").forEach((button) => button.addEventListener("click", () => {
+    cbReset(button.dataset.cbpreset);
+    $("cbHeading").focus({ preventScroll: true });
+    $("cbHeading").scrollIntoView({ block: "start" });
+  }));
   page.querySelector(".cb-btn.on").addEventListener("click", () => { buildTab = "manual"; });
   wireRandomStrip();
   renderCbFilters();
@@ -10225,6 +10268,10 @@ function migrateLegacyHash() {
 }
 
 function route() {
+  if (location.pathname !== "/sborki") {
+    catalogObserver?.disconnect();
+    catalogSeen.clear();
+  }
   ymHit();          // SPA-переход = просмотр страницы для Метрики
   renderOnboard();  // подсказка прячется на профиле, заглушках и в других разделах
   gModalClose();    // навигация закрывает модалы разделов
